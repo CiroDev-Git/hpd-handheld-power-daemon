@@ -84,3 +84,73 @@ pub fn reduce(
 
     Ok(ReducerOutput { new_state, effects })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hpd_capabilities::power::{PowerEnvelopeTarget, PowerEnvelopeLimits};
+    use hpd_capabilities::profile::{ProfileName, ProfileThresholds};
+    use hpd_capabilities::units::PowerMilliwatts;
+
+    fn setup_state() -> ProfileState {
+        ProfileState {
+            power_target: PowerEnvelopeTarget {
+                spl: PowerMilliwatts(15000),
+                sppt: PowerMilliwatts(15000),
+                fppt: Some(PowerMilliwatts(15000)),
+            },
+            active_profile: ProfileName::Balanced,
+            is_ac_connected: true,
+            charge_end_threshold: 80,
+            fan_follows_tdp: true,
+        }
+    }
+
+    #[test]
+    fn test_invariant_fppt_sppt_spl() {
+        let state = setup_state();
+        let limits = PowerEnvelopeLimits {
+            spl_min: PowerMilliwatts(7000),
+            spl_max: PowerMilliwatts(35000), // Ally X ranges
+        };
+        let thresholds = ProfileThresholds { low_frac: 0.33, high_frac: 0.67 };
+
+        // Invalid attempt: SPPT lower than SPL
+        let bad_target = PowerEnvelopeTarget {
+            spl: PowerMilliwatts(20000),
+            sppt: PowerMilliwatts(15000), 
+            fppt: Some(PowerMilliwatts(25000)),
+        };
+
+        let result = reduce(
+            &state, 
+            Transition::SetEnvelope(bad_target), 
+            &limits, 
+            &thresholds
+        );
+
+        assert!(result.is_err(), "Debería fallar porque SPPT < SPL");
+    }
+
+    #[test]
+    fn test_profile_inference() {
+        let state = setup_state();
+        let limits = PowerEnvelopeLimits {
+            spl_min: PowerMilliwatts(7000),
+            spl_max: PowerMilliwatts(35000),
+        };
+        let thresholds = ProfileThresholds { low_frac: 0.33, high_frac: 0.67 };
+
+        // Trying to increase to 30W (almost max capability), should infer Performance
+        let high_target = PowerEnvelopeTarget {
+            spl: PowerMilliwatts(30000),
+            sppt: PowerMilliwatts(30000),
+            fppt: Some(PowerMilliwatts(30000)),
+        };
+
+        let output = reduce(&state, Transition::SetEnvelope(high_target), &limits, &thresholds).unwrap();
+        
+        assert_eq!(output.new_state.active_profile, ProfileName::Performance);
+        assert!(output.effects.contains(&Effect::ApplyPlatformProfile(ProfileName::Performance)));
+    }
+}
