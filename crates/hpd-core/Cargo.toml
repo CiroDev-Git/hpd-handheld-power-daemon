@@ -7,3 +7,5 @@ edition = "2021"
 hpd-capabilities = { path = "../hpd-capabilities" }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+
+tokio = { workspace = true, features = ["sync"] }
