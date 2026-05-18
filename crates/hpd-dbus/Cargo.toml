@@ -4,3 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+hpd-core = { path = "../hpd-core" }
+hpd-capabilities = { path = "../hpd-capabilities" }
+zbus = "4.1"
+tokio = { workspace = true }
+tracing = { workspace = true }
