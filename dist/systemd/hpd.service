@@ -1,0 +1,25 @@
+[Unit]
+Description=Handheld Power Daemon (hpd)
+Documentation=https://github.com/CiroDev-Git/hpd-handheld-power-daemon
+# Make sure start after D-Bus
+After=dbus.service
+Requires=dbus.service
+
+[Service]
+Type=exec
+# Running as root automatically
+User=root
+ExecStart=/usr/bin/hpd
+Restart=on-failure
+RestartSec=3
+
+# Sandboxing de systemd
+# Avoid daemon modify system files excluding sysfs
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/sys/class/firmware-attributes/ /var/lib/hpd/
+StateDirectory=hpd
+
+[Install]
+# Start with UI
+WantedBy=multi-user.target

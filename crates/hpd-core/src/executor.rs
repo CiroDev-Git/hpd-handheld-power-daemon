@@ -19,6 +19,9 @@ pub struct Executor<B: HwBackend> {
     transition_rx: mpsc::Receiver<Transition>,
     
     state_tx: watch::Sender<ProfileState>,
+
+    internal_tx: mpsc::Sender<Transition>,
+    persister: crate::persistence::StatePersister,
 }
 
 impl<B: HwBackend> Executor<B> {
@@ -37,6 +40,8 @@ impl<B: HwBackend> Executor<B> {
             profile_thresholds,
             transition_rx,
             state_tx,
+            internal_tx,
+            persister
         };
 
         (executor, state_rx)
@@ -82,6 +87,15 @@ impl<B: HwBackend> Executor<B> {
             Effect::ApplyPowerEnvelope(target) => {
                 if let Err(e) = self.backend.set_target(&target) {
                     error!(error = %e, "Failed to apply Power Envelope to hardware");
+                    match self.backend.get_target() {
+                        Ok(real_target) => {
+                            error!("Rolling back state to match hardware reality: {:?}", real_target);
+                            let _ = self.internal_tx.send(Transition::SyncPowerTarget(real_target)).await;
+                        }
+                        Err(read_err) => {
+                            error!("CRITICAL: Hardware state unreadable after write failure: {}", read_err);
+                        }
+                    }
                 } else {
                     debug!("Power Envelope applied successfully");
                 }
@@ -101,7 +115,8 @@ impl<B: HwBackend> Executor<B> {
                 }
             }
             Effect::PersistState => {
-                debug!("(Stub) Persisting state to disk...");
+                let current_state = self.state_tx.borrow().clone();
+                self.persister.save(&current_state).await;
             }
             Effect::EmitDbusPropertiesChanged => {
                 debug!("PropertiesChanged signal implicitly handled by state watch channel");

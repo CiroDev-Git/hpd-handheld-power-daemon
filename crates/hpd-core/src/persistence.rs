@@ -1,5 +1,5 @@
-use std::fs;
 use std::path::{Path, PathBuf};
+use tokio::fs;
 use tracing::{debug, error};
 use crate::state::ProfileState;
 
@@ -12,12 +12,12 @@ impl StatePersister {
         Self { path: path.into() }
     }
 
-    pub fn load(&self) -> Option<ProfileState> {
-        if !self.path.exists() {
+    pub async fn load(&self) -> Option<ProfileState> {
+        if !self.path.exists() { // path.exists() es rápido, pero fs::metadata sería mejor en async estricto
             return None;
         }
 
-        match fs::read_to_string(&self.path) {
+        match fs::read_to_string(&self.path).await {
             Ok(content) => match toml::from_str(&content) {
                 Ok(state) => Some(state),
                 Err(e) => {
@@ -32,7 +32,7 @@ impl StatePersister {
         }
     }
 
-    pub fn save(&self, state: &ProfileState) {
+    pub async fn save(&self, state: &ProfileState) {
         let content = match toml::to_string_pretty(state) {
             Ok(c) => c,
             Err(e) => {
@@ -41,14 +41,13 @@ impl StatePersister {
             }
         };
 
-        // Atomic write (Making a copy in case of device turned off while saving, keeps the original file safe and not modified)
         let tmp_path = self.path.with_extension("tmp");
-        if let Err(e) = fs::write(&tmp_path, content) {
+        if let Err(e) = fs::write(&tmp_path, content).await {
             error!("Failed to write temporary state file: {}", e);
             return;
         }
 
-        if let Err(e) = fs::rename(&tmp_path, &self.path) {
+        if let Err(e) = fs::rename(&tmp_path, &self.path).await {
             error!("Failed to commit state file: {}", e);
         } else {
             debug!("State persisted successfully to {}", self.path.display());

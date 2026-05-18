@@ -9,4 +9,5 @@ pub enum Transition {
     AcChanged(bool),
     ChargeThresholdChanged(u8),
     ConfigReload,
+    SyncPowerTarget(PowerEnvelopeTarget),
 }
