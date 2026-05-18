@@ -1,6 +1,8 @@
-use crate::power::PowerEnvelope;
 use crate::charge::ChargeControl;
+use crate::fan::FanControl;
 use crate::platform_profile::PlatformProfile;
-// FanControl here soon
+use crate::power::PowerEnvelope;
 
-pub trait HwBackend: PowerEnvelope + ChargeControl + PlatformProfile + Send + Sync {}
+/// The 'supreme' trait who knows all capabilities. 
+/// Each Backend of L1 (Asus, Lenovo, Valve) should implement it
+pub trait HwBackend: PowerEnvelope + ChargeControl + PlatformProfile + FanControl + Send + Sync {}

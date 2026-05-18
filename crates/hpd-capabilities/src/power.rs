@@ -1,13 +1,14 @@
 use crate::error::HpdError;
 use crate::units::PowerMilliwatts;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PowerEnvelopeLimits {
     pub spl_min: PowerMilliwatts,
     pub spl_max: PowerMilliwatts,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PowerEnvelopeTarget {
     pub spl: PowerMilliwatts,
     pub sppt: PowerMilliwatts,

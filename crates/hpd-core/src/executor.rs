@@ -31,6 +31,8 @@ impl<B: HwBackend> Executor<B> {
         device_limits: PowerEnvelopeLimits,
         profile_thresholds: ProfileThresholds,
         transition_rx: mpsc::Receiver<Transition>,
+        internal_tx: mpsc::Sender<Transition>,
+        persister: crate::persistence::StatePersister,
     ) -> (Self, watch::Receiver<ProfileState>) {
         let (state_tx, state_rx) = watch::channel(initial_state);
 
