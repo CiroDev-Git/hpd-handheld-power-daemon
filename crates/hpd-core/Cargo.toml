@@ -1,0 +1,9 @@
+[package]
+name = "hpd-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+hpd-capabilities = { path = "../hpd-capabilities" }
+thiserror = { workspace = true }
+tracing = { workspace = true }
