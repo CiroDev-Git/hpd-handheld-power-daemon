@@ -1,0 +1,14 @@
+[package]
+name = "hpd-sysfs"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+# Exposes the mock only if feature is active (used on tests of L1/L3)
+mock = ["dep:tempfile"]
+
+[dependencies]
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tempfile = { version = "3.10", optional = true }
