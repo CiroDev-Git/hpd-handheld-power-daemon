@@ -1,0 +1,8 @@
+# .cargo/config.toml
+[target.'cfg(all())']
+rustflags = [
+    "-F", "unsafe_code",        # Forbid unsafe (except over hpd-netlink where config #[allow])
+    "-W", "clippy::unwrap_used", # Warn/Deny unwrap
+    "-W", "clippy::expect_used", # Warn/Deny expect
+    "-W", "clippy::panic",       # Warn/Deny panic
+]
