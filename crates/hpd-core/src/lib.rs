@@ -5,3 +5,4 @@ pub mod reducer;
 pub mod state;
 pub mod transition;
 pub mod executor;
+pub mod persistence;
