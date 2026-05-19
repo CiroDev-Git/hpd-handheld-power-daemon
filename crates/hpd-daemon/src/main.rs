@@ -98,16 +98,20 @@ where
             info!("No previous state found (or failed to read). Defaulting to hardware values...");
             // First time after installation, read currentconfig of device
             let current_target = backend.get_target().unwrap_or(PowerEnvelopeTarget {
-                spl: PowerMilliwatts(15000), 
-                sppt: PowerMilliwatts(15000), 
-                fppt: Some(PowerMilliwatts(15000))
+                spl: limits.spl_min, 
+                sppt: limits.spl_min, 
+                fppt: Some(limits.spl_min)
             });
+            let current_profile = backend.get_active_profile().unwrap_or(ProfileName::Balanced);
+            let current_charge_limit = backend.get_end_threshold().unwrap_or(80);
 
             ProfileState {
                 power_target: current_target,
-                active_profile: ProfileName::Balanced,
-                charge_end_threshold: 80,
+                active_profile: current_profile,
+                charge_end_threshold: current_charge_limit,
+                // 'true' as Factory Default in the first time
                 fan_follows_tdp: true,
+                // Read UPower o /sys/class/power_supply/AC
                 is_ac_connected: true,
             }
         }
