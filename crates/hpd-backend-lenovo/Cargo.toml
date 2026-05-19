@@ -1,6 +1,10 @@
 [package]
 name = "hpd-backend-lenovo"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
+hpd-capabilities = { path = "../hpd-capabilities" }
+hpd-sysfs = { path = "../hpd-sysfs" }
+thiserror = { workspace = true }
+tracing = { workspace = true }

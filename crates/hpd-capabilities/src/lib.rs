@@ -6,3 +6,4 @@ pub mod platform_profile;
 pub mod power;
 pub mod profile;
 pub mod units;
+pub mod probe;
