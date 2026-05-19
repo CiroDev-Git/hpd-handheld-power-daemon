@@ -6,7 +6,6 @@ use tokio::sync::mpsc;
 use tokio::signal;
 
 use hpd_sysfs::RealSysfs;
-use hpd_capabilities::power::PowerEnvelopeLimits;
 use hpd_capabilities::profile::ProfileThresholds;
 use hpd_capabilities::power::PowerEnvelopeTarget;
 use hpd_capabilities::units::PowerMilliwatts;
@@ -17,7 +16,7 @@ use hpd_core::executor::Executor;
 use hpd_core::persistence::StatePersister;
 
 use hpd_backend_asus::detect::matches_asus_handheld;
-use hpd_backend_asus::power::AsusPowerBackend;
+use hpd_backend_asus::AsusBackend;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -39,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 4. Choose L1 (Backend) based on detection
     if let Some(asus_model) = matches_asus_handheld(&dmi) {
         info!("ASUS handheld detected: {:?}", asus_model);
-        run_daemon(AsusPowerBackend::new(sysfs)).await?;
+        run_daemon(AsusBackend::new(sysfs)).await?;
     } else {
         error!("Hardware not supported or recognized. Exiting gracefully.");
         std::process::exit(1);
@@ -50,13 +49,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn run_daemon<B>(backend: B) -> Result<(), Box<dyn std::error::Error>>
 where 
-    // As far, force PowerEnvelope implementation only (after will use complete HwBackend)
-    B: hpd_capabilities::power::PowerEnvelope + Send + Sync + 'static 
+    B: hpd_capabilities::backend::HwBackend + 'static 
 {
     // 5. Base config
-    let limits = PowerEnvelopeLimits {
-        spl_min: PowerMilliwatts(7000),
-        spl_max: PowerMilliwatts(35000), // Ally X range
+    let limits = match backend.get_limits() {
+        Ok(l) => {
+            info!("Hardware limits detected: {}W to {}W", l.spl_min.0 / 1000, l.spl_max.0 / 1000);
+            l
+        },
+        Err(e) => {
+            error!("CRITICAL: Cannot read hardware limits: {}. Exiting.", e);
+            return Err(e.into());
+        }
     };
     let thresholds = ProfileThresholds { low_frac: 0.33, high_frac: 0.67 };
     let persister = StatePersister::new("/var/tmp/hpd_state.toml"); // Using /tmp temporally for testing
@@ -79,7 +83,7 @@ where
     let internal_tx = tx.clone(); // For rollback
 
     // 7. Executor instance
-    let (executor, _state_rx) = Executor::new(
+    let (executor, state_rx) = Executor::new(
         backend,
         initial_state,
         limits,
@@ -91,7 +95,7 @@ where
 
     // 8. Run async engine
     info!("Spawning main executor loop...");
-    let executor_handle = tokio::spawn(async move {
+    let _executor_handle = tokio::spawn(async move {
         executor.run().await;
     });
 
@@ -117,4 +121,6 @@ where
             error!("Unable to listen for shutdown signal: {}", err);
         },
     }
+
+    Ok(())
 }

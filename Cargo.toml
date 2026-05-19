@@ -20,7 +20,7 @@ members = [
     # L4 - Interfaces & Daemon
     #"crates/hpd-dbus",
     #"crates/hpd-cli",
-    #"crates/hpd-daemon"
+    "crates/hpd-daemon"
 ]
 
 [workspace.dependencies]
