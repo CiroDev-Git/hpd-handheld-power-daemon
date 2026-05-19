@@ -1,6 +1,14 @@
 [package]
 name = "hpd-cli"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+# Force binary name to hpdctl
+[[bin]]
+name = "hpdctl"
+path = "src/main.rs"
 
 [dependencies]
+clap = { version = "4.4", features = ["derive"] }
+zbus = "4.1"
+tokio = { workspace = true, features = ["full"] }
+thiserror = { workspace = true }

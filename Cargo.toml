@@ -18,8 +18,8 @@ members = [
     "crates/hpd-core",
     
     # L4 - Interfaces & Daemon
-    #"crates/hpd-dbus",
-    #"crates/hpd-cli",
+    "crates/hpd-dbus",
+    "crates/hpd-cli",
     "crates/hpd-daemon"
 ]
 
