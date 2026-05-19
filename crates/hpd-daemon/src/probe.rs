@@ -1,7 +1,18 @@
 use hpd_capabilities::probe::DmiInfo;
 use std::fs;
+use std::env;
 
 pub fn read_system_dmi() -> DmiInfo {
+
+    // Simulator mode for macOS/Development
+    if env::var("HPD_SIMULATOR").is_ok() {
+        return DmiInfo {
+            board_vendor: "ASUSTeK COMPUTER INC.".to_string(),
+            board_name: "RC73XA".to_string(),
+            product_name: "ROG Ally X (Simulator)".to_string(),
+        };
+    }
+
     let vendor = fs::read_to_string("/sys/class/dmi/id/board_vendor")
         .unwrap_or_else(|_| "Unknown".to_string())
         .trim()

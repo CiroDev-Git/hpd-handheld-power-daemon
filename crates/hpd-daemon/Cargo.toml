@@ -7,7 +7,7 @@ edition = "2021"
 # internal layers
 hpd-capabilities = { path = "../hpd-capabilities" }
 hpd-core = { path = "../hpd-core" }
-hpd-sysfs = { path = "../hpd-sysfs" }
+hpd-sysfs = { path = "../hpd-sysfs", features = ["mock"] }
 hpd-backend-asus = { path = "../hpd-backend-asus" }
 hpd-backend-lenovo = { path = "../hpd-backend-lenovo" }
 hpd-backend-valve = { path = "../hpd-backend-valve" }

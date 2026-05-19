@@ -33,6 +33,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Hardware detected: {} - {}", dmi.board_vendor, dmi.board_name);
 
     // 3. Init L0 (I/O Real)
+
+    // --- Simulator mode for macOS ---
+    if std::env::var("HPD_SIMULATOR").is_ok() {
+        info!("Starting in SIMULATOR mode...");
+        {
+            let mock = hpd_sysfs::MockSysfs::new();
+            
+            mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/min_value", "7");
+            mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/max_value", "35");
+            mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/current_value", "15");
+            mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl2_sppt/current_value", "15");
+            mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl3_fppt/current_value", "15");
+            mock.create_file("sys/firmware/acpi/platform_profile", "balanced");
+            mock.create_file("sys/firmware/acpi/platform_profile_choices", "quiet balanced performance");
+            mock.create_file("sys/class/power_supply/BAT0/charge_control_end_threshold", "80");
+            
+            // Inyectamos el Mock en lugar del sistema real!
+            run_daemon(AsusBackend::new(mock)).await?;
+            return Ok(());
+        }
+    }
+    // ---------------------------------
+
+    // --- Production mode ---
     let sysfs = RealSysfs::new();
 
     // 4. Choose L1 (Backend) based on detection
