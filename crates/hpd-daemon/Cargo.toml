@@ -1,6 +1,19 @@
 [package]
 name = "hpd-daemon"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
+# internal layers
+hpd-capabilities = { path = "../hpd-capabilities" }
+hpd-core = { path = "../hpd-core" }
+hpd-sysfs = { path = "../hpd-sysfs" }
+hpd-backend-asus = { path = "../hpd-backend-asus" }
+hpd-backend-lenovo = { path = "../hpd-backend-lenovo" }
+hpd-backend-valve = { path = "../hpd-backend-valve" }
+
+# System tools
+tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true }
+tracing-subscriber = "0.3" # pretty logger
+thiserror = { workspace = true }
