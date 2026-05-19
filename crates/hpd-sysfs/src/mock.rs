@@ -2,18 +2,20 @@
 pub mod testing {
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
     use tempfile::TempDir;
     use crate::io::SysfsIo;
     use crate::error::SysfsError;
 
+    #[derive(Clone)]
     pub struct MockSysfs {
-        root: TempDir,
+        root: Arc<TempDir>,
     }
 
     impl MockSysfs {
         pub fn new() -> Self {
             Self {
-                root: tempfile::tempdir().expect("Failed to create mock sysfs root"),
+                root: Arc::new(tempfile::tempdir().expect("Failed to create mock sysfs root")),
             }
         }
 

@@ -16,10 +16,13 @@ impl<S: SysfsIo> AsusPowerBackend<S> {
 
     fn read_watts(&self, attr: &str, suffix: &str) -> Result<PowerMilliwatts, HpdError> {
         let path = format!("{}/{}/{}", BASE_PATH, attr, suffix);
-        let val_str = self.sysfs.read_string(&path)?;
-
-        let watts: u32 = val_str.parse().map_err(|_| HpdError::Backend {
-            reason: format!("Failed to parse integer from {}", path),
+        // Map error from L0 to generic error of L2
+        let val_str = self.sysfs.read_string(&path).map_err(|e| HpdError::Backend { 
+            reason: format!("Sysfs read failed at {}: {}", path, e) 
+        })?;
+        
+        let watts: u32 = val_str.parse().map_err(|_| HpdError::Backend { 
+            reason: format!("Failed to parse integer from {}", path) 
         })?;
 
         // Convertion of W (kernel) a mW (domain)
@@ -30,7 +33,10 @@ impl<S: SysfsIo> AsusPowerBackend<S> {
         let path = format!("{}/{}/current_value", BASE_PATH, attr);
         // Convertion of mW (domain) a W (kernel)
         let watts = target_mw.0 / 1000;
-        self.sysfs.write_string(&path, &watts.to_string())?;
+        // Map error from L0 to generic error of L2
+        self.sysfs.write_string(&path, &watts.to_string()).map_err(|e| HpdError::Backend { 
+            reason: format!("Sysfs write failed at {}: {}", path, e) 
+        })?;
         Ok(())
     }
 }
@@ -67,5 +73,54 @@ impl<S: SysfsIo> PowerEnvelope for AsusPowerBackend<S> {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hpd_sysfs::MockSysfs; // Simulator based on TempDir
+    use hpd_capabilities::units::PowerMilliwatts;
+
+    #[test]
+    fn test_asus_power_translation_mw_to_watts() {
+        // 1. Arrange: Prepare system with fake files
+        let mock = MockSysfs::new();
+        
+        // MockSysfs handle absolutes paths removing prefix '/'
+        mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/current_value", "15");
+        mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl2_sppt/current_value", "15");
+        mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl3_fppt/current_value", "15");
+        mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/min_value", "7");
+        mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/max_value", "35");
+
+        let backend = AsusPowerBackend::new(mock.clone());
+
+        // 2. Act & Assert (Read): Check that "15" on disk is read as 15000mW
+        let target = backend.get_target().expect("Must be able to read target");
+        assert_eq!(target.spl, PowerMilliwatts(15000));
+        assert_eq!(target.sppt, PowerMilliwatts(15000));
+
+        let limits = backend.get_limits().expect("Must be able to read the limits");
+        assert_eq!(limits.spl_min, PowerMilliwatts(7000));
+        assert_eq!(limits.spl_max, PowerMilliwatts(35000));
+
+        // 3. Act & Assert (Write): Write 25000mW y check that disk stored "25"
+        let new_target = PowerEnvelopeTarget {
+            spl: PowerMilliwatts(20000),
+            sppt: PowerMilliwatts(25000),
+            fppt: Some(PowerMilliwatts(30000)),
+        };
+
+        backend.set_target(&new_target).expect("Debe poder escribir el target");
+
+        // Use the mock to spy what was written in file
+        let spl_written = mock.read_string("/sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/current_value")
+            .unwrap();
+        let sppt_written = mock.read_string("/sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl2_sppt/current_value")
+            .unwrap();
+
+        assert_eq!(spl_written, "20", "20000mW must translate to string '20'");
+        assert_eq!(sppt_written, "25", "25000mW must translate to string '25'");
     }
 }

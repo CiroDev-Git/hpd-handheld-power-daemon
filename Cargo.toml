@@ -10,9 +10,9 @@ members = [
     "crates/hpd-capabilities",
     
     # L1 - Backends
-    #"crates/hpd-backend-asus",
-    #"crates/hpd-backend-lenovo",
-    #"crates/hpd-backend-valve",
+    "crates/hpd-backend-asus",
+    "crates/hpd-backend-lenovo",
+    "crates/hpd-backend-valve",
     
     # L3 - Domain / Core
     "crates/hpd-core",

@@ -2,20 +2,20 @@ use hpd_capabilities::error::HpdError;
 use hpd_capabilities::power::{PowerEnvelope, PowerEnvelopeLimits, PowerEnvelopeTarget};
 use hpd_sysfs::SysfsIo;
 
-pub struct LenovoPowerBackend<S: SysfsIo> {
+pub struct ValvePowerBackend<S: SysfsIo> {
     _sysfs: S,
 }
 
-impl<S: SysfsIo> LenovoPowerBackend<S> {
+impl<S: SysfsIo> ValvePowerBackend<S> {
     pub fn new(_sysfs: S) -> Self {
         Self { _sysfs }
     }
 }
 
-impl<S: SysfsIo> PowerEnvelope for LenovoPowerBackend<S> {
+impl<S: SysfsIo> PowerEnvelope for ValvePowerBackend<S> {
     fn get_limits(&self) -> Result<PowerEnvelopeLimits, HpdError> {
         Err(HpdError::Backend { 
-            reason: "Lenovo limits implementation pending. See docs/devices/lenovo.md".into() 
+            reason: "Valve limits implementation pending. See docs/devices/valve.md".into() 
         })
     }
 

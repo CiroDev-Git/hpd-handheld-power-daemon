@@ -8,3 +8,6 @@ hpd-capabilities = { path = "../hpd-capabilities" }
 hpd-sysfs = { path = "../hpd-sysfs" }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+hpd-sysfs = { path = "../hpd-sysfs", features = ["mock"] }
