@@ -17,3 +17,6 @@ tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true }
 tracing-subscriber = "0.3" # pretty logger
 thiserror = { workspace = true }
+
+hpd-dbus = { path = "../hpd-dbus" }
+zbus = "4.1"

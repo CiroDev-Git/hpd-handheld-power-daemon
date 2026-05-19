@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 4. Choose L1 (Backend) based on detection
     if let Some(asus_model) = matches_asus_handheld(&dmi) {
         info!("ASUS handheld detected: {:?}", asus_model);
-        run_daemon(AsusPowerBackend::new(sysfs)).await;
+        run_daemon(AsusPowerBackend::new(sysfs)).await?;
     } else {
         error!("Hardware not supported or recognized. Exiting gracefully.");
         std::process::exit(1);
@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn run_daemon<B>(backend: B) 
+async fn run_daemon<B>(backend: B) -> Result<(), Box<dyn std::error::Error>>
 where 
     // As far, force PowerEnvelope implementation only (after will use complete HwBackend)
     B: hpd_capabilities::power::PowerEnvelope + Send + Sync + 'static 
@@ -95,7 +95,20 @@ where
         executor.run().await;
     });
 
-    // 9. Wait until turn off signal (Ctrl+C o SIGTERM de systemd)
+
+    // 9. Start D-Bus server
+    info!("Starting D-Bus server on session bus...");
+    let dbus_interface = hpd_dbus::service::PowerDaemonInterface::new(tx.clone(), state_rx);
+
+    let _conn = zbus::ConnectionBuilder::session()?
+        .name("dev.cirodev.hpd.PowerDaemon1")?
+        .serve_at("/dev/cirodev/hpd/PowerDaemon1", dbus_interface)?
+        .build()
+        .await?;
+
+    info!("Daemon is fully running and listening for commands.");
+
+    // 10. Wait until turn off signal (Ctrl+C o SIGTERM de systemd)
     match signal::ctrl_c().await {
         Ok(()) => {
             info!("Received shutdown signal. Shutting down gracefully...");
