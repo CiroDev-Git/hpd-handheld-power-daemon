@@ -89,17 +89,28 @@ where
     let thresholds = ProfileThresholds { low_frac: 0.33, high_frac: 0.67 };
     let persister = StatePersister::new("/var/tmp/hpd_state.toml"); // Using /tmp temporally for testing
 
-    // Initial state (after will read from persister)
-    let initial_state = ProfileState {
-        power_target: PowerEnvelopeTarget {
-            spl: PowerMilliwatts(15000),
-            sppt: PowerMilliwatts(15000),
-            fppt: Some(PowerMilliwatts(15000)),
+    let initial_state = match persister.load().await {
+        Some(state) => {
+            info!("Previous state loaded successfully from disk.");
+            state
         },
-        active_profile: ProfileName::Balanced,
-        charge_end_threshold: 80,
-        fan_follows_tdp: true,
-        is_ac_connected: true,
+        None => {
+            info!("No previous state found (or failed to read). Defaulting to hardware values...");
+            // First time after installation, read currentconfig of device
+            let current_target = backend.get_target().unwrap_or(PowerEnvelopeTarget {
+                spl: PowerMilliwatts(15000), 
+                sppt: PowerMilliwatts(15000), 
+                fppt: Some(PowerMilliwatts(15000))
+            });
+
+            ProfileState {
+                power_target: current_target,
+                active_profile: ProfileName::Balanced,
+                charge_end_threshold: 80,
+                fan_follows_tdp: true,
+                is_ac_connected: true,
+            }
+        }
     };
 
     // 6. Create communication channels

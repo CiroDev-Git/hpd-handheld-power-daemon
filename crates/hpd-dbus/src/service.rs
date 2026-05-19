@@ -5,6 +5,7 @@ use tracing::{debug, error};
 use hpd_core::transition::Transition;
 use hpd_core::state::ProfileState;
 use hpd_capabilities::units::PowerMilliwatts;
+use hpd_core::invariants::validate_power_envelope;
 
 pub struct PowerDaemonInterface {
     tx: mpsc::Sender<Transition>,
@@ -28,9 +29,24 @@ impl PowerDaemonInterface {
         let mut target = self.state_rx.borrow().power_target.clone();
         
         // 2. Modify only SPL (convertion from W to mW for L3 domain)
-        target.spl = PowerMilliwatts(watts * 1000);
+        let spl_mw = watts * 1000;
+        target.spl = PowerMilliwatts(spl_mw);
+
+        // 3. Boost curve
+        // SPPT = SPL + 15% 
+        // FPPT = SPL + 25%
+        let sppt_mw = (spl_mw as f32 * 1.15) as u32; 
+        let fppt_mw = (spl_mw as f32 * 1.25) as u32;
+        target.sppt = PowerMilliwatts(sppt_mw);
+        target.fppt = Some(PowerMilliwatts(fppt_mw));
+
+        // 4. Check before queoe.
+        if let Err(e) = validate_power_envelope(&target) {
+            error!("D-Bus rejected request: {}", e);
+            return Err(zbus::fdo::Error::InvalidArgs(e.to_string()));
+        }
         
-        // 3. Push event to Executor
+        // 5. Push event to Executor
         if self.tx.send(Transition::SetEnvelope(target)).await.is_err() {
             error!("Failed to send transition to executor");
             return Err(zbus::fdo::Error::Failed("Internal daemon error: Executor down".into()));
