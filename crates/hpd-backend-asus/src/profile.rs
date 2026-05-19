@@ -4,6 +4,12 @@ use hpd_capabilities::profile::ProfileName;
 use hpd_sysfs::SysfsIo;
 
 const PROFILE_PATH: &str = "/sys/firmware/acpi/platform_profile";
+const CHOICES_PATH: &str = "/sys/firmware/acpi/platform_profile_choices";
+
+const ACPI_QUIET: &str = "quiet";
+const ACPI_LOW_POWER: &str = "low-power";
+const ACPI_BALANCED: &str = "balanced";
+const ACPI_PERFORMANCE: &str = "performance";
 
 pub struct AsusProfileBackend<S: SysfsIo> {
     sysfs: S,
@@ -14,40 +20,70 @@ impl<S: SysfsIo> AsusProfileBackend<S> {
         Self { sysfs }
     }
 
+    /// Read _choices files y return a vector with real options from kernel
+    fn get_available_choices(&self) -> Result<Vec<String>, HpdError> {
+        let val_str = self
+            .sysfs
+            .read_string(CHOICES_PATH)
+            .map_err(|e| HpdError::Backend {
+                reason: format!("Failed to read platform profile choices: {}", e),
+            })?;
+
+        Ok(val_str.split_whitespace().map(|s| s.to_string()).collect())
+    }
+
+    /// Parser from kernel to abstract domain
     fn parse_profile(val: &str) -> ProfileName {
         match val {
-            "low-power" | "quiet" => ProfileName::PowerSaver,
-            "balanced" => ProfileName::Balanced,
-            "performance" => ProfileName::Performance,
+            ACPI_LOW_POWER | ACPI_QUIET => ProfileName::PowerSaver,
+            ACPI_BALANCED => ProfileName::Balanced,
+            ACPI_PERFORMANCE => ProfileName::Performance,
             other => ProfileName::Custom(other.to_string()),
         }
     }
 
-    fn profile_to_str(profile: &ProfileName) -> &'static str {
+    /// Map our abstract domain from kenel, using available options
+    fn resolve_target_string(&self, profile: &ProfileName, choices: &[String]) -> String {
         match profile {
-            ProfileName::PowerSaver => "quiet", // ASUS use 'quiet' or 'low-power'
-            ProfileName::Balanced => "balanced",
-            ProfileName::Performance => "performance",
-            ProfileName::Custom(_) => "balanced", // Safe fallback
+            ProfileName::PowerSaver => {
+                if choices.contains(&ACPI_QUIET.to_string()) {
+                    ACPI_QUIET.to_string()
+                } else if choices.contains(&ACPI_LOW_POWER.to_string()) {
+                    ACPI_LOW_POWER.to_string()
+                } else {
+                    ACPI_BALANCED.to_string() // Safe fallback
+                }
+            }
+            ProfileName::Balanced => ACPI_BALANCED.to_string(), // Universal en x86
+            ProfileName::Performance => ACPI_PERFORMANCE.to_string(),
+            ProfileName::Custom(c) => c.clone(),
         }
     }
 }
 
 impl<S: SysfsIo> PlatformProfile for AsusProfileBackend<S> {
     fn get_active_profile(&self) -> Result<ProfileName, HpdError> {
-        let val_str = self.sysfs.read_string(PROFILE_PATH).map_err(|e| HpdError::Backend {
-            reason: format!("Failed to read platform profile: {}", e)
-        })?;
-        
+        let val_str = self
+            .sysfs
+            .read_string(PROFILE_PATH)
+            .map_err(|e| HpdError::Backend {
+                reason: format!("Failed to read platform profile: {}", e),
+            })?;
+
         Ok(Self::parse_profile(&val_str))
     }
 
     fn set_active_profile(&self, profile: &ProfileName) -> Result<(), HpdError> {
-        let val_str = Self::profile_to_str(profile);
-        self.sysfs.write_string(PROFILE_PATH, val_str).map_err(|e| HpdError::Backend {
-            reason: format!("Failed to set platform profile: {}", e)
-        })?;
-        
+        let choices = self.get_available_choices()?;
+
+        let target_str = self.resolve_target_string(profile, &choices);
+
+        self.sysfs
+            .write_string(PROFILE_PATH, &target_str)
+            .map_err(|e| HpdError::Backend {
+                reason: format!("Failed to set platform profile: {}", e),
+            })?;
+
         Ok(())
     }
 }
