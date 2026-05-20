@@ -6,10 +6,14 @@ echo "🔨 1. Compiling HPD Release..."
 cargo build --release
 
 echo "📦 2. Installing binaries in /usr/local/bin..."
+
 sudo cp target/release/hpd-daemon /usr/local/bin/
 sudo cp target/release/hpdctl /usr/local/bin/
 
 echo "⚙️  3. Installing system configs..."
+sudo mkdir -p /etc/systemd/system/
+sudo mkdir -p /etc/dbus-1/system.d/
+
 sudo cp package/hpd.service /etc/systemd/system/
 sudo cp package/dev.cirodev.hpd.conf /etc/dbus-1/system.d/
 
