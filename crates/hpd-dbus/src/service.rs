@@ -60,4 +60,30 @@ impl PowerDaemonInterface {
         let spl_mw = self.state_rx.borrow().power_target.spl.0;
         spl_mw / 1000 // Convertion from mW to W for UI
     }
+
+    async fn set_charge_threshold(&self, threshold: u8) -> zbus::fdo::Result<()> {
+        debug!("D-Bus received request to Set Charge Limit: {}%", threshold);
+        
+        if !(20..=100).contains(&threshold) {
+            return Err(zbus::fdo::Error::InvalidArgs("Charge limit must be between 20 and 100".into()));
+        }
+
+        if self.tx.send(Transition::ChargeThresholdChanged(threshold)).await.is_err() {
+            error!("Failed to send transition to executor");
+            return Err(zbus::fdo::Error::Failed("Internal daemon error: Executor down".into()));
+        }
+        
+        Ok(())
+    }
+
+    #[zbus(property)]
+    async fn active_profile(&self) -> String {
+        let profile = &self.state_rx.borrow().active_profile;
+        format!("{:?}", profile) 
+    }
+
+    #[zbus(property)]
+    async fn charge_end_threshold(&self) -> u8 {
+        self.state_rx.borrow().charge_end_threshold
+    }
 }

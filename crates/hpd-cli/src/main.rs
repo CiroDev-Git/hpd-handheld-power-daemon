@@ -19,6 +19,11 @@ enum Commands {
         #[command(subcommand)]
         action: TdpAction,
     },
+    /// Handle charge limit of battery
+    Charge {
+        #[command(subcommand)]
+        action: ChargeAction,
+    },
     /// Show the current system status
     Status,
 }
@@ -31,6 +36,17 @@ enum TdpAction {
         watts: u32,
     },
     /// Get current TDP
+    Get,
+}
+
+#[derive(Subcommand)]
+enum ChargeAction {
+    /// Set the max charge limit
+    Set {
+        #[arg(help = "Use a value between 20 and 100")]
+        limit: u8,
+    },
+    /// Get the current charge limit
     Get,
 }
 
@@ -77,11 +93,29 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
                 println!("Current TDP (SPL): {}W", watts);
             }
         },
+        Commands::Charge { action } => match action {
+            ChargeAction::Set { limit } => {
+                println!("Changing battery limit to {}%...", limit);
+                proxy.set_charge_threshold(limit).await?;
+                println!("✅ Battery limit successfully changed.");
+            }
+            ChargeAction::Get => {
+                let limit = proxy.charge_end_threshold().await?;
+                println!("Current battery limit: {}%", limit);
+            }
+        },
         Commands::Status => {
             let spl_watts = proxy.current_spl().await?;
-            println!("--- Handheld Power Daemon (Status) ---");
-            println!("⚡ TDP (SPL):\t{}W", spl_watts);
-            println!("---------------------------------------");
+            let profile = proxy.active_profile().await?;
+            let charge_limit = proxy.charge_end_threshold().await?;
+
+            println!("=======================================");
+            println!("  🎮 Handheld Power Daemon Status 🎮  ");
+            println!("=======================================");
+            println!("  ⚡ TDP (SPL):         {} W", spl_watts);
+            println!(" ❄️ Cooling Profile:   {}", profile);
+            println!(" 🔋 Battery Limit:     {} %", charge_limit);
+            println!("=======================================");
         }
     }
     Ok(())

@@ -8,7 +8,6 @@ use tokio::signal;
 use hpd_sysfs::RealSysfs;
 use hpd_capabilities::profile::ProfileThresholds;
 use hpd_capabilities::power::PowerEnvelopeTarget;
-use hpd_capabilities::units::PowerMilliwatts;
 use hpd_capabilities::profile::ProfileName;
 use hpd_core::state::ProfileState;
 use hpd_core::transition::Transition;
