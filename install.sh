@@ -7,6 +7,8 @@ cargo build --release
 
 echo "📦 2. Installing binaries in /usr/local/bin..."
 
+sudo systemctl stop hpd.service || true
+
 sudo cp target/release/hpd-daemon /usr/local/bin/
 sudo cp target/release/hpdctl /usr/local/bin/
 
