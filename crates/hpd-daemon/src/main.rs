@@ -139,10 +139,18 @@ where
 
 
     // 9. Start D-Bus server
-    info!("Starting D-Bus server on session bus...");
+    info!("Starting D-Bus server...");
     let dbus_interface = hpd_dbus::service::PowerDaemonInterface::new(tx.clone(), state_rx);
 
-    let _conn = zbus::ConnectionBuilder::session()?
+    let conn_builder = if std::env::var("HPD_SIMULATOR").is_ok() {
+        info!("Using Session Bus (Simulator Mode)");
+        zbus::ConnectionBuilder::session()?
+    } else {
+        info!("Using System Bus (Production Mode)");
+        zbus::ConnectionBuilder::system()?
+    };
+    
+    let _conn = conn_builder
         .name("dev.cirodev.hpd.PowerDaemon1")?
         .serve_at("/dev/cirodev/hpd/PowerDaemon1", dbus_interface)?
         .build()

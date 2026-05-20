@@ -1,0 +1,18 @@
+[Unit]
+Description=Handheld Power Daemon (hpd)
+Documentation=https://github.com/CiroDev-Git/hpd-handheld-power-daemon
+# Make sure start after base system is ready
+After=multi-user.target dbus.service
+
+[Service]
+Type=simple
+# Execute final binary
+ExecStart=/usr/local/bin/hpd-daemon
+Restart=on-failure
+RestartSec=5
+# Enable tracing logs
+Environment="RUST_LOG=info"
+
+[Install]
+# Link with system start-up
+WantedBy=multi-user.target

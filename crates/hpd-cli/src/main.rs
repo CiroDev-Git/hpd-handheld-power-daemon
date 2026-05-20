@@ -56,7 +56,14 @@ async fn main() {
     let cli = Cli::parse();
 
     // Trying to connect to Session Bus (the same one that daeomon use currently)
-    let connection = match zbus::Connection::session().await {
+
+    let connection_result = if std::env::var("HPD_SIMULATOR").is_ok() {
+        zbus::Connection::session().await
+    } else {
+        zbus::Connection::system().await
+    };
+
+    let connection = match connection_result {
         Ok(conn) => conn,
         Err(e) => {
             eprintln!("Fatal error: Cannot connect to D-Bus. ¿Is the D-Bus system running?\nDetail: {}", e);
