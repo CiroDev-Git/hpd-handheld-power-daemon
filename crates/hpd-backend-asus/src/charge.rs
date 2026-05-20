@@ -1,4 +1,4 @@
-use hpd_capabilities::charge::ChargeControl;
+use hpd_capabilities::charge::{ChargeControl, MIN_CHARGE_THRESHOLD, MAX_CHARGE_THRESHOLD};
 use hpd_capabilities::error::HpdError;
 use hpd_sysfs::SysfsIo;
 
@@ -30,7 +30,7 @@ impl<S: SysfsIo> ChargeControl for AsusChargeBackend<S> {
     }
 
     fn set_end_threshold(&self, threshold: u8) -> Result<(), HpdError> {
-        if !(20..=100).contains(&threshold) {
+        if !(MIN_CHARGE_THRESHOLD..=MAX_CHARGE_THRESHOLD).contains(&threshold) {
             return Err(HpdError::InvariantViolation(
                 format!("Charge threshold must be between 20 and 100, got {}", threshold)
             ));

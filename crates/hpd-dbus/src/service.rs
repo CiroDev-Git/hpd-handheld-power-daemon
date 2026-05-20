@@ -7,6 +7,8 @@ use hpd_core::state::ProfileState;
 use hpd_capabilities::units::PowerMilliwatts;
 use hpd_core::invariants::validate_power_envelope;
 
+use hpd_capabilities::charge::{MIN_CHARGE_THRESHOLD, MAX_CHARGE_THRESHOLD};
+
 pub struct PowerDaemonInterface {
     tx: mpsc::Sender<Transition>,
     state_rx: watch::Receiver<ProfileState>,
@@ -64,7 +66,7 @@ impl PowerDaemonInterface {
     async fn set_charge_threshold(&self, threshold: u8) -> zbus::fdo::Result<()> {
         debug!("D-Bus received request to Set Charge Limit: {}%", threshold);
         
-        if !(20..=100).contains(&threshold) {
+        if !(MIN_CHARGE_THRESHOLD..=MAX_CHARGE_THRESHOLD).contains(&threshold) {
             return Err(zbus::fdo::Error::InvalidArgs("Charge limit must be between 20 and 100".into()));
         }
 
