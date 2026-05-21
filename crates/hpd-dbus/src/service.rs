@@ -4,17 +4,23 @@ use tracing::{debug, error};
 
 use hpd_core::transition::Transition;
 use hpd_core::state::ProfileState;
+use hpd_capabilities::power::PowerEnvelopeLimits;
 
 use hpd_capabilities::charge::{MIN_CHARGE_THRESHOLD, MAX_CHARGE_THRESHOLD};
 
 pub struct PowerDaemonInterface {
     tx: mpsc::Sender<Transition>,
     state_rx: watch::Receiver<ProfileState>,
+    limits: PowerEnvelopeLimits,
 }
 
 impl PowerDaemonInterface {
-    pub fn new(tx: mpsc::Sender<Transition>, state_rx: watch::Receiver<ProfileState>) -> Self {
-        Self { tx, state_rx }
+    pub fn new(
+        tx: mpsc::Sender<Transition>, 
+        state_rx: watch::Receiver<ProfileState>,
+        limits: PowerEnvelopeLimits,
+    ) -> Self {
+        Self { tx, state_rx, limits }
     }
 }
 
@@ -77,5 +83,14 @@ impl PowerDaemonInterface {
     #[zbus(property)]
     async fn charge_end_threshold(&self) -> u8 {
         self.state_rx.borrow().charge_end_threshold
+    }
+
+    async fn get_hardware_limits(&self) -> zbus::fdo::Result<(u32, u32, u32, u32)> {
+        Ok((
+            self.limits.spl_min.0 / 1000,
+            self.limits.spl_max.0 / 1000,
+            self.limits.sppt_max.0 / 1000,
+            self.limits.fppt_max.0 / 1000,
+        ))
     }
 }

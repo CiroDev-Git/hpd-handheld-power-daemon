@@ -124,7 +124,7 @@ where
     let (executor, state_rx) = Executor::new(
         backend,
         initial_state,
-        limits,
+        limits.clone(),
         thresholds,
         rx,
         internal_tx,
@@ -140,7 +140,11 @@ where
 
     // 9. Start D-Bus server
     info!("Starting D-Bus server...");
-    let dbus_interface = hpd_dbus::service::PowerDaemonInterface::new(tx.clone(), state_rx);
+    let dbus_interface = hpd_dbus::service::PowerDaemonInterface::new(
+        tx.clone(), 
+        state_rx, 
+        limits
+    );
 
     let conn_builder = if std::env::var("HPD_SIMULATOR").is_ok() {
         info!("Using Session Bus (Simulator Mode)");

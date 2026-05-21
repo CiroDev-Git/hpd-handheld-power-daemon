@@ -29,6 +29,8 @@ enum Commands {
         #[arg(help = "Presets: silent (10W), performance (15W), turbo (30W)")]
         name: String,
     },
+    /// Show the device system limits
+    Limits,
     /// Show the current system status
     Status,
 }
@@ -124,6 +126,14 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
                 println!("✅ Preset applied successfully.");
                 println!("(Cooling profile has changed automatically).");
             }
+        },
+        Commands::Limits => {
+            let (spl_min, spl_max, sppt_max, fppt_max) = proxy.get_hardware_limits().await?;
+            println!("📊 Detected hardware limits:");
+            println!("  • SPL Min (Base):    {}W", spl_min);
+            println!("  • SPL Max (Base):    {}W", spl_max);
+            println!("  • SPPT Max (Boost):  {}W", sppt_max);
+            println!("  • FPPT Max (Peak):   {}W", fppt_max);
         },
         Commands::Status => {
             let spl_watts = proxy.current_spl().await?;
