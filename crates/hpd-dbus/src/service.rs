@@ -34,11 +34,16 @@ impl PowerDaemonInterface {
         let spl_mw = watts * 1000;
         target.spl = PowerMilliwatts(spl_mw);
 
+        // --- CLAMPING Patch (Hardware safety) ---
+        let max_sppt_mw = 43000; // 43W
+        let max_fppt_mw = 53000; // 53W
+        
+
         // 3. Boost curve
-        // SPPT = SPL + 15% 
-        // FPPT = SPL + 25%
-        let sppt_mw = (spl_mw as f32 * 1.15) as u32; 
-        let fppt_mw = (spl_mw as f32 * 1.25) as u32;
+        // SPPT = SPL + 15% or max allowed by BIOS
+        // FPPT = SPL + 25% or max allowed by BIOS
+        let sppt_mw = ((spl_mw as f32 * 1.15) as u32).min(max_sppt_mw); 
+        let fppt_mw = ((spl_mw as f32 * 1.25) as u32).min(max_fppt_mw);
         target.sppt = PowerMilliwatts(sppt_mw);
         target.fppt = Some(PowerMilliwatts(fppt_mw));
 
