@@ -27,6 +27,10 @@ pub fn reduce(
     let mut effects = Vec::new();
 
     match transition {
+
+        // -----------------------------------------------------
+        // SMART MODE (get boost automatically)
+        // -----------------------------------------------------
         Transition::SetSpl(watts) => {
             let spl_mw = watts * 1000;
             
@@ -47,51 +51,16 @@ pub fn reduce(
 
             validate_power_envelope(&new_target)?;
 
-            if new_state.power_target != new_target {
-                new_state.power_target = new_target.clone();
-                effects.push(Effect::ApplyPowerEnvelope(new_target.clone()));
-
-                // Auto-Profile
-                if new_state.fan_follows_tdp {
-                    let inferred_profile = infer_profile_from_spl(
-                        &new_target,
-                        device_limits,
-                        profile_thresholds,
-                    );
-
-                    if new_state.active_profile != inferred_profile {
-                        new_state.active_profile = inferred_profile.clone();
-                        effects.push(Effect::ApplyPlatformProfile(inferred_profile));
-                    }
-                }
-
-                effects.push(Effect::PersistState);
-                effects.push(Effect::EmitDbusPropertiesChanged);
-            }
+            return apply_target_and_profile(state, new_target, device_limits, profile_thresholds);
         }
+
+        // -----------------------------------------------------
+        // MANUAL MODE (user define values)
+        // -----------------------------------------------------
         Transition::SetEnvelope(new_target) => {
             validate_power_envelope(&new_target)?;
 
-            if new_state.power_target != new_target {
-                new_state.power_target = new_target.clone();
-                effects.push(Effect::ApplyPowerEnvelope(new_target.clone()));
-
-                if new_state.fan_follows_tdp {
-                    let inferred_profile = infer_profile_from_spl(
-                        &new_target,
-                        device_limits,
-                        profile_thresholds,
-                    );
-
-                    if new_state.active_profile != inferred_profile {
-                        new_state.active_profile = inferred_profile.clone();
-                        effects.push(Effect::ApplyPlatformProfile(inferred_profile));
-                    }
-                }
-
-                effects.push(Effect::PersistState);
-                effects.push(Effect::EmitDbusPropertiesChanged);
-            }
+            return apply_target_and_profile(state, new_target, device_limits, profile_thresholds);
         }
 
         Transition::SetProfile(new_profile) => {
@@ -134,6 +103,45 @@ pub fn reduce(
     }
 
     Ok(ReducerOutput { new_state, effects })
+}
+
+fn apply_target_and_profile(
+    current_state: &ProfileState,
+    new_target: PowerEnvelopeTarget,
+    device_limits: &PowerEnvelopeLimits,
+    thresholds: &ProfileThresholds,
+) -> Result<ReducerOutput, HpdError> {
+
+    let mut new_state = current_state.clone();
+    let mut effects = Vec::new();
+
+    if new_state.power_target != new_target {
+
+        new_state.power_target = new_target.clone();
+        effects.push(Effect::ApplyPowerEnvelope(new_target.clone()));
+
+        // Auto-Profile
+        if new_state.fan_follows_tdp {
+            let inferred_profile = infer_profile_from_spl(
+                &new_target, 
+                device_limits, 
+                thresholds
+            );
+
+            if new_state.active_profile != inferred_profile {
+                new_state.active_profile = inferred_profile.clone();
+                effects.push(Effect::ApplyPlatformProfile(inferred_profile));
+            }
+
+        }
+
+        effects.push(Effect::PersistState);
+        effects.push(Effect::EmitDbusPropertiesChanged);
+
+    }
+
+    Ok(ReducerOutput { new_state, effects })
+
 }
 
 #[cfg(test)]
