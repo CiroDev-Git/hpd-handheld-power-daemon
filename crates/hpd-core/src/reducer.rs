@@ -33,14 +33,9 @@ pub fn reduce(
             let max_w = device_limits.spl_max.0 / 1000;
 
             let target_watts = match preset {
-                // Silent: 10W (or min value of device if its greater than 10)
-                SystemPreset::Silent => 10.max(min_w),
-                
-                // Performance: Between Min and Max
+                SystemPreset::Silent => min_w,
                 SystemPreset::Performance => (min_w + max_w) / 2,
-                
-                // Turbo: 30W (or max value of device if its lower than 30)
-                SystemPreset::Turbo => 30.min(max_w),
+                SystemPreset::Turbo => max_w,
             };
 
             return reduce(state, Transition::SetSpl(target_watts), device_limits, profile_thresholds);
