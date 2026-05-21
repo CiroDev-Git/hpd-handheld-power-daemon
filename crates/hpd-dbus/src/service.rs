@@ -4,8 +4,6 @@ use tracing::{debug, error};
 
 use hpd_core::transition::Transition;
 use hpd_core::state::ProfileState;
-use hpd_capabilities::units::PowerMilliwatts;
-use hpd_core::invariants::validate_power_envelope;
 
 use hpd_capabilities::charge::{MIN_CHARGE_THRESHOLD, MAX_CHARGE_THRESHOLD};
 
@@ -24,37 +22,10 @@ impl PowerDaemonInterface {
 impl PowerDaemonInterface {
     
     /// Change SPL
-    async fn set_spl(&self, watts: u32) -> zbus::fdo::Result<()> {
+   async fn set_spl(&self, watts: u32) -> zbus::fdo::Result<()> {
         debug!("D-Bus received request to Set SPL: {}W", watts);
         
-        // 1. Get current target from memory (avoid blocking)
-        let mut target = self.state_rx.borrow().power_target.clone();
-        
-        // 2. Modify only SPL (convertion from W to mW for L3 domain)
-        let spl_mw = watts * 1000;
-        target.spl = PowerMilliwatts(spl_mw);
-
-        // --- CLAMPING Patch (Hardware safety) ---
-        let max_sppt_mw = 43000; // 43W
-        let max_fppt_mw = 53000; // 53W
-        
-
-        // 3. Boost curve
-        // SPPT = SPL + 15% or max allowed by BIOS
-        // FPPT = SPL + 25% or max allowed by BIOS
-        let sppt_mw = ((spl_mw as f32 * 1.15) as u32).min(max_sppt_mw); 
-        let fppt_mw = ((spl_mw as f32 * 1.25) as u32).min(max_fppt_mw);
-        target.sppt = PowerMilliwatts(sppt_mw);
-        target.fppt = Some(PowerMilliwatts(fppt_mw));
-
-        // 4. Check before queoe.
-        if let Err(e) = validate_power_envelope(&target) {
-            error!("D-Bus rejected request: {}", e);
-            return Err(zbus::fdo::Error::InvalidArgs(e.to_string()));
-        }
-        
-        // 5. Push event to Executor
-        if self.tx.send(Transition::SetEnvelope(target)).await.is_err() {
+        if self.tx.send(Transition::SetSpl(watts)).await.is_err() {
             error!("Failed to send transition to executor");
             return Err(zbus::fdo::Error::Failed("Internal daemon error: Executor down".into()));
         }

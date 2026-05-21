@@ -46,9 +46,17 @@ impl<S: SysfsIo> PowerEnvelope for AsusPowerBackend<S> {
         let min = self.read_watts("ppt_pl1_spl", "min_value")?;
         let max = self.read_watts("ppt_pl1_spl", "max_value")?;
 
+        let sppt_max = self.read_watts("ppt_pl2_sppt", "max_value")
+            .unwrap_or(PowerMilliwatts(43000));
+            
+        let fppt_max = self.read_watts("ppt_fppt", "max_value")
+            .unwrap_or(PowerMilliwatts(53000));
+
         Ok(PowerEnvelopeLimits {
             spl_min: min,
             spl_max: max,
+            sppt_max: sppt_max,
+            fppt_max:fppt_max,
         })
     }
 

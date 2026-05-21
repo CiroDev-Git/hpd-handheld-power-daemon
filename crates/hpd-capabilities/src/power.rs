@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 pub struct PowerEnvelopeLimits {
     pub spl_min: PowerMilliwatts,
     pub spl_max: PowerMilliwatts,
+    pub sppt_max: PowerMilliwatts,
+    pub fppt_max: PowerMilliwatts,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -1,6 +1,8 @@
 use hpd_capabilities::error::HpdError;
 use hpd_capabilities::power::PowerEnvelopeLimits;
+use hpd_capabilities::power::PowerEnvelopeTarget;
 use hpd_capabilities::profile::ProfileThresholds;
+use hpd_capabilities::units::PowerMilliwatts;
 
 use crate::effect::Effect;
 use crate::inference::infer_profile_from_spl;
@@ -25,6 +27,48 @@ pub fn reduce(
     let mut effects = Vec::new();
 
     match transition {
+        Transition::SetSpl(watts) => {
+            let spl_mw = watts * 1000;
+            
+            if spl_mw < device_limits.spl_min.0 || spl_mw > device_limits.spl_max.0 {
+                return Err(HpdError::InvariantViolation(
+                    format!("SPL ({}W) out of hardware range", watts)
+                ));
+            }
+
+            let sppt_mw = ((spl_mw as f32 * 1.15) as u32).min(device_limits.sppt_max.0);
+            let fppt_mw = ((spl_mw as f32 * 1.25) as u32).min(device_limits.fppt_max.0);
+
+            let new_target = PowerEnvelopeTarget {
+                spl: PowerMilliwatts(spl_mw),
+                sppt: PowerMilliwatts(sppt_mw),
+                fppt: Some(PowerMilliwatts(fppt_mw)),
+            };
+
+            validate_power_envelope(&new_target)?;
+
+            if new_state.power_target != new_target {
+                new_state.power_target = new_target.clone();
+                effects.push(Effect::ApplyPowerEnvelope(new_target.clone()));
+
+                // Auto-Profile
+                if new_state.fan_follows_tdp {
+                    let inferred_profile = infer_profile_from_spl(
+                        &new_target,
+                        device_limits,
+                        profile_thresholds,
+                    );
+
+                    if new_state.active_profile != inferred_profile {
+                        new_state.active_profile = inferred_profile.clone();
+                        effects.push(Effect::ApplyPlatformProfile(inferred_profile));
+                    }
+                }
+
+                effects.push(Effect::PersistState);
+                effects.push(Effect::EmitDbusPropertiesChanged);
+            }
+        }
         Transition::SetEnvelope(new_target) => {
             validate_power_envelope(&new_target)?;
 
@@ -119,6 +163,8 @@ mod tests {
         let limits = PowerEnvelopeLimits {
             spl_min: PowerMilliwatts(7000),
             spl_max: PowerMilliwatts(35000), // Ally X ranges
+            sppt_max: PowerMilliwatts(43000),
+            fppt_max: PowerMilliwatts(53000),
         };
         let thresholds = ProfileThresholds { low_frac: 0.33, high_frac: 0.67 };
 
@@ -145,6 +191,8 @@ mod tests {
         let limits = PowerEnvelopeLimits {
             spl_min: PowerMilliwatts(7000),
             spl_max: PowerMilliwatts(35000),
+            sppt_max: PowerMilliwatts(43000),
+            fppt_max: PowerMilliwatts(53000),
         };
         let thresholds = ProfileThresholds { low_frac: 0.33, high_frac: 0.67 };
 
