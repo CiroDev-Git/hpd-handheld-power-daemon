@@ -1,7 +1,7 @@
 use hpd_capabilities::error::HpdError;
 use hpd_capabilities::power::PowerEnvelopeLimits;
 use hpd_capabilities::power::PowerEnvelopeTarget;
-use hpd_capabilities::profile::ProfileThresholds;
+use hpd_capabilities::profile::{ProfileThresholds, SystemPreset};
 use hpd_capabilities::units::PowerMilliwatts;
 
 use crate::effect::Effect;
@@ -27,6 +27,18 @@ pub fn reduce(
     let mut effects = Vec::new();
 
     match transition {
+
+        Transition::SetPreset(preset) => {
+            let target_watts = match preset {
+                // Silent: 10W (or min value of device if its greater than 10)
+                SystemPreset::Silent => 10.max(device_limits.spl_min.0 / 1000),
+                // Performance: 15W
+                SystemPreset::Performance => 15,
+                // Turbo: 30W (or max value of device if its lower than 30)
+                SystemPreset::Turbo => 30.min(device_limits.spl_max.0 / 1000),
+            };
+            return reduce(state, Transition::SetSpl(target_watts), device_limits, profile_thresholds);
+        }
 
         // -----------------------------------------------------
         // SMART MODE (get boost automatically)

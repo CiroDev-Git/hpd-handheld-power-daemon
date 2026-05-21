@@ -33,6 +33,20 @@ impl PowerDaemonInterface {
         Ok(())
     }
 
+    async fn set_preset(&self, preset_name: String) -> zbus::fdo::Result<()> {
+        debug!("D-Bus received request to Set Preset: {}", preset_name);
+        
+        let preset = preset_name.parse::<hpd_capabilities::profile::SystemPreset>()
+            .map_err(|e| zbus::fdo::Error::InvalidArgs(e))?;
+
+        if self.tx.send(Transition::SetPreset(preset)).await.is_err() {
+            error!("Failed to send transition to executor");
+            return Err(zbus::fdo::Error::Failed("Internal daemon error: Executor down".into()));
+        }
+        
+        Ok(())
+    }
+
     #[zbus(property)]
     async fn current_spl(&self) -> u32 {
         let spl_mw = self.state_rx.borrow().power_target.spl.0;

@@ -7,6 +7,7 @@ use zbus::proxy;
     default_path = "/dev/cirodev/hpd/PowerDaemon1"
 )]
 trait PowerDaemon {
+    async fn set_preset(&self, preset_name: &str) -> zbus::Result<()>;
     async fn set_spl(&self, watts: u32) -> zbus::Result<()>;
     async fn set_charge_threshold(&self, threshold: u8) -> zbus::Result<()>;
 

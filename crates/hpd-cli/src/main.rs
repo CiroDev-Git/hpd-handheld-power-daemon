@@ -117,22 +117,13 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
             }
         },
         Commands::Preset { name } => {
-            let watts = match name.to_lowercase().as_str() {
-                "silent" => 10,
-                "performance" => 15,
-                "turbo" => 30,
-                _ => {
-                    eprintln!("❌ Error: Invalid preset. Use 'silent', 'performance' or 'turbo'.");
-                    return Ok(());
-                }
-            };
-            
-            println!("🚀 Applying preset '{}' ({}W)...", name.to_uppercase(), watts);
-            
-            proxy.set_spl(watts).await?;
-            
-            println!("✅ Preset applied successfully.");
-            println!("(Cooling profile has changed automatically).");
+            println!("🚀 Requesting profile change to '{}'...", name.to_uppercase());
+            if let Err(e) = proxy.set_preset(&name).await {
+                eprintln!("❌ Error applying preset: {}", e);
+            } else {
+                println!("✅ Preset applied successfully.");
+                println!("(Cooling profile has changed automatically).");
+            }
         },
         Commands::Status => {
             let spl_watts = proxy.current_spl().await?;
