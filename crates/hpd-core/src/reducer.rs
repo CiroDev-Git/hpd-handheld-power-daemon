@@ -140,6 +140,21 @@ pub fn reduce(
             return Ok(output);
 
         }
+
+        Transition::SystemResumed => {
+            println!("🌅 System resumed. Applying previous config...");
+            
+            let mut effects = Vec::new();
+            
+            effects.push(Effect::ApplyPowerEnvelope(state.power_target.clone()));
+            effects.push(Effect::ApplyPlatformProfile(state.active_profile.clone()));
+            effects.push(Effect::ApplyChargeThreshold(state.charge_end_threshold));
+            
+            return Ok(ReducerOutput {
+                new_state: state.clone(),
+                effects,
+            });
+        }
     }
 
     Ok(ReducerOutput { new_state, effects })

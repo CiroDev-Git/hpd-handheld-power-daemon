@@ -619,6 +619,7 @@ dependencies = [
 name = "hpd-daemon"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "hpd-backend-asus",
  "hpd-backend-lenovo",
  "hpd-backend-valve",

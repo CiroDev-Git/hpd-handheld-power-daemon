@@ -1,4 +1,5 @@
 mod probe;
+mod suspend;
 
 use tracing::{error, info, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -139,6 +140,12 @@ where
                 hpd_netlink::spawn_power_monitor(tx_netlink).await;
             }).await;
         });
+    });
+
+    info!("Starting sleep detection...");
+    let tx_suspend = tx.clone();
+    tokio::spawn(async move {
+        suspend::spawn_suspend_monitor(tx_suspend).await;
     });
 
     // 7. Executor instance
