@@ -124,9 +124,21 @@ where
 
     info!("Starting hardware event monitors...");
     let tx_netlink = tx.clone(); // Give to monitor their own remote control
-    tokio::spawn(async move {
-        // Non-blocking thread for daemon
-        hpd_netlink::spawn_power_monitor(tx_netlink).await;
+    // 1. Use a native OS thread to avoid main thread pool
+    std::thread::spawn(move || {
+        // 2. Smaal async engine running only in this thread
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to build local tokio runtime for netlink");
+
+        // 3. Execute task !Send de Netlink con total seguridad
+        rt.block_on(async move {
+            let local = tokio::task::LocalSet::new();
+            local.run_until(async move {
+                hpd_netlink::spawn_power_monitor(tx_netlink).await;
+            }).await;
+        });
     });
 
     // 7. Executor instance
