@@ -57,31 +57,21 @@ mod linux {
         debug!("Netlink monitor ready. Awaiting for AC/DC events...");
 
         // 3. Infinite sleeping loop (0% CPU). Only awake when event happen
-        while let Some(event_result) = async_monitor.next().await {
-            match event_result {
-                Ok(event) => {
-                    // Kernel notify an event. Check if AC/ADP
-                    if let Some(sysname) = event.sysname() {
-                        let name = sysname.to_string_lossy().to_uppercase();
-                        
-                        if name.contains(IDENTIFIER_AC) || name.contains(IDENTIFIER_ADP) {
+        while let Some(Ok(event)) = async_monitor.next().await {
+            let sysname = event.sysname();
+            let name = sysname.to_string_lossy().to_uppercase();
+            if name.contains(IDENTIFIER_AC) || name.contains(IDENTIFIER_ADP) {
                             
-                            // ONLINE (1 = Connected, 0 = Disconnected)
-                            if let Some(online_val) = event.property_value(PROP_ONLINE) {
-                                let is_ac_plugged: bool = online_val == VAL_ONLINE_TRUE;
-                                
-                                info!("⚡ Hardware event detected: Charger connected = {}", is_ac_plugged);
+                // ONLINE (1 = Connected, 0 = Disconnected)
+                if let Some(online_val) = event.property_value(PROP_ONLINE) {
+                    let is_ac_plugged: bool = online_val == VAL_ONLINE_TRUE;
+                    
+                    info!("⚡ Hardware event detected: Charger connected = {}", is_ac_plugged);
 
-                                if tx.send(Transition::AcPowerChanged(is_ac_plugged)).await.is_err() {
-                                    error!("Netlink monitor: Main executor not available. Stopping monitor.");
-                                    break;
-                                }
-                            }
-                        }
+                    if tx.send(Transition::AcPowerChanged(is_ac_plugged)).await.is_err() {
+                        error!("Netlink monitor: Main executor not available. Stopping monitor.");
+                        break;
                     }
-                }
-                Err(e) => {
-                    error!("Failure detecting Netlink event: {}", e);
                 }
             }
         }
