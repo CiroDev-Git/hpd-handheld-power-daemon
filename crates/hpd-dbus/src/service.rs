@@ -1,10 +1,12 @@
 use zbus::interface;
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, error};
+use std::str::FromStr;
 
 use hpd_core::transition::Transition;
 use hpd_core::state::ProfileState;
 use hpd_capabilities::power::PowerEnvelopeLimits;
+use hpd_capabilities::profile::ProfileName;
 
 use hpd_capabilities::charge::{MIN_CHARGE_THRESHOLD, MAX_CHARGE_THRESHOLD};
 
@@ -96,5 +98,18 @@ impl PowerDaemonInterface {
 
     async fn is_ac_connected(&self) -> zbus::fdo::Result<bool> {
         Ok(self.state_rx.borrow().is_ac_connected)
+    }
+
+    async fn set_profile(&self, profile: &str) -> zbus::fdo::Result<()> {
+        let profile_enum = ProfileName::from_str(profile)
+            .map_err(|e| zbus::fdo::Error::InvalidArgs(e))?;
+
+        let _ = self.tx.send(Transition::SetProfile(profile_enum)).await;
+        Ok(())
+    }
+
+    async fn set_fan_auto(&self) -> zbus::fdo::Result<()> {
+        let _ = self.tx.send(Transition::EnableFanAuto).await;
+        Ok(())
     }
 }

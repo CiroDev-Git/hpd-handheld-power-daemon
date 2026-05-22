@@ -9,6 +9,19 @@ pub enum ProfileName {
     Custom(String),
 }
 
+impl FromStr for ProfileName {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "powersaver" | "power-saver" | "quiet" => Ok(ProfileName::PowerSaver),
+            "balanced" => Ok(ProfileName::Balanced),
+            "performance" => Ok(ProfileName::Performance),
+            _ => Err(format!("Unknown profile: {}", s)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProfileThresholds {
     pub low_frac: f32,

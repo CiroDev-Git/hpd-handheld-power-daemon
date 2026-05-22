@@ -12,5 +12,6 @@ pub enum Transition {
     ConfigReload,
     SyncPowerTarget(PowerEnvelopeTarget),
     AcPowerChanged(bool),
-    SystemResumed
+    SystemResumed,
+    EnableFanAuto
 }

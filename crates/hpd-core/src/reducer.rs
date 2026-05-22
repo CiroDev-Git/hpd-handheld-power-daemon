@@ -155,6 +155,20 @@ pub fn reduce(
                 effects,
             });
         }
+
+        Transition::EnableFanAuto => {
+            if !new_state.fan_follows_tdp {
+                println!("🔄 Starting auto fan mode...");
+                new_state.fan_follows_tdp = true;
+                
+                return reduce(
+                    &new_state, 
+                    Transition::SetEnvelope(new_state.power_target.clone()), 
+                    device_limits, 
+                    profile_thresholds
+                );
+            }
+        }
     }
 
     Ok(ReducerOutput { new_state, effects })

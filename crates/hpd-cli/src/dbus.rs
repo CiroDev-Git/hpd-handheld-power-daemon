@@ -21,4 +21,7 @@ trait PowerDaemon {
     
     #[zbus(property)]
     fn charge_end_threshold(&self) -> zbus::Result<u8>;
+
+    fn set_profile(&self, profile: &str) -> zbus::Result<()>;
+    fn set_fan_auto(&self) -> zbus::Result<()>;
 }

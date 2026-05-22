@@ -35,6 +35,11 @@ enum Commands {
     Status,
     /// Open real time panel with refresh each second
     Monitor,
+    /// Manual control of fans & profiles
+    Fan {
+        #[clap(subcommand)]
+        action: FanAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -57,6 +62,16 @@ enum ChargeAction {
     },
     /// Get the current charge limit
     Get,
+}
+
+#[derive(Subcommand)]
+enum FanAction {
+    /// Set a manual profile (Quiet, Balanced, Performance)
+    Set { 
+        profile: String 
+    },
+    /// Reset fan control to Daemon (based on TDP)
+    Auto,
 }
 
 #[tokio::main]
@@ -149,6 +164,17 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
 
                 // Duerme 1 segundo
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        },
+        Commands::Fan { action } => match action {
+            FanAction::Set { profile } => {
+                proxy.set_profile(&profile).await?;
+                println!("❄️ Fan profile manually changed to: {}", profile);
+            }
+            FanAction::Auto => {
+                // Avisamos al Daemon que queremos reactivar el modo automático
+                proxy.set_fan_auto().await?;
+                println!("🔄 Automatic fan control enabled (based on TDP).");
             }
         },
     }
