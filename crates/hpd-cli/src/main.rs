@@ -33,6 +33,8 @@ enum Commands {
     Limits,
     /// Show the current system status
     Status,
+    /// Open real time panel with refresh each second
+    Monitor,
 }
 
 #[derive(Subcommand)]
@@ -136,22 +138,39 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
             println!("  • FPPT Max (Peak):   {}W", fppt_max);
         },
         Commands::Status => {
-            let spl_watts = proxy.current_spl().await?;
-            let profile = proxy.active_profile().await?;
-            let charge_limit = proxy.charge_end_threshold().await?;
+            print_dashboard(&proxy).await?;
+        },
+        Commands::Monitor => {
+            println!("Starting real time monitor. Ctrl+C to exit...");
+            loop {                
+                print!("\x1B[2J\x1B[1;1H");
+                
+                print_dashboard(&proxy).await?;
 
-            let is_ac = proxy.is_ac_connected().await?;
-            let power_icon = if is_ac { "⚡ Connected (AC)" } else { "🔋 Battery (DC)" };
-
-            println!("=======================================");
-            println!("  🎮 Handheld Power Daemon Status 🎮  ");
-            println!("=======================================");
-            println!(" 🔋 Power adapter:     {}", power_icon);
-            println!("  ⚡ TDP (SPL):         {}W", spl_watts);
-            println!(" ❄️ Cooling Profile:   {}", profile);
-            println!(" 🔋 Battery Limit:     {}%", charge_limit);
-            println!("=======================================");
-        }
+                // Duerme 1 segundo
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        },
     }
+    Ok(())
+}
+
+async fn print_dashboard(proxy: &PowerDaemonProxy<'_>) -> zbus::Result<()> {
+    let spl_watts = proxy.current_spl().await?;
+    let profile = proxy.active_profile().await?;
+    let charge_limit = proxy.charge_end_threshold().await?;
+
+    let is_ac = proxy.is_ac_connected().await?;
+    let power_icon = if is_ac { "⚡ Connected (AC)" } else { "🔋 Battery (DC)" };
+
+    println!("=======================================");
+    println!("  🎮 Handheld Power Daemon Status 🎮  ");
+    println!("=======================================");
+    println!("   ⚡ TDP (SPL):        {}W", spl_watts);
+    println!("  ❄️ Cooling Profile:  {}", profile);
+    println!("  🔌 Power adapter:    {}", power_icon); 
+    println!("  🔋 Battery Limit:    {}%", charge_limit);
+    println!("=======================================");
+
     Ok(())
 }
