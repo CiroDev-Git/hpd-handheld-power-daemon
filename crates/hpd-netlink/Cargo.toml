@@ -1,6 +1,12 @@
 [package]
 name = "hpd-netlink"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
+tokio = { version = "1", features = ["rt", "macros", "net"] }
+futures-util = "0.3"
+tokio-udev = "0.7"
+tracing = "0.1"
+
+hpd-core = { path = "../hpd-core" }

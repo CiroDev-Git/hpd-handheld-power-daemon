@@ -113,6 +113,10 @@ pub fn reduce(
             // Emit the real values to UI, instead of value that hdp tried to set 
             effects.push(Effect::EmitDbusPropertiesChanged);
         }
+
+        Transition::AcPowerChanged(is_plugged) => {            
+            
+        }
     }
 
     Ok(ReducerOutput { new_state, effects })

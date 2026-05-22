@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     # L0 - Kernel I/O
     "crates/hpd-sysfs",
-    #"crates/hpd-netlink",
+    "crates/hpd-netlink",
     
     # L2 - Capabilities (L2 before L1 based on definition, L1 depends of L2)
     "crates/hpd-capabilities",
