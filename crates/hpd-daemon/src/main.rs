@@ -112,6 +112,7 @@ where
                 fan_follows_tdp: true,
                 // Read UPower o /sys/class/power_supply/AC
                 is_ac_connected: true,
+                last_dc_target: None
             }
         }
     };

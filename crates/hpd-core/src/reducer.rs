@@ -115,7 +115,35 @@ pub fn reduce(
         }
 
         Transition::AcPowerChanged(is_plugged) => {            
-            
+            if is_plugged {
+                    println!("🔌 Charger pluged. Saving current state on battery and applying Turbo...");
+                let mut output = reduce(
+                    state, 
+                    Transition::SetPreset(SystemPreset::Turbo), 
+                    device_limits, 
+                    profile_thresholds
+                )?;
+                output.new_state.last_dc_target = Some(state.power_target.clone());
+                return Ok(output);
+            } else {
+                if let Some(ref prev_target) = state.last_dc_target {
+                    println!("🔌 Charger unpluged. Restoring preview state on battery...");
+                    return reduce(
+                        state, 
+                        Transition::SetEnvelope(prev_target.clone()), 
+                        device_limits, 
+                        profile_thresholds
+                    );
+                } else {
+                    println!("🔌 Charger unpluged. Applying Performance as default...");
+                    return reduce(
+                        state, 
+                        Transition::SetPreset(SystemPreset::Performance), 
+                        device_limits, 
+                        profile_thresholds
+                    );
+                }
+            }
         }
     }
 
@@ -179,6 +207,7 @@ mod tests {
             is_ac_connected: true,
             charge_end_threshold: 80,
             fan_follows_tdp: true,
+            last_dc_target: None
         }
     }
 

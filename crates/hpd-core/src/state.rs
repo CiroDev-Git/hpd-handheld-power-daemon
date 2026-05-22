@@ -10,6 +10,7 @@ pub struct ProfileState {
     pub active_profile: ProfileName,
     pub charge_end_threshold: u8,
     pub fan_follows_tdp: bool,
+    pub last_dc_target: Option<PowerEnvelopeTarget>,
     
     // Ignore is_ac_connected in storage since at reboot time 
     // we ask to hardware again about if it's charging or not
