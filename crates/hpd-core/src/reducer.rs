@@ -87,13 +87,6 @@ pub fn reduce(
             }
         }
 
-        Transition::AcChanged(is_ac) => {
-            if new_state.is_ac_connected != is_ac {
-                new_state.is_ac_connected = is_ac;
-                effects.push(Effect::EmitDbusPropertiesChanged);
-            }
-        }
-
         Transition::ChargeThresholdChanged(threshold) => {
             if new_state.charge_end_threshold != threshold {
                 new_state.charge_end_threshold = threshold;
@@ -114,36 +107,38 @@ pub fn reduce(
             effects.push(Effect::EmitDbusPropertiesChanged);
         }
 
-        Transition::AcPowerChanged(is_plugged) => {            
-            if is_plugged {
-                    println!("🔌 Charger pluged. Saving current state on battery and applying Turbo...");
-                let mut output = reduce(
-                    state, 
-                    Transition::SetPreset(SystemPreset::Turbo), 
-                    device_limits, 
-                    profile_thresholds
-                )?;
-                output.new_state.last_dc_target = Some(state.power_target.clone());
-                return Ok(output);
+        Transition::AcPowerChanged(is_plugged) => {        
+            // Avoid debounce
+            if state.is_ac_connected == is_plugged {
+                return Ok(ReducerOutput {
+                    new_state: state.clone(),
+                    effects: vec![],
+                });
+            }    
+
+            let mut output = if is_plugged {
+                println!("🔌 Charger pluged. Saving current state on battery and applying Turbo...");
+                let mut temp_output = reduce(state, Transition::SetPreset(SystemPreset::Turbo), device_limits, profile_thresholds)?;
+                temp_output.new_state.last_dc_target = Some(state.power_target.clone());
+                temp_output
             } else {
                 if let Some(ref prev_target) = state.last_dc_target {
                     println!("🔌 Charger unpluged. Restoring preview state on battery...");
-                    return reduce(
-                        state, 
-                        Transition::SetEnvelope(prev_target.clone()), 
-                        device_limits, 
-                        profile_thresholds
-                    );
+                    reduce(state, Transition::SetEnvelope(prev_target.clone()), device_limits, profile_thresholds)?
                 } else {
                     println!("🔌 Charger unpluged. Applying Performance as default...");
-                    return reduce(
-                        state, 
-                        Transition::SetPreset(SystemPreset::Performance), 
-                        device_limits, 
-                        profile_thresholds
-                    );
+                    reduce(state, Transition::SetPreset(SystemPreset::Performance), device_limits, profile_thresholds)?
                 }
+            };
+
+            output.new_state.is_ac_connected = is_plugged;
+            
+            if !output.effects.contains(&Effect::EmitDbusPropertiesChanged) {
+                output.effects.push(Effect::EmitDbusPropertiesChanged);
             }
+
+            return Ok(output);
+
         }
     }
 
@@ -204,7 +199,7 @@ mod tests {
                 fppt: Some(PowerMilliwatts(15000)),
             },
             active_profile: ProfileName::Balanced,
-            is_ac_connected: true,
+            is_ac_connected: false,
             charge_end_threshold: 80,
             fan_follows_tdp: true,
             last_dc_target: None

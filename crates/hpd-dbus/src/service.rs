@@ -93,4 +93,8 @@ impl PowerDaemonInterface {
             self.limits.fppt_max.0 / 1000,
         ))
     }
+
+    async fn is_ac_connected(&self) -> zbus::fdo::Result<bool> {
+        Ok(self.state_rx.borrow().is_ac_connected)
+    }
 }

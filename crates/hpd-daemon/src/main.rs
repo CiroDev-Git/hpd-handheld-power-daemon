@@ -88,9 +88,12 @@ where
     let thresholds = ProfileThresholds { low_frac: 0.33, high_frac: 0.67 };
     let persister = StatePersister::new("/var/tmp/hpd_state.toml"); // Using /tmp temporally for testing
 
+    let is_physically_plugged = backend.is_ac_connected().unwrap_or(false);
+
     let initial_state = match persister.load().await {
-        Some(state) => {
+        Some(mut state) => {
             info!("Previous state loaded successfully from disk.");
+            state.is_ac_connected = is_physically_plugged;
             state
         },
         None => {
@@ -108,10 +111,8 @@ where
                 power_target: current_target,
                 active_profile: current_profile,
                 charge_end_threshold: current_charge_limit,
-                // 'true' as Factory Default in the first time
                 fan_follows_tdp: true,
-                // Read UPower o /sys/class/power_supply/AC
-                is_ac_connected: true,
+                is_ac_connected: is_physically_plugged,
                 last_dc_target: None
             }
         }

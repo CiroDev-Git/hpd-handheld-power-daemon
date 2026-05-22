@@ -140,12 +140,16 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
             let profile = proxy.active_profile().await?;
             let charge_limit = proxy.charge_end_threshold().await?;
 
+            let is_ac = proxy.is_ac_connected().await?;
+            let power_icon = if is_ac { "⚡ Connected (AC)" } else { "🔋 Battery (DC)" };
+
             println!("=======================================");
             println!("  🎮 Handheld Power Daemon Status 🎮  ");
             println!("=======================================");
-            println!("  ⚡ TDP (SPL):         {} W", spl_watts);
+            println!(" 🔋 Power adapter:     {}", power_icon);
+            println!("  ⚡ TDP (SPL):         {}W", spl_watts);
             println!(" ❄️ Cooling Profile:   {}", profile);
-            println!(" 🔋 Battery Limit:     {} %", charge_limit);
+            println!(" 🔋 Battery Limit:     {}%", charge_limit);
             println!("=======================================");
         }
     }

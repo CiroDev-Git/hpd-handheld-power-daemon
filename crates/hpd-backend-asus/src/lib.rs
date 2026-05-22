@@ -39,6 +39,7 @@ impl<S: SysfsIo + Clone> PowerEnvelope for AsusBackend<S> {
 }
 
 impl<S: SysfsIo + Clone> ChargeControl for AsusBackend<S> {
+    fn is_ac_connected(&self) -> Result<bool, HpdError> { self.charge.is_ac_connected() }
     fn set_end_threshold(&self, threshold: u8) -> Result<(), HpdError> { self.charge.set_end_threshold(threshold) }
     fn get_end_threshold(&self) -> Result<u8, HpdError> { self.charge.get_end_threshold() }
 }

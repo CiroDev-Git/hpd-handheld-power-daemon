@@ -3,6 +3,12 @@ use hpd_capabilities::error::HpdError;
 use hpd_sysfs::SysfsIo;
 
 const BATTERY_PATH: &str = "/sys/class/power_supply/BAT0";
+const AC_PATHS: [&str; 4] = [
+    "/sys/class/power_supply/AC/online",
+    "/sys/class/power_supply/ACAD/online",
+    "/sys/class/power_supply/ADP0/online",
+    "/sys/class/power_supply/ADP1/online",
+];
 
 pub struct AsusChargeBackend<S: SysfsIo> {
     sysfs: S,
@@ -15,6 +21,19 @@ impl<S: SysfsIo> AsusChargeBackend<S> {
 }
 
 impl<S: SysfsIo> ChargeControl for AsusChargeBackend<S> {
+
+    fn is_ac_connected(&self) -> Result<bool, HpdError> {
+
+        for path in AC_PATHS.iter() {
+            if let Ok(val_str) = self.sysfs.read_string(path) {
+                return Ok(val_str.trim() == "1");
+            }
+        }
+
+        // Fail-Safe
+        Ok(false)
+    }
+
     fn get_end_threshold(&self) -> Result<u8, HpdError> {
         let path = format!("{}/charge_control_end_threshold", BATTERY_PATH);
         
