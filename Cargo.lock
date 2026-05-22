@@ -625,6 +625,7 @@ dependencies = [
  "hpd-capabilities",
  "hpd-core",
  "hpd-dbus",
+ "hpd-netlink",
  "hpd-sysfs",
  "thiserror",
  "tokio",

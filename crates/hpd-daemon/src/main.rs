@@ -122,6 +122,13 @@ where
     let (tx, rx) = mpsc::channel::<Transition>(32);
     let internal_tx = tx.clone(); // For rollback
 
+    info!("Starting hardware event monitors...");
+    let tx_netlink = tx.clone(); // Give to monitor their own remote control
+    tokio::spawn(async move {
+        // Non-blocking thread for daemon
+        hpd_netlink::spawn_power_monitor(tx_netlink).await;
+    });
+
     // 7. Executor instance
     let (executor, state_rx) = Executor::new(
         backend,

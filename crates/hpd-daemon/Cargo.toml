@@ -19,4 +19,5 @@ tracing-subscriber = "0.3" # pretty logger
 thiserror = { workspace = true }
 
 hpd-dbus = { path = "../hpd-dbus" }
+hpd-netlink = { path = "../hpd-netlink" }
 zbus = "4.1"
