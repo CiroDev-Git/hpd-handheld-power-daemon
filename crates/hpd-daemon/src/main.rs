@@ -6,6 +6,7 @@ use tracing_subscriber::{EnvFilter, FmtSubscriber};
 use tokio::sync::mpsc;
 use tokio::signal;
 
+#[cfg(feature = "vendor-asus")]
 use hpd_sysfs::RealSysfs;
 use hpd_capabilities::profile::ProfileThresholds;
 use hpd_capabilities::power::PowerEnvelopeTarget;
@@ -15,7 +16,9 @@ use hpd_core::transition::Transition;
 use hpd_core::executor::Executor;
 use hpd_core::persistence::StatePersister;
 
+#[cfg(feature = "vendor-asus")]
 use hpd_backend_asus::detect::matches_asus_handheld;
+#[cfg(feature = "vendor-asus")]
 use hpd_backend_asus::AsusBackend;
 
 #[tokio::main]
@@ -36,12 +39,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 3. Init L0 (I/O Real)
 
-    // --- Simulator mode for macOS ---
-    if std::env::var("HPD_SIMULATOR").is_ok() {
-        info!("Starting in SIMULATOR mode...");
-        {
+    // --- Simulator mode (compiled in only with `--features simulator`) ---
+    #[cfg(feature = "simulator")]
+    {
+        if std::env::var("HPD_SIMULATOR").is_ok() {
+            info!("Starting in SIMULATOR mode...");
             let mock = hpd_sysfs::MockSysfs::new();
-            
+
             mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/min_value", "7");
             mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/max_value", "35");
             mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/current_value", "15");
@@ -53,7 +57,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             mock.create_file("sys/firmware/acpi/platform_profile_choices", "quiet balanced performance");
             mock.create_file("sys/class/power_supply/BAT0/charge_control_end_threshold", "80");
 
-            // Inject the mock instead of the real system.
+            // Simulator currently only models ASUS firmware (enforced via
+            // the feature's `vendor-asus` dependency in Cargo.toml).
             run_daemon(AsusBackend::new(mock)).await?;
             return Ok(());
         }
@@ -61,18 +66,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ---------------------------------
 
     // --- Production mode ---
-    let sysfs = RealSysfs::new();
-
-    // 4. Choose L1 (Backend) based on detection
-    if let Some(asus_model) = matches_asus_handheld(&dmi) {
-        info!("ASUS handheld detected: {:?}", asus_model);
-        run_daemon(AsusBackend::new(sysfs)).await?;
-    } else {
-        error!("Hardware not supported or recognized. Exiting gracefully.");
-        std::process::exit(1);
+    // 4. Choose L1 (Backend) based on detection. Each vendor block is
+    //    compile-time-gated by its `vendor-*` feature.
+    #[cfg(feature = "vendor-asus")]
+    {
+        if let Some(asus_model) = matches_asus_handheld(&dmi) {
+            info!("ASUS handheld detected: {:?}", asus_model);
+            run_daemon(AsusBackend::new(RealSysfs::new())).await?;
+            return Ok(());
+        }
     }
 
-    Ok(())
+    error!("Hardware not supported or recognized (no vendor backend matched). Exiting gracefully.");
+    std::process::exit(1);
 }
 
 async fn run_daemon<B>(backend: B) -> Result<(), Box<dyn std::error::Error>>
@@ -201,7 +207,15 @@ where
         limits,
     );
 
-    let conn_builder = if std::env::var("HPD_SIMULATOR").is_ok() {
+    // Session bus is only a valid target when the simulator path is
+    // compiled in; production builds always bind to the system bus
+    // regardless of HPD_SIMULATOR being set in the environment.
+    #[cfg(feature = "simulator")]
+    let use_session_bus = std::env::var("HPD_SIMULATOR").is_ok();
+    #[cfg(not(feature = "simulator"))]
+    let use_session_bus = false;
+
+    let conn_builder = if use_session_bus {
         info!("Using Session Bus (Simulator Mode)");
         zbus::ConnectionBuilder::session()?
     } else {

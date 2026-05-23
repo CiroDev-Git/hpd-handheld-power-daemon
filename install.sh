@@ -5,6 +5,9 @@
 set -euo pipefail
 
 echo "🔨 1. Compiling HPD Release..."
+# Production build uses the default feature set: `vendor-asus` only.
+# To opt into additional vendors append e.g. `--features vendor-lenovo,vendor-valve`.
+# The `simulator` feature is intentionally off in installed binaries.
 cargo build --release
 
 echo "📦 2. Installing binaries in /usr/local/bin..."

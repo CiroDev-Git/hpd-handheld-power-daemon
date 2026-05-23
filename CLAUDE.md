@@ -22,9 +22,9 @@ Lint: `cargo clippy --all-targets`
 
 Production install (Linux, ASUS handheld): `./install.sh` — builds release, copies binaries to `/usr/local/bin`, installs the systemd unit (`package/hpd.service`) and D-Bus policy (`package/dev.cirodev.hpd.conf`), then enables and starts `hpd.service`. Live logs: `journalctl -fu hpd`.
 
-Simulator mode (macOS / dev hosts without sysfs): `HPD_SIMULATOR=1 cargo run -p hpd-daemon`. The simulator (a) returns a fake ROG Ally X DMI, (b) injects a `MockSysfs` pre-populated with the expected ASUS firmware-attribute files, and (c) switches the daemon and CLI to the **session bus** instead of the system bus. To exercise the CLI against a simulator, run `HPD_SIMULATOR=1 cargo run -p hpd-cli -- <subcommand>`.
+Simulator mode (macOS / dev hosts without sysfs): `HPD_SIMULATOR=1 cargo run -p hpd-daemon --features simulator`. The simulator (a) returns a fake ROG Ally X DMI, (b) injects a `MockSysfs` pre-populated with the expected ASUS firmware-attribute files, and (c) switches the daemon and CLI to the **session bus** instead of the system bus. To exercise the CLI against a simulator, run `HPD_SIMULATOR=1 cargo run -p hpd-cli -- <subcommand>`.
 
-`hpd-sysfs` exposes `MockSysfs` only under the `mock` Cargo feature. `hpd-daemon` enables it (`features = ["mock"]`), so simulator mode is built into the production binary — it is not a separate build.
+The `simulator` Cargo feature on `hpd-daemon` is what compiles the `MockSysfs` path in; default release builds (`vendor-asus` only) intentionally exclude it so production binaries never carry mock code. `simulator` implies `vendor-asus` because the simulator currently only models ASUS firmware.
 
 ## Architecture
 
