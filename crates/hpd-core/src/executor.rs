@@ -4,7 +4,6 @@ use tracing::{debug, error, info, instrument};
 use hpd_capabilities::backend::HwBackend;
 use hpd_capabilities::power::PowerEnvelopeLimits;
 use hpd_capabilities::profile::ProfileThresholds;
-use hpd_capabilities::profile::ProfileName;
 
 use crate::effect::Effect;
 use crate::reducer::reduce;
@@ -56,8 +55,6 @@ impl<B: HwBackend> Executor<B> {
         while let Some(transition) = self.transition_rx.recv().await {
             debug!(?transition, "Received transition");
 
-            let was_tdp_change: bool = matches!(transition, Transition::SetEnvelope(_));
-
             let current_state = self.state_tx.borrow().clone();
 
             match reduce(
@@ -67,9 +64,6 @@ impl<B: HwBackend> Executor<B> {
                 &self.profile_thresholds,
             ) {
                 Ok(output) => {
-
-                    let new_state = output.new_state.clone();
-
                     if self.state_tx.send(output.new_state).is_err() {
                         error!("State observers dropped, stopping executor.");
                         break;
@@ -78,19 +72,10 @@ impl<B: HwBackend> Executor<B> {
                     for effect in output.effects {
                         self.handle_effect(effect).await;
                     }
-
-                    // If TDP change was successfully applied and auto-fan is on
-                    if was_tdp_change && new_state.fan_follows_tdp {
-                        let desired_profile = self.infer_profile_for_tdp(new_state.power_target.spl.0);
-                        
-                        if desired_profile != new_state.active_profile {
-                            info!("TDP requires cooling adjustment. Requesting profile change to {:?}", desired_profile);
-                            
-                            // Using try_send to avoid blocking the async loop
-                            let _ = self.internal_tx.try_send(Transition::SetProfile(desired_profile));
-                        }
-                    }
-                    
+                    // Auto-cooling profile follow-up is the reducer's job:
+                    // apply_target_and_profile already infers and pushes the
+                    // matching ApplyPlatformProfile effect when fan_follows_tdp
+                    // is on. No post-reduce inference here.
                 }
                 Err(e) => {
                     error!(error = %e, "Reducer rejected transition due to invariant violation");
@@ -139,28 +124,6 @@ impl<B: HwBackend> Executor<B> {
                 let current_state = self.state_tx.borrow().clone();
                 self.persister.save(&current_state).await;
             }
-        }
-    }
-
-    /// Get best cooling profile based on TDP given
-    fn infer_profile_for_tdp(&self, spl_mw: u32) -> ProfileName {
-        let min = self.device_limits.spl_min.0;
-        let max = self.device_limits.spl_max.0;
-        
-        let range = max.saturating_sub(min);
-        if range == 0 { 
-            return ProfileName::Balanced; 
-        }
-
-        // Get fraction based on formula
-        let fraction = spl_mw.saturating_sub(min) as f32 / range as f32;
-
-        if fraction < self.profile_thresholds.low_frac {
-            ProfileName::PowerSaver
-        } else if fraction < self.profile_thresholds.high_frac {
-            ProfileName::Balanced
-        } else {
-            ProfileName::Performance
         }
     }
 }

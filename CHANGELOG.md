@@ -130,6 +130,14 @@ in 0.2.0 to consolidate. Subsequent minor releases will respect SemVer.
 
 ### Changed
 
+- **Profile inference is now done in a single place.** The reducer
+  (via `apply_target_and_profile` -> `infer_profile_from_spl`) is the
+  sole authority; the post-reduce inference block in the executor was
+  redundant (and worse, used a slightly different rule for the
+  degenerate `range == 0` case). The `Executor::infer_profile_for_tdp`
+  method and its caller were removed; `inference::infer_profile_from_spl`
+  now documents the `range == 0` -> `Balanced` fallback.
+  *(Lote 12 — Audit §3.4)*
 - **Daemon logging** — Migrated from `FmtSubscriber::with_max_level`
   to `tracing-subscriber` with `EnvFilter`. Now honours `RUST_LOG`;
   default is `hpd=info,warn`. systemd unit now sets
