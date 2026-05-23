@@ -1,4 +1,4 @@
-use hpd_capabilities::error::HpdError;
+use hpd_capabilities::error::{BackendError, HpdError};
 use hpd_capabilities::power::{PowerEnvelope, PowerEnvelopeLimits, PowerEnvelopeTarget};
 use hpd_sysfs::SysfsIo;
 
@@ -14,9 +14,10 @@ impl<S: SysfsIo> LenovoPowerBackend<S> {
 
 impl<S: SysfsIo> PowerEnvelope for LenovoPowerBackend<S> {
     fn get_limits(&self) -> Result<PowerEnvelopeLimits, HpdError> {
-        Err(HpdError::Backend { 
-            reason: "Lenovo limits implementation pending. See docs/devices/lenovo.md".into() 
-        })
+        Err(BackendError::Other(
+            "Lenovo limits implementation pending. See docs/devices/lenovo.md".into(),
+        )
+        .into())
     }
 
     fn get_target(&self) -> Result<PowerEnvelopeTarget, HpdError> {

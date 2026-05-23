@@ -1,21 +1,24 @@
 [workspace]
 resolver = "2"
 members = [
+    # L-1 - Cross-cutting types (no internal deps)
+    "crates/hpd-error",
+
     # L0 - Kernel I/O
     "crates/hpd-sysfs",
     "crates/hpd-netlink",
-    
-    # L2 - Capabilities (L2 before L1 based on definition, L1 depends of L2)
+
+    # L2 - Capabilities (L2 before L1 because L1 depends on L2)
     "crates/hpd-capabilities",
-    
+
     # L1 - Backends
     "crates/hpd-backend-asus",
     "crates/hpd-backend-lenovo",
     "crates/hpd-backend-valve",
-    
+
     # L3 - Domain / Core
     "crates/hpd-core",
-    
+
     # L4 - Interfaces & Daemon
     "crates/hpd-dbus",
     "crates/hpd-cli",

@@ -1,4 +1,4 @@
-use hpd_capabilities::error::HpdError;
+use hpd_capabilities::error::{BackendError, HpdError};
 use hpd_capabilities::fan::FanControl;
 use hpd_capabilities::units::Rpm;
 use hpd_sysfs::SysfsIo;
@@ -25,17 +25,12 @@ impl<S: SysfsIo> AsusFanBackend<S> {
 
     fn read_rpm(&self, fan_index: u8) -> Result<Rpm, HpdError> {
         let path = self.find_fan_path(fan_index)?;
-        let val_str = self
-            .sysfs
-            .read_string(&path)
-            .map_err(|e| HpdError::Backend {
-                reason: format!("Failed to read fan {}: {}", fan_index, e),
-            })?;
-
-        let rpm: u16 = val_str.parse().map_err(|_| HpdError::Backend {
-            reason: format!("Fan {} RPM is not a valid number", fan_index),
+        let val_str = self.sysfs.read_string(&path)?;
+        let rpm: u16 = val_str.parse().map_err(|_| BackendError::ParseFailed {
+            field: "fan_rpm",
+            raw: val_str.clone(),
+            reason: format!("fan{} RPM is not a valid u16", fan_index),
         })?;
-
         Ok(Rpm(rpm))
     }
 }

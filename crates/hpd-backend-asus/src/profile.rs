@@ -20,15 +20,9 @@ impl<S: SysfsIo> AsusProfileBackend<S> {
         Self { sysfs }
     }
 
-    /// Read _choices files y return a vector with real options from kernel
+    /// Read the `_choices` file and return the real options exposed by the kernel.
     fn get_available_choices(&self) -> Result<Vec<String>, HpdError> {
-        let val_str = self
-            .sysfs
-            .read_string(CHOICES_PATH)
-            .map_err(|e| HpdError::Backend {
-                reason: format!("Failed to read platform profile choices: {}", e),
-            })?;
-
+        let val_str = self.sysfs.read_string(CHOICES_PATH)?;
         Ok(val_str.split_whitespace().map(|s| s.to_string()).collect())
     }
 
@@ -63,27 +57,14 @@ impl<S: SysfsIo> AsusProfileBackend<S> {
 
 impl<S: SysfsIo> PlatformProfile for AsusProfileBackend<S> {
     fn get_active_profile(&self) -> Result<ProfileName, HpdError> {
-        let val_str = self
-            .sysfs
-            .read_string(PROFILE_PATH)
-            .map_err(|e| HpdError::Backend {
-                reason: format!("Failed to read platform profile: {}", e),
-            })?;
-
+        let val_str = self.sysfs.read_string(PROFILE_PATH)?;
         Ok(Self::parse_profile(&val_str))
     }
 
     fn set_active_profile(&self, profile: &ProfileName) -> Result<(), HpdError> {
         let choices = self.get_available_choices()?;
-
         let target_str = self.resolve_target_string(profile, &choices);
-
-        self.sysfs
-            .write_string(PROFILE_PATH, &target_str)
-            .map_err(|e| HpdError::Backend {
-                reason: format!("Failed to set platform profile: {}", e),
-            })?;
-
+        self.sysfs.write_string(PROFILE_PATH, &target_str)?;
         Ok(())
     }
 }

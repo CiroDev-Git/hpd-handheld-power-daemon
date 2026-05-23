@@ -1,5 +1,5 @@
 use std::path::Path;
-use crate::error::SysfsError;
+use hpd_error::SysfsError;
 
 pub trait SysfsIo: Send + Sync {
     /// Remove the \n at the end

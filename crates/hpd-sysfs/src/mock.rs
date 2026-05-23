@@ -4,8 +4,8 @@ pub mod testing {
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use tempfile::TempDir;
+    use hpd_error::SysfsError;
     use crate::io::SysfsIo;
-    use crate::error::SysfsError;
 
     #[derive(Clone)]
     pub struct MockSysfs {

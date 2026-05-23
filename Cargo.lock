@@ -598,8 +598,8 @@ dependencies = [
 name = "hpd-capabilities"
 version = "0.1.0"
 dependencies = [
+ "hpd-error",
  "serde",
- "thiserror",
 ]
 
 [[package]]
@@ -657,6 +657,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "hpd-error"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "hpd-netlink"
 version = "0.1.0"
 dependencies = [
@@ -671,6 +678,7 @@ dependencies = [
 name = "hpd-sysfs"
 version = "0.1.0"
 dependencies = [
+ "hpd-error",
  "tempfile",
  "thiserror",
  "tracing",

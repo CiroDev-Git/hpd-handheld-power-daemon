@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
+use hpd_error::SysfsError;
 use crate::io::SysfsIo;
-use crate::error::SysfsError;
 
 #[derive(Clone, Default)]
 pub struct RealSysfs;

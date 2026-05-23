@@ -1,4 +1,4 @@
-use hpd_capabilities::error::HpdError;
+use hpd_capabilities::error::{BackendError, HpdError};
 use hpd_capabilities::power::{PowerEnvelope, PowerEnvelopeLimits, PowerEnvelopeTarget};
 use hpd_capabilities::units::PowerMilliwatts;
 use hpd_sysfs::SysfsIo;
@@ -23,15 +23,12 @@ impl<S: SysfsIo> AsusPowerBackend<S> {
 
     fn read_watts(&self, attr: &str, suffix: &str) -> Result<PowerMilliwatts, HpdError> {
         let path = format!("{}/{}/{}", BASE_PATH, attr, suffix);
-        // Map error from L0 to generic error of L2
-        let val_str = self.sysfs.read_string(&path).map_err(|e| HpdError::Backend { 
-            reason: format!("Sysfs read failed at {}: {}", path, e) 
+        let val_str = self.sysfs.read_string(&path)?;
+        let watts: u32 = val_str.parse().map_err(|_| BackendError::ParseFailed {
+            field: "watts",
+            raw: val_str.clone(),
+            reason: format!("expected integer at {}", path),
         })?;
-        
-        let watts: u32 = val_str.parse().map_err(|_| HpdError::Backend { 
-            reason: format!("Failed to parse integer from {}", path) 
-        })?;
-
         // Convert from W (kernel) to mW (domain).
         Ok(PowerMilliwatts(watts * 1000))
     }
@@ -40,10 +37,7 @@ impl<S: SysfsIo> AsusPowerBackend<S> {
         let path = format!("{}/{}/current_value", BASE_PATH, attr);
         // Convert from mW (domain) to W (kernel).
         let watts = target_mw.0 / 1000;
-        // Map error from L0 to generic error of L2
-        self.sysfs.write_string(&path, &watts.to_string()).map_err(|e| HpdError::Backend { 
-            reason: format!("Sysfs write failed at {}: {}", path, e) 
-        })?;
+        self.sysfs.write_string(&path, &watts.to_string())?;
         Ok(())
     }
 }

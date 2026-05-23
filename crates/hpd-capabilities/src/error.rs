@@ -1,26 +1,7 @@
-use thiserror::Error;
+//! Re-exports of the canonical error types defined in `hpd-error`.
+//!
+//! Kept as a `pub use` shim so that existing callers can keep importing
+//! `hpd_capabilities::error::HpdError` without churn. New code should
+//! prefer importing from `hpd_error` directly.
 
-#[derive(Error, Debug)]
-pub enum HpdError {
-    #[error("Sysfs operation failed: {0}")]
-    Sysfs(#[from] SysfsError),
-    
-    #[error("Backend error: {reason}")]
-    Backend { reason: String },
-
-    #[error("Feature not supported on this hardware")]
-    FeatureUnsupported,
-    
-    #[error("State invariant violated: {0}")]
-    InvariantViolation(String),
-}
-
-#[derive(Error, Debug)]
-pub enum SysfsError {
-    #[error("File not found: {path}")]
-    NotFound { path: String },
-    #[error("Permission denied reading/writing: {path}")]
-    PermissionDenied { path: String },
-    #[error("I/O error at {path}: {source}")]
-    Io { path: String, source: std::io::Error },
-}
+pub use hpd_error::{BackendError, HpdError, SysfsError};
