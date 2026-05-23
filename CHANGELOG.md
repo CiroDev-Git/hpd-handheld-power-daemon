@@ -76,6 +76,18 @@ in 0.2.0 to consolidate. Subsequent minor releases will respect SemVer.
   consumers (none today) would need to migrate `match` arms.
   *(Lote 8 — Audit §4.1)*
 
+### ⚠ Breaking — packagers / developers
+
+- **Simulator mode is now a build-time feature.** Previously the
+  `mock` Cargo feature on `hpd-sysfs` was always enabled by
+  `hpd-daemon`, so production binaries shipped with the simulator
+  code path linked in. Now the path is compiled in only with
+  `cargo build -p hpd-daemon --features simulator`; the default
+  feature set is `vendor-asus` only. `HPD_SIMULATOR=1` is a no-op
+  on builds without the `simulator` feature. macOS / dev hosts
+  must add `--features simulator`.
+  *(Lote 16)*
+
 ### Added
 
 - **`spawn_properties_changed_emitter` task** in `hpd-daemon/main.rs`
@@ -125,8 +137,54 @@ in 0.2.0 to consolidate. Subsequent minor releases will respect SemVer.
   *(Lote 4 — Audit §3.2)*
 - **`.gitignore`** entries for coverage (`*.profraw`, `*.profdata`,
   `coverage/`, `tarpaulin-report.*`), packaging output (`/dist/release/`,
-  `*.deb`, `*.rpm`), logs and tmp artifacts.
-  *(Lote 1)*
+  `*.deb`, `*.rpm`), logs, tmp artifacts, plus editor backups
+  (`*~`, `*.bak`, `.#*`) and `.env*` files.
+  *(Lotes 1, 17)*
+- **`hpd-capabilities::testing::MockBackend`** — Arc-shared in-memory
+  backend implementing all four L2 capability traits plus the blanket
+  `HwBackend`. Records every write in `write_log` and can simulate
+  hardware failure via `fail_writes`. Gated behind the new `testing`
+  Cargo feature so production builds never link it.
+  *(Lote 14)*
+- **`crates/hpd-core/tests/executor_e2e.rs`** — three integration
+  tests exercising the full Transition → reducer → Effect → backend
+  pipeline: happy path with disk persistence, hardware-write rollback
+  via `SyncPowerTarget` re-injection, and `watch::Receiver`
+  propagation.
+  *(Lote 14)*
+- **15 reducer branch-coverage tests** in `hpd-core/src/reducer.rs`
+  covering `AcPowerChanged` (debounce, plug, unplug with/without
+  `last_dc_target`), `SystemResumed`, `EnableFanAuto`,
+  `ChargeThresholdChanged`, `SetSpl` boundaries (min/max ±1),
+  `SetEnvelope` FPPT-below-SPPT invariant, and `SyncPowerTarget`
+  rollback.
+  *(Lote 13)*
+- **`PowerMilliwatts::from_watts` / `as_watts`** and the
+  `MILLIWATTS_PER_WATT` constant — single source of truth for the
+  W↔mW conversion previously inlined as `* 1000` / `/ 1000` across
+  reducer, executor, daemon, D-Bus and ASUS backend.
+  *(Lote 15)*
+- **Domain constants** centralising the previously magic literals:
+  `ProfileThresholds::DEFAULT` (0.33/0.67), `DEFAULT_CHARGE_THRESHOLD`
+  (80), `SPPT_FACTOR` / `FPPT_FACTOR` (1.15 / 1.25),
+  `TRANSITION_CHANNEL_CAPACITY` (32), ASUS-specific
+  `ASUS_DEFAULT_SPPT_MAX_MW` / `ASUS_DEFAULT_FPPT_MAX_MW`, and a
+  private `FanIndex { Cpu = 1, Gpu = 2 }` enum replacing bare
+  `fan{1,2}_input` integers.
+  *(Lote 15)*
+- **Per-vendor Cargo features on `hpd-daemon`** — `vendor-asus`
+  (default), `vendor-lenovo`, `vendor-valve`, and `simulator`. Each
+  vendor flag gates one L1 backend crate via `dep:`. Production
+  release builds no longer link Lenovo/Valve stubs or the MockSysfs
+  path. `simulator` implies `vendor-asus` because the simulator
+  currently only models ASUS firmware. With no vendor feature
+  enabled the daemon still compiles and exits cleanly at startup.
+  *(Lote 16)*
+- **`README.md`, `LICENSE` (GPL-3.0), `.gitignore` expansion** —
+  the repository is now presentable: hardware support matrix,
+  install / usage / development sections, license recognised by
+  GitHub.
+  *(Lote 17)*
 
 ### Changed
 
