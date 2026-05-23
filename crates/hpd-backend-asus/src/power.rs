@@ -5,6 +5,13 @@ use hpd_sysfs::SysfsIo;
 
 const BASE_PATH: &str = "/sys/class/firmware-attributes/asus-armoury/attributes";
 
+// Canonical attribute names exposed by the upstream `asus-armoury` driver.
+// Verified on ROG Xbox Ally X (board RC73XA) against Linux's
+// drivers/platform/x86/asus-armoury/.
+const ATTR_SPL:  &str = "ppt_pl1_spl";
+const ATTR_SPPT: &str = "ppt_pl2_sppt";
+const ATTR_FPPT: &str = "ppt_pl3_fppt";
+
 pub struct AsusPowerBackend<S: SysfsIo> {
     sysfs: S,
 }
@@ -43,27 +50,28 @@ impl<S: SysfsIo> AsusPowerBackend<S> {
 
 impl<S: SysfsIo> PowerEnvelope for AsusPowerBackend<S> {
     fn get_limits(&self) -> Result<PowerEnvelopeLimits, HpdError> {
-        let min = self.read_watts("ppt_pl1_spl", "min_value")?;
-        let max = self.read_watts("ppt_pl1_spl", "max_value")?;
+        let spl_min = self.read_watts(ATTR_SPL, "min_value")?;
+        let spl_max = self.read_watts(ATTR_SPL, "max_value")?;
 
-        let sppt_max = self.read_watts("ppt_pl2_sppt", "max_value")
-            .unwrap_or(PowerMilliwatts(43000));
-            
-        let fppt_max = self.read_watts("ppt_fppt", "max_value")
-            .unwrap_or(PowerMilliwatts(53000));
+        // Fallbacks for hardware that doesn't expose the max attribute.
+        // Magic numbers tagged for extraction in Lote 15.
+        let sppt_max = self.read_watts(ATTR_SPPT, "max_value")
+            .unwrap_or(PowerMilliwatts(43_000));
+        let fppt_max = self.read_watts(ATTR_FPPT, "max_value")
+            .unwrap_or(PowerMilliwatts(53_000));
 
         Ok(PowerEnvelopeLimits {
-            spl_min: min,
-            spl_max: max,
-            sppt_max: sppt_max,
-            fppt_max:fppt_max,
+            spl_min,
+            spl_max,
+            sppt_max,
+            fppt_max,
         })
     }
 
     fn get_target(&self) -> Result<PowerEnvelopeTarget, HpdError> {
-        let spl = self.read_watts("ppt_pl1_spl", "current_value")?;
-        let sppt = self.read_watts("ppt_pl2_sppt", "current_value")?;
-        let fppt = self.read_watts("ppt_pl3_fppt", "current_value")?; // FIXME(Lote 4): get_limits uses "ppt_fppt" — confirm and unify.
+        let spl = self.read_watts(ATTR_SPL, "current_value")?;
+        let sppt = self.read_watts(ATTR_SPPT, "current_value")?;
+        let fppt = self.read_watts(ATTR_FPPT, "current_value")?;
 
         Ok(PowerEnvelopeTarget {
             spl,
@@ -73,11 +81,11 @@ impl<S: SysfsIo> PowerEnvelope for AsusPowerBackend<S> {
     }
 
     fn set_target(&self, target: &PowerEnvelopeTarget) -> Result<(), HpdError> {
-        self.write_watts("ppt_pl1_spl", target.spl)?;
-        self.write_watts("ppt_pl2_sppt", target.sppt)?;
+        self.write_watts(ATTR_SPL, target.spl)?;
+        self.write_watts(ATTR_SPPT, target.sppt)?;
 
         if let Some(fppt) = target.fppt {
-            self.write_watts("ppt_pl3_fppt", fppt)?;
+            self.write_watts(ATTR_FPPT, fppt)?;
         }
 
         Ok(())
@@ -95,12 +103,15 @@ mod tests {
         // 1. Arrange: Prepare system with fake files
         let mock = MockSysfs::new();
         
-        // MockSysfs handle absolutes paths removing prefix '/'
+        // MockSysfs strips the leading '/' when handling absolute paths.
         mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/current_value", "15");
         mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl2_sppt/current_value", "15");
         mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl3_fppt/current_value", "15");
         mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/min_value", "7");
         mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/max_value", "35");
+        // Canonical max attributes for the boost rails.
+        mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl2_sppt/max_value", "43");
+        mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl3_fppt/max_value", "55");
 
         let backend = AsusPowerBackend::new(mock.clone());
 
@@ -112,6 +123,10 @@ mod tests {
         let limits = backend.get_limits().expect("Must be able to read the limits");
         assert_eq!(limits.spl_min, PowerMilliwatts(7000));
         assert_eq!(limits.spl_max, PowerMilliwatts(35000));
+        // Regression for the ppt_fppt vs ppt_pl3_fppt bug (Audit §3.2 / Lote 4).
+        // If get_limits reads the wrong attribute it falls back to 53000.
+        assert_eq!(limits.sppt_max, PowerMilliwatts(43000));
+        assert_eq!(limits.fppt_max, PowerMilliwatts(55000));
 
         // 3. Act & Assert (Write): Write 25000mW y check that disk stored "25"
         let new_target = PowerEnvelopeTarget {

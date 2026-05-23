@@ -45,7 +45,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/min_value", "7");
             mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/max_value", "35");
             mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/current_value", "15");
+            mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl2_sppt/max_value", "43");
             mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl2_sppt/current_value", "15");
+            mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl3_fppt/max_value", "55");
             mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl3_fppt/current_value", "15");
             mock.create_file("sys/firmware/acpi/platform_profile", "balanced");
             mock.create_file("sys/firmware/acpi/platform_profile_choices", "quiet balanced performance");
