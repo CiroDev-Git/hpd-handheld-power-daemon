@@ -78,8 +78,10 @@ impl PowerDaemonInterface {
 
     #[zbus(property)]
     async fn active_profile(&self) -> String {
-        let profile = &self.state_rx.borrow().active_profile;
-        format!("{:?}", profile) 
+        // ProfileName::Display is the stable D-Bus contract (kebab-case,
+        // roundtrips through FromStr). Do not use Debug here — Debug is an
+        // internal representation that can change with refactors.
+        self.state_rx.borrow().active_profile.to_string()
     }
 
     #[zbus(property)]
