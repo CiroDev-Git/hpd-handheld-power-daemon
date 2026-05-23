@@ -15,7 +15,7 @@ vendor-valve  = ["dep:hpd-backend-valve"]
 # Build-time switch that compiles in the MockSysfs path used by
 # `HPD_SIMULATOR=1` on macOS / dev hosts without real sysfs. Implies
 # vendor-asus because today only the ASUS firmware surface is modelled.
-simulator     = ["hpd-sysfs/mock", "vendor-asus"]
+simulator     = ["hpd-sysfs/mock", "vendor-asus", "hpd-dbus/simulator"]
 
 [dependencies]
 # internal layers

@@ -19,6 +19,7 @@ sudo rm -f /usr/local/bin/hpdctl
 echo "🗑️  3. Removing system config files..."
 sudo rm -f /etc/systemd/system/hpd.service
 sudo rm -f /etc/dbus-1/system.d/dev.cirodev.hpd.conf
+sudo rm -f /usr/share/polkit-1/actions/dev.cirodev.hpd.policy
 # Drop the example template; the operator's own config.toml (if any)
 # is preserved unless --purge is passed.
 sudo rm -f /etc/hpd/config.toml.example

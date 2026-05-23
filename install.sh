@@ -27,9 +27,10 @@ sudo install -d -m 0700 /var/lib/hpd
 # tune from there.
 sudo install -d -m 0755 /etc/hpd
 
-sudo install -Dm644 package/hpd.service              /etc/systemd/system/hpd.service
-sudo install -Dm644 package/dev.cirodev.hpd.conf     /etc/dbus-1/system.d/dev.cirodev.hpd.conf
-sudo install -Dm644 package/hpd-example.toml         /etc/hpd/config.toml.example
+sudo install -Dm644 package/hpd.service                       /etc/systemd/system/hpd.service
+sudo install -Dm644 package/dev.cirodev.hpd.conf              /etc/dbus-1/system.d/dev.cirodev.hpd.conf
+sudo install -Dm644 package/hpd-example.toml                  /etc/hpd/config.toml.example
+sudo install -Dm644 package/polkit/dev.cirodev.hpd.policy     /usr/share/polkit-1/actions/dev.cirodev.hpd.policy
 
 echo "🚀 4. Reloading daemons and starting HPD..."
 sudo systemctl daemon-reload

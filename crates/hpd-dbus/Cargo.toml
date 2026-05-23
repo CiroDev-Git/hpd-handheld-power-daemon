@@ -3,6 +3,14 @@ name = "hpd-dbus"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+# When enabled, every `set_*` method short-circuits the polkit
+# authorization check and returns `true`. Activated transitively by the
+# daemon's `simulator` feature because session-bus runs (macOS / dev
+# hosts) have no polkit authority to talk to.
+simulator = []
+
 [dependencies]
 hpd-core = { path = "../hpd-core" }
 hpd-capabilities = { path = "../hpd-capabilities" }

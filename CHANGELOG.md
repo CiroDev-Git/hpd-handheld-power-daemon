@@ -87,6 +87,17 @@ in 0.2.0 to consolidate. Subsequent minor releases will respect SemVer.
   on builds without the `simulator` feature. macOS / dev hosts
   must add `--features simulator`.
   *(Lote 16)*
+- **System-bus policy widened; polkit now gates access.**
+  `dev.cirodev.hpd.conf` previously only allowed `root` and members
+  of the `wheel` group to send to the daemon. It now lets any user
+  send method calls; per-action authorization is enforced by polkit
+  via the new `dev.cirodev.hpd.{set-tdp,set-charge,set-profile}`
+  action IDs. Operators must ensure polkit is installed and that an
+  auth agent (polkit-gnome, kde-polkit, `pkttyagent` for terminal
+  use) is available, otherwise privileged calls will fail with
+  `AuthFailed`. `install.sh` deploys the policy file to
+  `/usr/share/polkit-1/actions/`.
+  *(Lote 20)*
 
 ### Added
 
@@ -216,6 +227,21 @@ in 0.2.0 to consolidate. Subsequent minor releases will respect SemVer.
   D-Bus connection before returning. Previously the runtime simply
   dropped on Ctrl+C and any pending state mutation was lost.
   *(Lote 19)*
+- **Polkit per-action authorization.** The D-Bus interface now
+  delegates access control to polkit instead of the coarse
+  `group="wheel"` policy that used to live in
+  `dev.cirodev.hpd.conf`. Three action IDs are declared in
+  `package/polkit/dev.cirodev.hpd.policy`:
+  `dev.cirodev.hpd.{set-tdp,set-charge,set-profile}`. TDP and
+  charge changes require `auth_admin` (prompt on every call);
+  cooling-profile changes use `auth_admin_keep` (5-minute cache).
+  Property reads remain unauthenticated. The check is **fail-closed**
+  — any error talking to polkit results in `AuthFailed` — and is
+  short-circuited to `true` under `#[cfg(feature = "simulator")]`
+  so session-bus dev hosts remain usable. Implementation is a small
+  manual call to `org.freedesktop.PolicyKit1.Authority` over zbus;
+  no extra dependency added.
+  *(Lote 20)*
 
 ### Changed
 
