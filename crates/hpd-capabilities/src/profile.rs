@@ -57,22 +57,59 @@ pub struct ProfileThresholds {
     pub high_frac: f32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum SystemPreset {
-    Silent,
-    Performance,
-    Turbo,
+/// Convenience preset for the TDP envelope.
+///
+/// `TdpPreset` selects a target wattage on the SPL rail; it is **not** the
+/// same as [`ProfileName`], which selects the ACPI platform/cooling
+/// profile. Both can be active independently:
+///
+/// | `TdpPreset` | Resulting SPL              | Typical platform profile (auto) |
+/// |-------------|----------------------------|---------------------------------|
+/// | `Eco`       | `spl_min`                  | `PowerSaver`                    |
+/// | `Balanced`  | midpoint of min/max        | `Balanced`                      |
+/// | `Max`       | `spl_max`                  | `Performance`                   |
+///
+/// Note the deliberate **non-overlap with `ProfileName`** in naming
+/// (e.g. there is no `TdpPreset::Performance`) to avoid the previous
+/// confusion where `SystemPreset::Performance` actually meant "midpoint
+/// TDP" while `ProfileName::Performance` meant "max cooling".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TdpPreset {
+    /// Minimum supported SPL on this hardware.
+    Eco,
+    /// Midpoint between `spl_min` and `spl_max`.
+    Balanced,
+    /// Maximum supported SPL on this hardware.
+    Max,
 }
 
-impl FromStr for SystemPreset {
+impl fmt::Display for TdpPreset {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TdpPreset::Eco => f.write_str("eco"),
+            TdpPreset::Balanced => f.write_str("balanced"),
+            TdpPreset::Max => f.write_str("max"),
+        }
+    }
+}
+
+impl FromStr for TdpPreset {
     type Err = String;
 
+    /// Accepts only `eco`, `balanced`, `max` (case-insensitive). The
+    /// pre-0.2 names `silent`, `performance`, `turbo` are intentionally
+    /// rejected — the same string used to map to different semantics
+    /// across `TdpPreset` and `ProfileName`, and accepting aliases would
+    /// reintroduce the confusion this enum was renamed to remove.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "silent" => Ok(SystemPreset::Silent),
-            "performance" => Ok(SystemPreset::Performance),
-            "turbo" => Ok(SystemPreset::Turbo),
-            _ => Err(format!("Unknown preset: {}", s)),
+            "eco" => Ok(TdpPreset::Eco),
+            "balanced" => Ok(TdpPreset::Balanced),
+            "max" => Ok(TdpPreset::Max),
+            other => Err(format!(
+                "unknown TDP preset '{}': use one of eco, balanced, max",
+                other
+            )),
         }
     }
 }
@@ -127,5 +164,41 @@ mod tests {
     fn profile_fromstr_empty_is_rejected() {
         assert!("".parse::<ProfileName>().is_err());
         assert!("   ".parse::<ProfileName>().is_err());
+    }
+
+    #[test]
+    fn tdp_preset_display_is_lowercase() {
+        assert_eq!(TdpPreset::Eco.to_string(), "eco");
+        assert_eq!(TdpPreset::Balanced.to_string(), "balanced");
+        assert_eq!(TdpPreset::Max.to_string(), "max");
+    }
+
+    #[test]
+    fn tdp_preset_roundtrip_display_to_fromstr() {
+        for p in [TdpPreset::Eco, TdpPreset::Balanced, TdpPreset::Max] {
+            assert_eq!(p.to_string().parse::<TdpPreset>().unwrap(), p);
+        }
+    }
+
+    #[test]
+    fn tdp_preset_fromstr_accepts_case_insensitive() {
+        assert_eq!("ECO".parse::<TdpPreset>().unwrap(), TdpPreset::Eco);
+        assert_eq!("Balanced".parse::<TdpPreset>().unwrap(), TdpPreset::Balanced);
+        assert_eq!("MAX".parse::<TdpPreset>().unwrap(), TdpPreset::Max);
+    }
+
+    #[test]
+    fn tdp_preset_fromstr_rejects_legacy_aliases() {
+        // Deliberate breaking change: pre-0.2 names map to different
+        // semantics than the new ones, so we don't accept them as aliases.
+        for legacy in ["silent", "performance", "turbo", "Performance", "Turbo"] {
+            let err = legacy.parse::<TdpPreset>().unwrap_err();
+            assert!(
+                err.contains("eco, balanced, max"),
+                "error for '{}' should suggest the new names, got: {}",
+                legacy,
+                err
+            );
+        }
     }
 }

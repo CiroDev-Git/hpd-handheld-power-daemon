@@ -43,9 +43,9 @@ impl PowerDaemonInterface {
 
     async fn set_preset(&self, preset_name: String) -> zbus::fdo::Result<()> {
         debug!("D-Bus received request to Set Preset: {}", preset_name);
-        
-        let preset = preset_name.parse::<hpd_capabilities::profile::SystemPreset>()
-            .map_err(|e| zbus::fdo::Error::InvalidArgs(e))?;
+
+        let preset = preset_name.parse::<hpd_capabilities::profile::TdpPreset>()
+            .map_err(zbus::fdo::Error::InvalidArgs)?;
 
         if self.tx.send(Transition::SetPreset(preset)).await.is_err() {
             error!("Failed to send transition to executor");

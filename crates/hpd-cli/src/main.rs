@@ -24,9 +24,13 @@ enum Commands {
         #[command(subcommand)]
         action: ChargeAction,
     },
-    /// Apply default power presets (silent, performance, turbo)
+    /// Apply a TDP preset (eco / balanced / max).
+    ///
+    /// `TdpPreset` selects a target SPL wattage; it is NOT the same as
+    /// the ACPI platform/cooling profile. With auto-cooling enabled the
+    /// platform profile follows the chosen TDP automatically.
     Preset {
-        #[arg(help = "Presets: silent (10W), performance (15W), turbo (30W)")]
+        #[arg(help = "TDP preset: eco (min SPL), balanced (midpoint), max (max SPL)")]
         name: String,
     },
     /// Show the device system limits

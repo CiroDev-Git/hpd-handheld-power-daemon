@@ -53,6 +53,20 @@ in 0.2.0 to consolidate. Subsequent minor releases will respect SemVer.
   This may surface latent bugs in clients that previously assumed
   signals would never fire.
   *(Lote 10 — Audit §3.1)*
+- **`set_preset` value set changed.** `silent`, `performance`, `turbo`
+  are rejected with a clear error. Use `eco`, `balanced`, `max`
+  instead. Reason: the old `performance` overloaded with
+  `ProfileName::Performance` while meaning a different thing
+  (midpoint TDP vs. max cooling profile). The rename is intentional
+  and aliases were not kept so the confusion cannot resurface.
+  *(Lote 11 — Audit §3.7)*
+
+### ⚠ Breaking — CLI clients
+
+- **`hpdctl preset turbo|silent|performance` is gone.** Use
+  `hpdctl preset max|eco|balanced`. The CLI subcommand error message
+  guides users to the new names.
+  *(Lote 11 — Audit §3.7)*
 
 ### ⚠ Breaking — internal API (Rust)
 
@@ -81,6 +95,12 @@ in 0.2.0 to consolidate. Subsequent minor releases will respect SemVer.
 - **`ProfileName: Display`** — symmetric with `FromStr`. Documented as
   the stable D-Bus contract.
   *(Lote 9 — Audit §3.6)*
+- **`TdpPreset` enum** with `Eco | Balanced | Max` variants and
+  `Display`/`FromStr` symmetric in kebab-case. Replaces the previous
+  `SystemPreset` whose `Performance` variant collided semantically
+  with `ProfileName::Performance` (the former meant midpoint TDP, the
+  latter meant max cooling profile).
+  *(Lote 11 — Audit §3.7)*
 - **`ProfileName::FromStr`** now accepts ACPI-native aliases (`quiet`,
   `low-power`) and preserves unknown values as
   `ProfileName::Custom(...)` instead of erroring.
@@ -173,6 +193,10 @@ in 0.2.0 to consolidate. Subsequent minor releases will respect SemVer.
 
 ### Removed
 
+- **`SystemPreset` enum** and the `silent` / `performance` / `turbo`
+  string aliases that mapped to it. Replaced by `TdpPreset` (see
+  Added). No backwards-compat aliases kept.
+  *(Lote 11 — Audit §3.7)*
 - **`Effect::EmitDbusPropertiesChanged`** variant and all its push
   sites in the reducer + the no-op match arm in the executor. The
   daemon now emits PropertiesChanged via a dedicated watcher task,

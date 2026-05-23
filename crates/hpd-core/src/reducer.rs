@@ -3,7 +3,7 @@ use tracing::info;
 use hpd_capabilities::error::HpdError;
 use hpd_capabilities::power::PowerEnvelopeLimits;
 use hpd_capabilities::power::PowerEnvelopeTarget;
-use hpd_capabilities::profile::{ProfileThresholds, SystemPreset};
+use hpd_capabilities::profile::{ProfileThresholds, TdpPreset};
 use hpd_capabilities::units::PowerMilliwatts;
 
 use crate::effect::Effect;
@@ -35,10 +35,10 @@ pub fn reduce(
             let max_w = device_limits.spl_max.0 / 1000;
 
             let target_watts = match preset {
-                SystemPreset::Silent => min_w,
+                TdpPreset::Eco => min_w,
                 // saturating_add: defensive against pathological device_limits.
-                SystemPreset::Performance => min_w.saturating_add(max_w) / 2,
-                SystemPreset::Turbo => max_w,
+                TdpPreset::Balanced => min_w.saturating_add(max_w) / 2,
+                TdpPreset::Max => max_w,
             };
 
             return reduce(state, Transition::SetSpl(target_watts), device_limits, profile_thresholds);
@@ -122,18 +122,16 @@ pub fn reduce(
             }
 
             let mut output = if is_plugged {
-                info!(preset = "turbo", "Charger plugged: saving DC target and applying preset");
-                let mut temp_output = reduce(state, Transition::SetPreset(SystemPreset::Turbo), device_limits, profile_thresholds)?;
+                info!(preset = %TdpPreset::Max, "Charger plugged: saving DC target and applying preset");
+                let mut temp_output = reduce(state, Transition::SetPreset(TdpPreset::Max), device_limits, profile_thresholds)?;
                 temp_output.new_state.last_dc_target = Some(state.power_target.clone());
                 temp_output
+            } else if let Some(ref prev_target) = state.last_dc_target {
+                info!(action = "restore_previous", "Charger unplugged: restoring previous DC target");
+                reduce(state, Transition::SetEnvelope(prev_target.clone()), device_limits, profile_thresholds)?
             } else {
-                if let Some(ref prev_target) = state.last_dc_target {
-                    info!(action = "restore_previous", "Charger unplugged: restoring previous DC target");
-                    reduce(state, Transition::SetEnvelope(prev_target.clone()), device_limits, profile_thresholds)?
-                } else {
-                    info!(preset = "performance", "Charger unplugged: applying default preset");
-                    reduce(state, Transition::SetPreset(SystemPreset::Performance), device_limits, profile_thresholds)?
-                }
+                info!(preset = %TdpPreset::Balanced, "Charger unplugged: applying default preset");
+                reduce(state, Transition::SetPreset(TdpPreset::Balanced), device_limits, profile_thresholds)?
             };
 
             output.new_state.is_ac_connected = is_plugged;
