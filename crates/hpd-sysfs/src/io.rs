@@ -8,6 +8,6 @@ pub trait SysfsIo: Send + Sync {
     /// Write a string to sysfs file
     fn write_string(&self, path: impl AsRef<Path>, val: &str) -> Result<(), SysfsError>;
 
-    /// Usefull for `probe` in detection phase
+    /// Useful for `probe` during the detection phase
     fn exists(&self, path: impl AsRef<Path>) -> bool;
 }

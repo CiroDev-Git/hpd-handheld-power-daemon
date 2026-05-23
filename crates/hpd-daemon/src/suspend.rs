@@ -38,7 +38,7 @@ pub async fn spawn_suspend_monitor(tx: mpsc::Sender<Transition>) {
     let mut stream = match proxy.receive_prepare_for_sleep().await {
         Ok(s) => s,
         Err(e) => {
-            error!("Failure in subscription to sleep signal: {}", e);
+            error!("Failed to subscribe to sleep signal: {}", e);
             return;
         }
     };
@@ -54,7 +54,7 @@ pub async fn spawn_suspend_monitor(tx: mpsc::Sender<Transition>) {
                     let _ = tx.send(Transition::SystemResumed).await;
                 }
             }
-            Err(e) => error!("Failure decode in logind signal: {}", e),
+            Err(e) => error!("Failed to decode logind signal: {}", e),
         }
     }
 }

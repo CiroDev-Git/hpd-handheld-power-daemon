@@ -13,8 +13,8 @@ ExecStart=/usr/bin/hpd
 Restart=on-failure
 RestartSec=3
 
-# Sandboxing de systemd
-# Avoid daemon modify system files excluding sysfs
+# systemd sandboxing
+# Prevent the daemon from modifying system files except sysfs
 ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/sys/class/firmware-attributes/ /var/lib/hpd/

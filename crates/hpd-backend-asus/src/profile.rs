@@ -42,7 +42,7 @@ impl<S: SysfsIo> AsusProfileBackend<S> {
         }
     }
 
-    /// Map our abstract domain from kenel, using available options
+    /// Map our abstract domain to a kernel-supported string, using the available options.
     fn resolve_target_string(&self, profile: &ProfileName, choices: &[String]) -> String {
         match profile {
             ProfileName::PowerSaver => {
@@ -54,7 +54,7 @@ impl<S: SysfsIo> AsusProfileBackend<S> {
                     ACPI_BALANCED.to_string() // Safe fallback
                 }
             }
-            ProfileName::Balanced => ACPI_BALANCED.to_string(), // Universal en x86
+            ProfileName::Balanced => ACPI_BALANCED.to_string(), // Universal on x86
             ProfileName::Performance => ACPI_PERFORMANCE.to_string(),
             ProfileName::Custom(c) => c.clone(),
         }

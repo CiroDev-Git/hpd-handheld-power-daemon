@@ -13,7 +13,7 @@ impl StatePersister {
     }
 
     pub async fn load(&self) -> Option<ProfileState> {
-        if !self.path.exists() { // path.exists() es rápido, pero fs::metadata sería mejor en async estricto
+        if !self.path.exists() { // path.exists() is sync; tokio::fs::try_exists is the async equivalent
             return None;
         }
 

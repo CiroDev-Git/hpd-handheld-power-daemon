@@ -1,8 +1,8 @@
 # .cargo/config.toml
 [target.'cfg(all())']
 rustflags = [
-    "-F", "unsafe_code",        # Forbid unsafe (except over hpd-netlink where config #[allow])
-    "-W", "clippy::unwrap_used", # Warn/Deny unwrap
-    "-W", "clippy::expect_used", # Warn/Deny expect
-    "-W", "clippy::panic",       # Warn/Deny panic
+    "-F", "unsafe_code",         # Forbid unsafe (except in hpd-netlink, which opts in with #[allow])
+    "-W", "clippy::unwrap_used", # Warn on unwrap
+    "-W", "clippy::expect_used", # Warn on expect
+    "-W", "clippy::panic",       # Warn on panic
 ]

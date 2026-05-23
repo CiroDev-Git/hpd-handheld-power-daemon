@@ -11,7 +11,7 @@ pub fn infer_profile_from_spl(
     let range = limits.spl_max.0.saturating_sub(limits.spl_min.0) as f32;
     let current_offset = target.spl.0.saturating_sub(limits.spl_min.0) as f32;
 
-    // Avoid split by zero (cero unwrap, cero panic)
+    // Avoid divide-by-zero (no unwrap, no panic)
     let fraction = if range > 0.0 {
         current_offset / range
     } else {

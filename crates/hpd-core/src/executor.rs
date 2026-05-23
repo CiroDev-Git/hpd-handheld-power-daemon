@@ -86,7 +86,7 @@ impl<B: HwBackend> Executor<B> {
                         if desired_profile != new_state.active_profile {
                             info!("TDP requires cooling adjustment. Requesting profile change to {:?}", desired_profile);
                             
-                            // Using try_send to avoid blocking async bucle
+                            // Using try_send to avoid blocking the async loop
                             let _ = self.internal_tx.try_send(Transition::SetProfile(desired_profile));
                         }
                     }

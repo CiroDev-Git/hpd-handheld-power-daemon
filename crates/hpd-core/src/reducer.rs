@@ -97,32 +97,32 @@ pub fn reduce(
         }
 
         Transition::SyncPowerTarget(real_target) => {
-            // A forzed rollback. Kernel overrides (or stop) the hdp config.
+            // Forced rollback. Kernel overrode (or rejected) the hpd config.
             new_state.power_target = real_target;
-            // Emit the real values to UI, instead of value that hdp tried to set 
+            // Emit the real values to UI instead of the value hpd tried to set.
             effects.push(Effect::EmitDbusPropertiesChanged);
         }
 
-        Transition::AcPowerChanged(is_plugged) => {        
-            // Avoid debounce
+        Transition::AcPowerChanged(is_plugged) => {
+            // Debounce: ignore no-op transitions.
             if state.is_ac_connected == is_plugged {
                 return Ok(ReducerOutput {
                     new_state: state.clone(),
                     effects: vec![],
                 });
-            }    
+            }
 
             let mut output = if is_plugged {
-                println!("🔌 Charger pluged. Saving current state on battery and applying Turbo...");
+                println!("🔌 Charger plugged. Saving current state on battery and applying Turbo...");
                 let mut temp_output = reduce(state, Transition::SetPreset(SystemPreset::Turbo), device_limits, profile_thresholds)?;
                 temp_output.new_state.last_dc_target = Some(state.power_target.clone());
                 temp_output
             } else {
                 if let Some(ref prev_target) = state.last_dc_target {
-                    println!("🔌 Charger unpluged. Restoring preview state on battery...");
+                    println!("🔌 Charger unplugged. Restoring previous state on battery...");
                     reduce(state, Transition::SetEnvelope(prev_target.clone()), device_limits, profile_thresholds)?
                 } else {
-                    println!("🔌 Charger unpluged. Applying Performance as default...");
+                    println!("🔌 Charger unplugged. Applying Performance as default...");
                     reduce(state, Transition::SetPreset(SystemPreset::Performance), device_limits, profile_thresholds)?
                 }
             };
@@ -256,7 +256,7 @@ mod tests {
             &thresholds
         );
 
-        assert!(result.is_err(), "Debería fallar porque SPPT < SPL");
+        assert!(result.is_err(), "Must fail because SPPT < SPL");
     }
 
     #[test]

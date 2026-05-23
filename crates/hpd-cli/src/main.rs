@@ -46,7 +46,7 @@ enum Commands {
 enum TdpAction {
     /// Set power limits in Watts
     Set {
-        #[arg(help = "Value in Watts (ej. 15)")]
+        #[arg(help = "Value in Watts (e.g., 15)")]
         watts: u32,
     },
     /// Get current TDP
@@ -90,7 +90,7 @@ async fn main() {
     let connection = match connection_result {
         Ok(conn) => conn,
         Err(e) => {
-            eprintln!("Fatal error: Cannot connect to D-Bus. ¿Is the D-Bus system running?\nDetail: {}", e);
+            eprintln!("Fatal error: Cannot connect to D-Bus. Is the D-Bus system running?\nDetail: {}", e);
             process::exit(1);
         }
     };
@@ -99,7 +99,7 @@ async fn main() {
     let proxy = match PowerDaemonProxy::new(&connection).await {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("Fatal error: Daemon hpd not found. ¿Is it running (systemctl status hpd)?\nDetail: {}", e);
+            eprintln!("Fatal error: Daemon hpd not found. Is it running (systemctl status hpd)?\nDetail: {}", e);
             process::exit(1);
         }
     };
@@ -162,7 +162,7 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
                 
                 print_dashboard(&proxy).await?;
 
-                // Duerme 1 segundo
+                // Sleep 1 second
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
         },
@@ -172,7 +172,7 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
                 println!("❄️ Fan profile manually changed to: {}", profile);
             }
             FanAction::Auto => {
-                // Avisamos al Daemon que queremos reactivar el modo automático
+                // Notify the daemon to re-enable auto mode
                 proxy.set_fan_auto().await?;
                 println!("🔄 Automatic fan control enabled (based on TDP).");
             }

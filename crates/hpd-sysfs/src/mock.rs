@@ -23,7 +23,7 @@ pub mod testing {
         pub fn create_file(&self, rel_path: impl AsRef<Path>, content: &str) {
             let full_path = self.root.path().join(rel_path);
             if let Some(parent) = full_path.parent() {
-                fs::create_dir_all(parent).unwrap(); // Just for setup allow unwrap
+                fs::create_dir_all(parent).unwrap(); // Setup helper: unwrap acceptable here (test code)
             }
             fs::write(full_path, content).unwrap();
         }

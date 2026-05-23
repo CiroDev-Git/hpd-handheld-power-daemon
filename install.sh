@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
 
 echo "🔨 1. Compiling HPD Release..."
 cargo build --release
@@ -25,5 +25,5 @@ sudo systemctl reload dbus
 sudo systemctl enable --now hpd.service
 
 echo ""
-echo "✅ Instalation completed sucessfully!"
+echo "✅ Installation completed successfully!"
 echo "See logs in real time using: journalctl -fu hpd"

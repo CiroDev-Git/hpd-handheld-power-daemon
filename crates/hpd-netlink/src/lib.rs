@@ -24,7 +24,7 @@ mod linux {
         let builder = match MonitorBuilder::new() {
             Ok(b) => b,
             Err(e) => {
-                error!("Failure creating udev monitor: {}", e);
+                error!("Failed to create udev monitor: {}", e);
                 return;
             }
         };
@@ -32,7 +32,7 @@ mod linux {
         let builder = match builder.match_subsystem(SUBSYS_POWER) {
             Ok(b) => b,
             Err(e) => {
-                error!("Failure getting power_supply subsystem: {}", e);
+                error!("Failed to filter power_supply subsystem: {}", e);
                 return;
             }
         };
@@ -41,7 +41,7 @@ mod linux {
         let monitor = match builder.listen() {
             Ok(m) => m,
             Err(e) => {
-                error!("Failure with socket udev detection: {}", e);
+                error!("Failed to open udev socket: {}", e);
                 return;
             }
         };
@@ -49,7 +49,7 @@ mod linux {
         let mut async_monitor = match AsyncMonitorSocket::new(monitor) {
             Ok(m) => m,
             Err(e) => {
-                error!("Failure convertion with async monitor: {}", e);
+                error!("Failed to convert udev monitor into async monitor: {}", e);
                 return;
             }
         };

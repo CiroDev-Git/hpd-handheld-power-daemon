@@ -48,8 +48,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             mock.create_file("sys/firmware/acpi/platform_profile", "balanced");
             mock.create_file("sys/firmware/acpi/platform_profile_choices", "quiet balanced performance");
             mock.create_file("sys/class/power_supply/BAT0/charge_control_end_threshold", "80");
-            
-            // Inyectamos el Mock en lugar del sistema real!
+
+            // Inject the mock instead of the real system.
             run_daemon(AsusBackend::new(mock)).await?;
             return Ok(());
         }
@@ -87,7 +87,7 @@ where
         }
     };
     let thresholds = ProfileThresholds { low_frac: 0.33, high_frac: 0.67 };
-    let persister = StatePersister::new("/var/tmp/hpd_state.toml"); // Using /tmp temporally for testing
+    let persister = StatePersister::new("/var/tmp/hpd_state.toml"); // FIXME(Lote 7): move to /var/lib/hpd/state.toml
 
     let is_physically_plugged = backend.is_ac_connected().unwrap_or(false);
 
@@ -125,15 +125,15 @@ where
 
     info!("Starting hardware event monitors...");
     let tx_netlink = tx.clone(); // Give to monitor their own remote control
-    // 1. Use a native OS thread to avoid main thread pool
+    // 1. Use a native OS thread so the netlink monitor never blocks the main pool.
     std::thread::spawn(move || {
-        // 2. Smaal async engine running only in this thread
+        // 2. Single-thread async runtime pinned to this thread.
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("Failed to build local tokio runtime for netlink");
 
-        // 3. Execute task !Send de Netlink con total seguridad
+        // 3. Run the !Send netlink task safely on a LocalSet.
         rt.block_on(async move {
             let local = tokio::task::LocalSet::new();
             local.run_until(async move {
@@ -190,7 +190,7 @@ where
 
     info!("Daemon is fully running and listening for commands.");
 
-    // 10. Wait until turn off signal (Ctrl+C o SIGTERM de systemd)
+    // 10. Wait for shutdown signal (Ctrl+C or SIGTERM from systemd).
     match signal::ctrl_c().await {
         Ok(()) => {
             info!("Received shutdown signal. Shutting down gracefully...");

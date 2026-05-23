@@ -14,7 +14,7 @@ pub struct PowerEnvelopeLimits {
 pub struct PowerEnvelopeTarget {
     pub spl: PowerMilliwatts,
     pub sppt: PowerMilliwatts,
-    pub fppt: Option<PowerMilliwatts>, // For e.x Lenovo doesn't have it
+    pub fppt: Option<PowerMilliwatts>, // For example, Lenovo doesn't expose it.
 }
 
 pub trait PowerEnvelope: Send + Sync {

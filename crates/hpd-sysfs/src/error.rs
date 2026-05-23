@@ -23,7 +23,7 @@ pub enum SysfsError {
     },
 }
 
-// Helper for map std::io::Error to SysfsError with path context
+// Helper to map std::io::Error into SysfsError with path context.
 impl SysfsError {
     pub fn from_io(path: impl Into<PathBuf>, source: std::io::Error) -> Self {
         let path = path.into();

@@ -46,8 +46,8 @@ impl<S: SysfsIo> FanControl for AsusFanBackend<S> {
     }
 
     fn get_gpu_fan_rpm(&self) -> Result<Option<Rpm>, HpdError> {
-        // Ally X: fan2_input is GPU.
-        // If not exist no existe (e.x: Other ASUS models), then returns Ok(None)
+        // Ally X: fan2_input is the GPU.
+        // If the input file doesn't exist (e.g., other ASUS models), return Ok(None).
         match self.read_rpm(2) {
             Ok(rpm) => Ok(Some(rpm)),
             Err(HpdError::FeatureUnsupported) => Ok(None),

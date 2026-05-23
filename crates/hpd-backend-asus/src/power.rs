@@ -25,13 +25,13 @@ impl<S: SysfsIo> AsusPowerBackend<S> {
             reason: format!("Failed to parse integer from {}", path) 
         })?;
 
-        // Convertion of W (kernel) a mW (domain)
+        // Convert from W (kernel) to mW (domain).
         Ok(PowerMilliwatts(watts * 1000))
     }
 
     fn write_watts(&self, attr: &str, target_mw: PowerMilliwatts) -> Result<(), HpdError> {
         let path = format!("{}/{}/current_value", BASE_PATH, attr);
-        // Convertion of mW (domain) a W (kernel)
+        // Convert from mW (domain) to W (kernel).
         let watts = target_mw.0 / 1000;
         // Map error from L0 to generic error of L2
         self.sysfs.write_string(&path, &watts.to_string()).map_err(|e| HpdError::Backend { 
@@ -63,7 +63,7 @@ impl<S: SysfsIo> PowerEnvelope for AsusPowerBackend<S> {
     fn get_target(&self) -> Result<PowerEnvelopeTarget, HpdError> {
         let spl = self.read_watts("ppt_pl1_spl", "current_value")?;
         let sppt = self.read_watts("ppt_pl2_sppt", "current_value")?;
-        let fppt = self.read_watts("ppt_pl3_fppt", "current_value")?; // notar el pl3_
+        let fppt = self.read_watts("ppt_pl3_fppt", "current_value")?; // FIXME(Lote 4): get_limits uses "ppt_fppt" — confirm and unify.
 
         Ok(PowerEnvelopeTarget {
             spl,
@@ -120,7 +120,7 @@ mod tests {
             fppt: Some(PowerMilliwatts(30000)),
         };
 
-        backend.set_target(&new_target).expect("Debe poder escribir el target");
+        backend.set_target(&new_target).expect("Must be able to write the target");
 
         // Use the mock to spy what was written in file
         let spl_written = mock.read_string("/sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/current_value")
