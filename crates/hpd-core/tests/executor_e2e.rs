@@ -23,7 +23,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::timeout;
 
 use hpd_capabilities::power::{PowerEnvelopeLimits, PowerEnvelopeTarget};
-use hpd_capabilities::profile::{ProfileName, ProfileThresholds};
+use hpd_capabilities::profile::{ProfileName, RuntimeConfig};
 use hpd_capabilities::testing::{MockBackend, RecordedCall};
 use hpd_capabilities::units::PowerMilliwatts;
 
@@ -41,8 +41,8 @@ fn limits() -> PowerEnvelopeLimits {
     }
 }
 
-fn thresholds() -> ProfileThresholds {
-    ProfileThresholds::DEFAULT
+fn config() -> RuntimeConfig {
+    RuntimeConfig::DEFAULT
 }
 
 fn initial_state() -> ProfileState {
@@ -124,7 +124,7 @@ async fn test_executor_applies_envelope_and_persists() {
         backend,
         initial_state(),
         limits(),
-        thresholds(),
+        config(),
         rx,
         tx.clone(),
         persister,
@@ -183,7 +183,7 @@ async fn test_executor_rolls_back_on_hardware_failure() {
         backend,
         initial_state(),
         limits(),
-        thresholds(),
+        config(),
         rx,
         tx.clone(),
         persister,
@@ -213,7 +213,7 @@ async fn test_executor_propagates_state_to_watch_receiver() {
         backend,
         initial_state(),
         limits(),
-        thresholds(),
+        config(),
         rx,
         tx.clone(),
         persister,

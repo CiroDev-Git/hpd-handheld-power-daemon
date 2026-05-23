@@ -21,9 +21,15 @@ sudo install -d -m 0755 /etc/dbus-1/system.d/
 # State directory is normally created by systemd's StateDirectory=, but
 # pre-creating it lets the daemon also run cleanly outside systemd.
 sudo install -d -m 0700 /var/lib/hpd
+# Configuration directory: deploy the example as `.example` only — never
+# overwrite an existing /etc/hpd/config.toml so operator edits survive
+# re-installs. Operators can `cp config.toml.example config.toml` and
+# tune from there.
+sudo install -d -m 0755 /etc/hpd
 
 sudo install -Dm644 package/hpd.service              /etc/systemd/system/hpd.service
 sudo install -Dm644 package/dev.cirodev.hpd.conf     /etc/dbus-1/system.d/dev.cirodev.hpd.conf
+sudo install -Dm644 package/hpd-example.toml         /etc/hpd/config.toml.example
 
 echo "🚀 4. Reloading daemons and starting HPD..."
 sudo systemctl daemon-reload
@@ -33,5 +39,7 @@ sudo systemctl enable --now hpd.service
 echo ""
 echo "✅ Installation completed successfully!"
 echo "   • State file:    /var/lib/hpd/state.toml"
+echo "   • Config:        /etc/hpd/config.toml (template: config.toml.example)"
+echo "   • Reload config: sudo systemctl reload hpd"
 echo "   • Live logs:     journalctl -fu hpd"
 echo "   • Uninstall:     ./uninstall.sh"

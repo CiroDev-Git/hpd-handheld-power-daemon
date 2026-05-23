@@ -1,20 +1,25 @@
+mod config;
 mod probe;
 mod suspend;
 
-use tracing::{error, info};
+use std::path::PathBuf;
+
+use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 use tokio::sync::mpsc;
 use tokio::signal;
+use tokio::signal::unix::SignalKind;
 
 #[cfg(feature = "vendor-asus")]
 use hpd_sysfs::RealSysfs;
-use hpd_capabilities::profile::ProfileThresholds;
 use hpd_capabilities::power::PowerEnvelopeTarget;
 use hpd_capabilities::profile::ProfileName;
 use hpd_core::state::ProfileState;
 use hpd_core::transition::Transition;
 use hpd_core::executor::Executor;
 use hpd_core::persistence::StatePersister;
+
+use crate::config::DaemonConfig;
 
 #[cfg(feature = "vendor-asus")]
 use hpd_backend_asus::detect::matches_asus_handheld;
@@ -85,7 +90,14 @@ async fn run_daemon<B>(backend: B) -> Result<(), Box<dyn std::error::Error>>
 where 
     B: hpd_capabilities::backend::HwBackend + 'static 
 {
-    // 5. Base config
+    // 5. Daemon configuration. `ConfigurationDirectory=hpd` in the unit
+    //    file points us at /etc/hpd. Outside systemd we fall back to
+    //    /etc/hpd/config.toml directly. Missing or corrupt → defaults.
+    let config_path = std::env::var("CONFIGURATION_DIRECTORY")
+        .map(|d| PathBuf::from(d).join("config.toml"))
+        .unwrap_or_else(|_| PathBuf::from("/etc/hpd/config.toml"));
+    let daemon_config = DaemonConfig::load(&config_path);
+
     let limits = match backend.get_limits() {
         Ok(l) => {
             info!(
@@ -100,16 +112,15 @@ where
             return Err(e.into());
         }
     };
-    let thresholds = ProfileThresholds::DEFAULT;
 
     // systemd's StateDirectory= injects STATE_DIRECTORY (e.g. /var/lib/hpd).
-    // Outside systemd (manual runs, simulator) fall back to /var/lib/hpd
-    // directly. /var/tmp is intentionally avoided: world-writable + survives
-    // reboots = symlink-race surface when running as root.
+    // Outside systemd we honour the config's `state_path`. /var/tmp is
+    // intentionally avoided: world-writable + survives reboots = symlink-race
+    // surface when running as root.
     let state_path = std::env::var("STATE_DIRECTORY")
-        .map(|d| format!("{d}/state.toml"))
-        .unwrap_or_else(|_| "/var/lib/hpd/state.toml".to_string());
-    info!(path = %state_path, "Using state file");
+        .map(|d| PathBuf::from(d).join("state.toml"))
+        .unwrap_or_else(|_| daemon_config.state_path.clone());
+    info!(path = %state_path.display(), "Using state file");
     let persister = StatePersister::new(state_path);
 
     let is_physically_plugged = backend.is_ac_connected().unwrap_or(false);
@@ -124,14 +135,14 @@ where
             info!("No previous state found (or failed to read). Defaulting to hardware values...");
             // First time after installation, read currentconfig of device
             let current_target = backend.get_target().unwrap_or(PowerEnvelopeTarget {
-                spl: limits.spl_min, 
-                sppt: limits.spl_min, 
+                spl: limits.spl_min,
+                sppt: limits.spl_min,
                 fppt: Some(limits.spl_min)
             });
             let current_profile = backend.get_active_profile().unwrap_or(ProfileName::Balanced);
             let current_charge_limit = backend
                 .get_end_threshold()
-                .unwrap_or(hpd_capabilities::charge::DEFAULT_CHARGE_THRESHOLD);
+                .unwrap_or(daemon_config.default_charge_threshold);
 
             ProfileState {
                 power_target: current_target,
@@ -145,8 +156,34 @@ where
     };
 
     // 6. Create communication channels
-    let (tx, rx) = mpsc::channel::<Transition>(hpd_core::executor::TRANSITION_CHANNEL_CAPACITY);
+    let (tx, rx) = mpsc::channel::<Transition>(daemon_config.channel_capacity);
     let internal_tx = tx.clone(); // For rollback
+
+    // SIGHUP reloads the config file and pushes a ConfigReload transition.
+    // Maps cleanly to `systemctl reload hpd` via `ExecReload=` in the unit.
+    let tx_reload = tx.clone();
+    let path_reload = config_path.clone();
+    tokio::spawn(async move {
+        let mut stream = match tokio::signal::unix::signal(SignalKind::hangup()) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(error = %e, "Cannot register SIGHUP handler; config reload disabled");
+                return;
+            }
+        };
+        info!("SIGHUP handler ready — `systemctl reload hpd` or `kill -HUP <pid>` reloads config");
+        while stream.recv().await.is_some() {
+            let new_cfg = DaemonConfig::load(&path_reload);
+            if tx_reload
+                .send(Transition::ConfigReload(new_cfg.to_runtime()))
+                .await
+                .is_err()
+            {
+                warn!("Executor channel closed; SIGHUP handler exiting");
+                return;
+            }
+        }
+    });
 
     info!("Starting hardware event monitors...");
     let tx_netlink = tx.clone(); // Give to monitor their own remote control
@@ -178,7 +215,7 @@ where
         backend,
         initial_state,
         limits.clone(),
-        thresholds,
+        daemon_config.to_runtime(),
         rx,
         internal_tx,
         persister,

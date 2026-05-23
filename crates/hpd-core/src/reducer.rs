@@ -3,7 +3,7 @@ use tracing::info;
 use hpd_capabilities::error::HpdError;
 use hpd_capabilities::power::PowerEnvelopeLimits;
 use hpd_capabilities::power::PowerEnvelopeTarget;
-use hpd_capabilities::profile::{ProfileThresholds, TdpPreset};
+use hpd_capabilities::profile::{ProfileThresholds, RuntimeConfig, TdpPreset};
 use hpd_capabilities::units::PowerMilliwatts;
 
 use crate::effect::Effect;
@@ -12,25 +12,23 @@ use crate::invariants::validate_power_envelope;
 use crate::state::ProfileState;
 use crate::transition::Transition;
 
-/// Smart-mode envelope derivation: when only SPL is provided, SPPT and FPPT
-/// are scaled above it by these factors and then clamped to hw `*_max`.
-/// Values match the historic in-reducer literals; documented here so they
-/// can be revisited without grepping the codebase.
-pub const SPPT_FACTOR: f32 = 1.15;
-pub const FPPT_FACTOR: f32 = 1.25;
-
 pub struct ReducerOutput {
     pub new_state: ProfileState,
     pub effects: Vec<Effect>,
 }
 
-/// Compute new state and required effects 
-/// Pure function, doesn't interact with OS
+/// Compute new state and required effects.
+///
+/// Pure function — no I/O, no async, no globals. `config` is the
+/// currently-active `RuntimeConfig` (cooling thresholds + SPPT/FPPT
+/// boost multipliers); callers re-pass it on every invocation so the
+/// reducer never has to look at static state. The `Executor` owns the
+/// authoritative copy and swaps it on `Transition::ConfigReload`.
 pub fn reduce(
     state: &ProfileState,
     transition: Transition,
     device_limits: &PowerEnvelopeLimits,
-    profile_thresholds: &ProfileThresholds,
+    config: &RuntimeConfig,
 ) -> Result<ReducerOutput, HpdError> {
     let mut new_state = state.clone();
     let mut effects = Vec::new();
@@ -48,7 +46,7 @@ pub fn reduce(
                 TdpPreset::Max => max_w,
             };
 
-            return reduce(state, Transition::SetSpl(target_watts), device_limits, profile_thresholds);
+            return reduce(state, Transition::SetSpl(target_watts), device_limits, config);
         }
 
         // -----------------------------------------------------
@@ -65,8 +63,8 @@ pub fn reduce(
                 ));
             }
 
-            let sppt_mw = ((spl.0 as f32 * SPPT_FACTOR) as u32).min(device_limits.sppt_max.0);
-            let fppt_mw = ((spl.0 as f32 * FPPT_FACTOR) as u32).min(device_limits.fppt_max.0);
+            let sppt_mw = ((spl.0 as f32 * config.sppt_factor) as u32).min(device_limits.sppt_max.0);
+            let fppt_mw = ((spl.0 as f32 * config.fppt_factor) as u32).min(device_limits.fppt_max.0);
 
             let new_target = PowerEnvelopeTarget {
                 spl,
@@ -76,7 +74,7 @@ pub fn reduce(
 
             validate_power_envelope(&new_target)?;
 
-            return apply_target_and_profile(state, new_target, device_limits, profile_thresholds);
+            return apply_target_and_profile(state, new_target, device_limits, &config.profile_thresholds);
         }
 
         // -----------------------------------------------------
@@ -85,7 +83,7 @@ pub fn reduce(
         Transition::SetEnvelope(new_target) => {
             validate_power_envelope(&new_target)?;
 
-            return apply_target_and_profile(state, new_target, device_limits, profile_thresholds);
+            return apply_target_and_profile(state, new_target, device_limits, &config.profile_thresholds);
         }
 
         Transition::SetProfile(new_profile) => {
@@ -124,15 +122,15 @@ pub fn reduce(
 
             let mut output = if is_plugged {
                 info!(preset = %TdpPreset::Max, "Charger plugged: saving DC target and applying preset");
-                let mut temp_output = reduce(state, Transition::SetPreset(TdpPreset::Max), device_limits, profile_thresholds)?;
+                let mut temp_output = reduce(state, Transition::SetPreset(TdpPreset::Max), device_limits, config)?;
                 temp_output.new_state.last_dc_target = Some(state.power_target.clone());
                 temp_output
             } else if let Some(ref prev_target) = state.last_dc_target {
                 info!(action = "restore_previous", "Charger unplugged: restoring previous DC target");
-                reduce(state, Transition::SetEnvelope(prev_target.clone()), device_limits, profile_thresholds)?
+                reduce(state, Transition::SetEnvelope(prev_target.clone()), device_limits, config)?
             } else {
                 info!(preset = %TdpPreset::Balanced, "Charger unplugged: applying default preset");
-                reduce(state, Transition::SetPreset(TdpPreset::Balanced), device_limits, profile_thresholds)?
+                reduce(state, Transition::SetPreset(TdpPreset::Balanced), device_limits, config)?
             };
 
             output.new_state.is_ac_connected = is_plugged;
@@ -168,15 +166,19 @@ pub fn reduce(
             if !new_state.fan_follows_tdp {
                 info!("Enabling auto cooling profile (follows TDP)");
                 new_state.fan_follows_tdp = true;
-                
+
                 return reduce(
-                    &new_state, 
-                    Transition::SetEnvelope(new_state.power_target.clone()), 
-                    device_limits, 
-                    profile_thresholds
+                    &new_state,
+                    Transition::SetEnvelope(new_state.power_target.clone()),
+                    device_limits,
+                    config,
                 );
             }
         }
+
+        // Intercepted by the Executor before reduce() is called; the
+        // reducer treats it as a no-op so isolated calls (tests) are safe.
+        Transition::ConfigReload(_) => {}
     }
 
     Ok(ReducerOutput { new_state, effects })
@@ -223,7 +225,7 @@ mod tests {
     use super::*;
     use hpd_capabilities::charge::DEFAULT_CHARGE_THRESHOLD;
     use hpd_capabilities::power::{PowerEnvelopeTarget, PowerEnvelopeLimits};
-    use hpd_capabilities::profile::{ProfileName, ProfileThresholds};
+    use hpd_capabilities::profile::{ProfileName, RuntimeConfig};
     use hpd_capabilities::units::PowerMilliwatts;
 
     fn setup_state() -> ProfileState {
@@ -250,7 +252,7 @@ mod tests {
             sppt_max: PowerMilliwatts(43000),
             fppt_max: PowerMilliwatts(53000),
         };
-        let thresholds = ProfileThresholds::DEFAULT;
+        let config = RuntimeConfig::DEFAULT;
 
         // Invalid attempt: SPPT lower than SPL
         let bad_target = PowerEnvelopeTarget {
@@ -263,7 +265,7 @@ mod tests {
             &state, 
             Transition::SetEnvelope(bad_target), 
             &limits, 
-            &thresholds
+            &config
         );
 
         assert!(result.is_err(), "Must fail because SPPT < SPL");
@@ -278,7 +280,7 @@ mod tests {
             sppt_max: PowerMilliwatts(43000),
             fppt_max: PowerMilliwatts(53000),
         };
-        let thresholds = ProfileThresholds::DEFAULT;
+        let config = RuntimeConfig::DEFAULT;
 
         // Trying to increase to 30W (almost max capability), should infer Performance
         let high_target = PowerEnvelopeTarget {
@@ -287,7 +289,7 @@ mod tests {
             fppt: Some(PowerMilliwatts(30000)),
         };
 
-        let output = reduce(&state, Transition::SetEnvelope(high_target), &limits, &thresholds).unwrap();
+        let output = reduce(&state, Transition::SetEnvelope(high_target), &limits, &config).unwrap();
 
         assert_eq!(output.new_state.active_profile, ProfileName::Performance);
         assert!(output.effects.contains(&Effect::ApplyPlatformProfile(ProfileName::Performance)));
@@ -305,9 +307,9 @@ mod tests {
             sppt_max: PowerMilliwatts(43000),
             fppt_max: PowerMilliwatts(55000),
         };
-        let thresholds = ProfileThresholds::DEFAULT;
+        let config = RuntimeConfig::DEFAULT;
 
-        let result = reduce(&state, Transition::SetSpl(u32::MAX), &limits, &thresholds);
+        let result = reduce(&state, Transition::SetSpl(u32::MAX), &limits, &config);
 
         assert!(
             matches!(result, Err(HpdError::InvariantViolation(_))),
@@ -329,7 +331,7 @@ mod tests {
             sppt_max: PowerMilliwatts(43000),
             fppt_max: PowerMilliwatts(55000),
         };
-        let thresholds = ProfileThresholds::DEFAULT;
+        let config = RuntimeConfig::DEFAULT;
 
         // Start with the exact target that AcPowerChanged(true) -> SetPreset(Turbo)
         // would produce (35W SPL, sppt = 35000*1.15 = 40250, fppt = 35000*1.25 = 43750).
@@ -348,7 +350,7 @@ mod tests {
             last_dc_target: None,
         };
 
-        let output = reduce(&state, Transition::AcPowerChanged(true), &limits, &thresholds)
+        let output = reduce(&state, Transition::AcPowerChanged(true), &limits, &config)
             .expect("AcPowerChanged should succeed");
 
         assert!(
@@ -369,8 +371,8 @@ mod tests {
         }
     }
 
-    fn setup_thresholds() -> ProfileThresholds {
-        ProfileThresholds::DEFAULT
+    fn setup_config() -> RuntimeConfig {
+        RuntimeConfig::DEFAULT
     }
 
     // ---------- AcPowerChanged ----------
@@ -380,7 +382,7 @@ mod tests {
         // Redundant AcPowerChanged(false) on an already-DC state must yield zero
         // effects (no spurious re-apply / persistence).
         let state = setup_state();
-        let out = reduce(&state, Transition::AcPowerChanged(false), &setup_limits(), &setup_thresholds())
+        let out = reduce(&state, Transition::AcPowerChanged(false), &setup_limits(), &setup_config())
             .unwrap();
         assert!(out.effects.is_empty(), "expected no effects, got {:?}", out.effects);
         assert_eq!(out.new_state, state);
@@ -390,7 +392,7 @@ mod tests {
     fn test_ac_plugged_saves_dc_target_and_applies_max_preset() {
         // Charger goes in: snapshot the current DC target and ramp SPL to spl_max.
         let state = setup_state(); // DC, target (15,15,15)
-        let out = reduce(&state, Transition::AcPowerChanged(true), &setup_limits(), &setup_thresholds())
+        let out = reduce(&state, Transition::AcPowerChanged(true), &setup_limits(), &setup_config())
             .unwrap();
         assert!(out.new_state.is_ac_connected);
         assert_eq!(out.new_state.last_dc_target, Some(state.power_target.clone()));
@@ -410,7 +412,7 @@ mod tests {
         state.is_ac_connected = true;
         state.last_dc_target = Some(saved.clone());
 
-        let out = reduce(&state, Transition::AcPowerChanged(false), &setup_limits(), &setup_thresholds())
+        let out = reduce(&state, Transition::AcPowerChanged(false), &setup_limits(), &setup_config())
             .unwrap();
         assert!(!out.new_state.is_ac_connected);
         assert_eq!(out.new_state.power_target, saved);
@@ -425,7 +427,7 @@ mod tests {
         state.is_ac_connected = true;
         state.last_dc_target = None;
 
-        let out = reduce(&state, Transition::AcPowerChanged(false), &setup_limits(), &setup_thresholds())
+        let out = reduce(&state, Transition::AcPowerChanged(false), &setup_limits(), &setup_config())
             .unwrap();
         assert!(!out.new_state.is_ac_connected);
         assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(21_000));
@@ -438,7 +440,7 @@ mod tests {
         // After resume the kernel may have lost our config. The reducer must
         // emit exactly the three re-apply effects without mutating state.
         let state = setup_state();
-        let out = reduce(&state, Transition::SystemResumed, &setup_limits(), &setup_thresholds())
+        let out = reduce(&state, Transition::SystemResumed, &setup_limits(), &setup_config())
             .unwrap();
         assert_eq!(out.new_state, state);
         assert_eq!(out.effects.len(), 3);
@@ -458,7 +460,7 @@ mod tests {
         // concern tracked in the audit.
         let mut state = setup_state();
         state.fan_follows_tdp = false;
-        let out = reduce(&state, Transition::EnableFanAuto, &setup_limits(), &setup_thresholds())
+        let out = reduce(&state, Transition::EnableFanAuto, &setup_limits(), &setup_config())
             .unwrap();
         assert!(out.new_state.fan_follows_tdp);
     }
@@ -466,7 +468,7 @@ mod tests {
     #[test]
     fn test_enable_fan_auto_is_no_op_when_already_enabled() {
         let state = setup_state(); // fan_follows_tdp = true
-        let out = reduce(&state, Transition::EnableFanAuto, &setup_limits(), &setup_thresholds())
+        let out = reduce(&state, Transition::EnableFanAuto, &setup_limits(), &setup_config())
             .unwrap();
         assert_eq!(out.new_state, state);
         assert!(out.effects.is_empty());
@@ -477,7 +479,7 @@ mod tests {
     #[test]
     fn test_charge_threshold_changed_applies_and_persists() {
         let state = setup_state(); // threshold = 80
-        let out = reduce(&state, Transition::ChargeThresholdChanged(60), &setup_limits(), &setup_thresholds())
+        let out = reduce(&state, Transition::ChargeThresholdChanged(60), &setup_limits(), &setup_config())
             .unwrap();
         assert_eq!(out.new_state.charge_end_threshold, 60);
         assert_eq!(out.effects, vec![Effect::ApplyChargeThreshold(60), Effect::PersistState]);
@@ -486,7 +488,7 @@ mod tests {
     #[test]
     fn test_charge_threshold_changed_is_no_op_when_unchanged() {
         let state = setup_state(); // threshold = 80
-        let out = reduce(&state, Transition::ChargeThresholdChanged(80), &setup_limits(), &setup_thresholds())
+        let out = reduce(&state, Transition::ChargeThresholdChanged(80), &setup_limits(), &setup_config())
             .unwrap();
         assert_eq!(out.new_state, state);
         assert!(out.effects.is_empty());
@@ -497,21 +499,21 @@ mod tests {
     #[test]
     fn test_set_spl_just_below_min_is_rejected() {
         let state = setup_state();
-        let result = reduce(&state, Transition::SetSpl(6), &setup_limits(), &setup_thresholds());
+        let result = reduce(&state, Transition::SetSpl(6), &setup_limits(), &setup_config());
         assert!(matches!(result, Err(HpdError::InvariantViolation(_))));
     }
 
     #[test]
     fn test_set_spl_just_above_max_is_rejected() {
         let state = setup_state();
-        let result = reduce(&state, Transition::SetSpl(36), &setup_limits(), &setup_thresholds());
+        let result = reduce(&state, Transition::SetSpl(36), &setup_limits(), &setup_config());
         assert!(matches!(result, Err(HpdError::InvariantViolation(_))));
     }
 
     #[test]
     fn test_set_spl_at_min_boundary_is_accepted() {
         let state = setup_state();
-        let out = reduce(&state, Transition::SetSpl(7), &setup_limits(), &setup_thresholds())
+        let out = reduce(&state, Transition::SetSpl(7), &setup_limits(), &setup_config())
             .unwrap();
         assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(7_000));
     }
@@ -519,7 +521,7 @@ mod tests {
     #[test]
     fn test_set_spl_at_max_boundary_is_accepted() {
         let state = setup_state();
-        let out = reduce(&state, Transition::SetSpl(35), &setup_limits(), &setup_thresholds())
+        let out = reduce(&state, Transition::SetSpl(35), &setup_limits(), &setup_config())
             .unwrap();
         assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(35_000));
     }
@@ -536,7 +538,7 @@ mod tests {
             sppt: PowerMilliwatts(20_000),
             fppt: Some(PowerMilliwatts(18_000)),
         };
-        let result = reduce(&state, Transition::SetEnvelope(bad), &setup_limits(), &setup_thresholds());
+        let result = reduce(&state, Transition::SetEnvelope(bad), &setup_limits(), &setup_config());
         assert!(matches!(result, Err(HpdError::InvariantViolation(_))));
     }
 
@@ -552,9 +554,30 @@ mod tests {
             sppt: PowerMilliwatts(13_800),
             fppt: Some(PowerMilliwatts(15_000)),
         };
-        let out = reduce(&state, Transition::SyncPowerTarget(real.clone()), &setup_limits(), &setup_thresholds())
+        let out = reduce(&state, Transition::SyncPowerTarget(real.clone()), &setup_limits(), &setup_config())
             .unwrap();
         assert_eq!(out.new_state.power_target, real);
         assert!(out.effects.is_empty(), "rollback must not produce effects, got {:?}", out.effects);
+    }
+
+    // ---------- ConfigReload (no-op at the reducer layer) ----------
+
+    #[test]
+    fn test_config_reload_is_a_no_op_in_the_reducer() {
+        // The Executor intercepts ConfigReload before reduce() to mutate
+        // its own RuntimeConfig. Calling reduce() with it directly must
+        // therefore touch neither state nor effects — otherwise an
+        // integration that bypasses the Executor (e.g. a future
+        // synchronous test harness) would silently corrupt state.
+        let state = setup_state();
+        let out = reduce(
+            &state,
+            Transition::ConfigReload(RuntimeConfig::DEFAULT),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert_eq!(out.new_state, state);
+        assert!(out.effects.is_empty());
     }
 }

@@ -7,6 +7,9 @@ Wants=dbus.service
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/hpd-daemon
+# `systemctl reload hpd` triggers SIGHUP, which the daemon catches and
+# uses to reload /etc/hpd/config.toml in-place (no process restart).
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 Environment="RUST_LOG=hpd=info,warn"
@@ -15,6 +18,12 @@ Environment="RUST_LOG=hpd=info,warn"
 # permissions and exposes its path through the STATE_DIRECTORY env var.
 StateDirectory=hpd
 StateDirectoryMode=0700
+
+# Configuration directory: systemd ensures /etc/hpd exists and exposes
+# its path via CONFIGURATION_DIRECTORY. The daemon reads
+# `<dir>/config.toml`; missing or corrupt → falls back to defaults.
+ConfigurationDirectory=hpd
+ConfigurationDirectoryMode=0755
 
 # --- Sandboxing ---
 # hpd is root-only and writes to a small, well-known set of sysfs paths.

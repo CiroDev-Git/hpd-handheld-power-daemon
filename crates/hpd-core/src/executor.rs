@@ -1,9 +1,9 @@
 use tokio::sync::{mpsc, watch};
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, warn};
 
 use hpd_capabilities::backend::HwBackend;
 use hpd_capabilities::power::PowerEnvelopeLimits;
-use hpd_capabilities::profile::ProfileThresholds;
+use hpd_capabilities::profile::RuntimeConfig;
 
 use crate::effect::Effect;
 use crate::reducer::reduce;
@@ -20,10 +20,14 @@ pub const TRANSITION_CHANNEL_CAPACITY: usize = 32;
 pub struct Executor<B: HwBackend> {
     backend: B,
     device_limits: PowerEnvelopeLimits,
-    profile_thresholds: ProfileThresholds,
-    
+    /// Runtime-tunable knobs (cooling thresholds + SPPT/FPPT factors).
+    /// Owned mutably by the executor and swapped on
+    /// `Transition::ConfigReload` — passed to `reduce()` by reference on
+    /// every iteration so the new values take effect immediately.
+    config: RuntimeConfig,
+
     transition_rx: mpsc::Receiver<Transition>,
-    
+
     state_tx: watch::Sender<ProfileState>,
 
     internal_tx: mpsc::Sender<Transition>,
@@ -35,7 +39,7 @@ impl<B: HwBackend> Executor<B> {
         backend: B,
         initial_state: ProfileState,
         device_limits: PowerEnvelopeLimits,
-        profile_thresholds: ProfileThresholds,
+        config: RuntimeConfig,
         transition_rx: mpsc::Receiver<Transition>,
         internal_tx: mpsc::Sender<Transition>,
         persister: crate::persistence::StatePersister,
@@ -45,7 +49,7 @@ impl<B: HwBackend> Executor<B> {
         let executor = Self {
             backend,
             device_limits,
-            profile_thresholds,
+            config,
             transition_rx,
             state_tx,
             internal_tx,
@@ -61,13 +65,32 @@ impl<B: HwBackend> Executor<B> {
         while let Some(transition) = self.transition_rx.recv().await {
             debug!(?transition, "Received transition");
 
+            // ConfigReload mutates executor-owned runtime config, not
+            // ProfileState. Intercept it before reduce() so the reducer
+            // stays pure and the new values apply from the next iteration.
+            if let Transition::ConfigReload(new_config) = transition {
+                if new_config == self.config {
+                    debug!("ConfigReload: no change");
+                } else {
+                    info!(
+                        sppt_factor = new_config.sppt_factor,
+                        fppt_factor = new_config.fppt_factor,
+                        low_frac = new_config.profile_thresholds.low_frac,
+                        high_frac = new_config.profile_thresholds.high_frac,
+                        "ConfigReload applied"
+                    );
+                    self.config = new_config;
+                }
+                continue;
+            }
+
             let current_state = self.state_tx.borrow().clone();
 
             match reduce(
                 &current_state,
                 transition,
                 &self.device_limits,
-                &self.profile_thresholds,
+                &self.config,
             ) {
                 Ok(output) => {
                     if self.state_tx.send(output.new_state).is_err() {
@@ -101,7 +124,7 @@ impl<B: HwBackend> Executor<B> {
                     error!(error = %e, "Failed to apply Power Envelope to hardware");
                     match self.backend.get_target() {
                         Ok(real_target) => {
-                            error!("Rolling back state to match hardware reality: {:?}", real_target);
+                            warn!("Rolling back state to match hardware reality: {:?}", real_target);
                             let _ = self.internal_tx.send(Transition::SyncPowerTarget(real_target)).await;
                         }
                         Err(read_err) => {

@@ -51,7 +51,7 @@ impl FromStr for ProfileName {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProfileThresholds {
     pub low_frac: f32,
     pub high_frac: f32,
@@ -61,6 +61,40 @@ impl ProfileThresholds {
     /// Production default used by the daemon and most tests: SPL fractions
     /// below 33% map to PowerSaver, 33–67% to Balanced, 67%+ to Performance.
     pub const DEFAULT: Self = Self { low_frac: 0.33, high_frac: 0.67 };
+}
+
+impl Default for ProfileThresholds {
+    fn default() -> Self { Self::DEFAULT }
+}
+
+/// Runtime-tunable subset of the daemon's configuration — everything the
+/// reducer + executor consume on every transition. Held by the `Executor`
+/// and replaced wholesale when a `Transition::ConfigReload(RuntimeConfig)`
+/// arrives, so values like the SPPT/FPPT multipliers can be tuned without
+/// a daemon restart.
+///
+/// Defined in `hpd-capabilities` rather than `hpd-core` so the
+/// `Transition` enum can carry it without `hpd-core` needing to know
+/// about TOML or the daemon's on-disk schema.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeConfig {
+    pub profile_thresholds: ProfileThresholds,
+    pub sppt_factor: f32,
+    pub fppt_factor: f32,
+}
+
+impl RuntimeConfig {
+    /// Defaults match the historic in-reducer constants: 1.15/1.25 boost
+    /// multipliers, 0.33/0.67 cooling-profile cut-offs.
+    pub const DEFAULT: Self = Self {
+        profile_thresholds: ProfileThresholds::DEFAULT,
+        sppt_factor: 1.15,
+        fppt_factor: 1.25,
+    };
+}
+
+impl Default for RuntimeConfig {
+    fn default() -> Self { Self::DEFAULT }
 }
 
 /// Convenience preset for the TDP envelope.

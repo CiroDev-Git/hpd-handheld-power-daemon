@@ -185,6 +185,28 @@ in 0.2.0 to consolidate. Subsequent minor releases will respect SemVer.
   install / usage / development sections, license recognised by
   GitHub.
   *(Lote 17)*
+- **`DaemonConfig` + on-disk configuration** at
+  `/etc/hpd/config.toml`. Every field is optional and defaults are
+  applied per-field via `#[serde(default)]`, so partial / empty TOML
+  files never break the daemon and adding fields never breaks
+  existing configs. Missing or corrupt file → log + fall back to
+  defaults (daemon survives). The new `package/hpd-example.toml` ships
+  as `/etc/hpd/config.toml.example` to document the schema.
+  *(Lote 18)*
+- **`Transition::ConfigReload(RuntimeConfig)`** — reintroduced as a
+  functional hot-reload pathway. The `RuntimeConfig` type
+  (`hpd-capabilities::profile`) bundles the runtime-tunable subset
+  (`profile_thresholds`, `sppt_factor`, `fppt_factor`) that the
+  reducer consumes on every transition. The Executor intercepts
+  `ConfigReload` before `reduce()` and swaps its own copy
+  atomically; the next transition uses the new values.
+  *(Lote 18)*
+- **SIGHUP handler in `hpd-daemon`** — re-reads
+  `/etc/hpd/config.toml` and pushes a `ConfigReload` transition.
+  Mapped from `systemctl reload hpd` via `ExecReload=/bin/kill -HUP
+  $MAINPID` in the unit file. `ConfigurationDirectory=hpd` also
+  added.
+  *(Lote 18)*
 
 ### Changed
 
@@ -275,8 +297,9 @@ in 0.2.0 to consolidate. Subsequent minor releases will respect SemVer.
   - `HpdError::DbusClient(String)` variant (unused). *(Lote 1)*
   - `SysfsIo::is_writable` method and its `Real`/`Mock` impls
     (defined but never called). *(Lote 1)*
-  - `Transition::ConfigReload` variant and its reducer arm. Will be
-    reintroduced as a functional reload pathway in a later lote.
+  - `Transition::ConfigReload` variant and its reducer arm. Reintroduced
+    in Lote 18 with a real `RuntimeConfig` payload and a SIGHUP-driven
+    hot-reload pathway.
     *(Lote 1)*
 - **Empty `/src/` directory** at the repository root (leftover from
   an earlier `cargo init`). *(Lote 1)*

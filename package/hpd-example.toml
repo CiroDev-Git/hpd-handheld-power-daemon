@@ -1,0 +1,41 @@
+# /etc/hpd/config.toml — Handheld Power Daemon configuration
+#
+# Every field is optional. Missing fields fall back to the defaults shown
+# below, so this file can be empty and the daemon will still work.
+#
+# Reloading: `systemctl reload hpd` (or `kill -HUP <pid>`) re-reads this
+# file in-place. Fields marked "startup-only" require a daemon restart.
+
+# -------- Daemon-only (startup-only fields) ----------------------------
+
+# Where the daemon persists its in-memory state (TDP target, profile,
+# charge limit, last DC envelope) so it can resurrect across reboots.
+# Under systemd this is normally overridden by `StateDirectory=hpd`
+# which sets STATE_DIRECTORY=/var/lib/hpd at runtime.
+# state_path = "/var/lib/hpd/state.toml"
+
+# Bound on the internal Transition mpsc channel. Sized for the bursty
+# case of a user spamming the CLI while AC + suspend events also enqueue
+# transitions. 32 has been more than enough in practice.
+# channel_capacity = 32
+
+# Initial charge-end-threshold used the very first time the daemon
+# starts on a host where no state file exists yet and the backend can't
+# report the current value. 80% is the long-battery-life sweet spot.
+# default_charge_threshold = 80
+
+# -------- Runtime-tunable (hot-reload via SIGHUP) ----------------------
+
+# SPL→SPPT and SPL→FPPT multipliers used by "smart mode" (when the user
+# only sets SPL, the daemon scales SPPT/FPPT above it). Both are then
+# clamped to the hardware `*_max` rails reported by the backend.
+# sppt_factor = 1.15
+# fppt_factor = 1.25
+
+# Cooling-profile inference: when `fan_follows_tdp` is on, the daemon
+# maps SPL's position within the hardware range to an ACPI platform
+# profile.  Below `low_frac` → power-saver, between → balanced, above
+# `high_frac` → performance.
+# [profile_thresholds]
+# low_frac  = 0.33
+# high_frac = 0.67
