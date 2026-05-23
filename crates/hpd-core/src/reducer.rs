@@ -36,7 +36,8 @@ pub fn reduce(
 
             let target_watts = match preset {
                 SystemPreset::Silent => min_w,
-                SystemPreset::Performance => (min_w + max_w) / 2,
+                // saturating_add: defensive against pathological device_limits.
+                SystemPreset::Performance => min_w.saturating_add(max_w) / 2,
                 SystemPreset::Turbo => max_w,
             };
 
@@ -47,8 +48,16 @@ pub fn reduce(
         // SMART MODE (get boost automatically)
         // -----------------------------------------------------
         Transition::SetSpl(watts) => {
-            let spl_mw = watts * 1000;
-            
+            // checked_mul prevents wrap-around for huge user input (e.g., u32::MAX),
+            // which would otherwise produce a small wrapped value that spuriously
+            // passes the range check below.
+            let spl_mw = watts.checked_mul(1000).ok_or_else(|| {
+                HpdError::InvariantViolation(format!(
+                    "watts value {} too large to convert to milliwatts",
+                    watts
+                ))
+            })?;
+
             if spl_mw < device_limits.spl_min.0 || spl_mw > device_limits.spl_max.0 {
                 return Err(HpdError::InvariantViolation(
                     format!("SPL ({}W) out of hardware range", watts)
@@ -280,8 +289,31 @@ mod tests {
         };
 
         let output = reduce(&state, Transition::SetEnvelope(high_target), &limits, &thresholds).unwrap();
-        
+
         assert_eq!(output.new_state.active_profile, ProfileName::Performance);
         assert!(output.effects.contains(&Effect::ApplyPlatformProfile(ProfileName::Performance)));
+    }
+
+    #[test]
+    fn test_set_spl_overflow_rejected() {
+        // Regression for Audit §3.3 / Lote 5: `watts * 1000` could wrap
+        // around for huge user input, producing a small value that would
+        // spuriously pass the range check below it.
+        let state = setup_state();
+        let limits = PowerEnvelopeLimits {
+            spl_min: PowerMilliwatts(7000),
+            spl_max: PowerMilliwatts(35000),
+            sppt_max: PowerMilliwatts(43000),
+            fppt_max: PowerMilliwatts(55000),
+        };
+        let thresholds = ProfileThresholds { low_frac: 0.33, high_frac: 0.67 };
+
+        let result = reduce(&state, Transition::SetSpl(u32::MAX), &limits, &thresholds);
+
+        assert!(
+            matches!(result, Err(HpdError::InvariantViolation(_))),
+            "u32::MAX watts must be rejected as overflow, got {:?}",
+            result.err()
+        );
     }
 }
