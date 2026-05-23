@@ -357,4 +357,202 @@ mod tests {
         assert_eq!(output.new_state.last_dc_target, Some(turbo_target));
         assert!(output.new_state.is_ac_connected);
     }
+
+    fn setup_limits() -> PowerEnvelopeLimits {
+        PowerEnvelopeLimits {
+            spl_min: PowerMilliwatts(7000),
+            spl_max: PowerMilliwatts(35000),
+            sppt_max: PowerMilliwatts(43000),
+            fppt_max: PowerMilliwatts(55000),
+        }
+    }
+
+    fn setup_thresholds() -> ProfileThresholds {
+        ProfileThresholds { low_frac: 0.33, high_frac: 0.67 }
+    }
+
+    // ---------- AcPowerChanged ----------
+
+    #[test]
+    fn test_ac_changed_is_debounced_when_already_in_same_state() {
+        // Redundant AcPowerChanged(false) on an already-DC state must yield zero
+        // effects (no spurious re-apply / persistence).
+        let state = setup_state();
+        let out = reduce(&state, Transition::AcPowerChanged(false), &setup_limits(), &setup_thresholds())
+            .unwrap();
+        assert!(out.effects.is_empty(), "expected no effects, got {:?}", out.effects);
+        assert_eq!(out.new_state, state);
+    }
+
+    #[test]
+    fn test_ac_plugged_saves_dc_target_and_applies_max_preset() {
+        // Charger goes in: snapshot the current DC target and ramp SPL to spl_max.
+        let state = setup_state(); // DC, target (15,15,15)
+        let out = reduce(&state, Transition::AcPowerChanged(true), &setup_limits(), &setup_thresholds())
+            .unwrap();
+        assert!(out.new_state.is_ac_connected);
+        assert_eq!(out.new_state.last_dc_target, Some(state.power_target.clone()));
+        assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(35_000));
+        assert!(out.effects.contains(&Effect::PersistState));
+    }
+
+    #[test]
+    fn test_ac_unplugged_restores_saved_dc_target() {
+        // Unplug with a remembered DC target: restore that exact envelope.
+        let saved = PowerEnvelopeTarget {
+            spl: PowerMilliwatts(10_000),
+            sppt: PowerMilliwatts(12_000),
+            fppt: Some(PowerMilliwatts(14_000)),
+        };
+        let mut state = setup_state();
+        state.is_ac_connected = true;
+        state.last_dc_target = Some(saved.clone());
+
+        let out = reduce(&state, Transition::AcPowerChanged(false), &setup_limits(), &setup_thresholds())
+            .unwrap();
+        assert!(!out.new_state.is_ac_connected);
+        assert_eq!(out.new_state.power_target, saved);
+        assert!(out.effects.contains(&Effect::PersistState));
+    }
+
+    #[test]
+    fn test_ac_unplugged_without_saved_target_applies_balanced_preset() {
+        // Cold case: no DC memory. Fall back to the Balanced preset, which on
+        // [7,35]W is midpoint = 21W.
+        let mut state = setup_state();
+        state.is_ac_connected = true;
+        state.last_dc_target = None;
+
+        let out = reduce(&state, Transition::AcPowerChanged(false), &setup_limits(), &setup_thresholds())
+            .unwrap();
+        assert!(!out.new_state.is_ac_connected);
+        assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(21_000));
+    }
+
+    // ---------- SystemResumed ----------
+
+    #[test]
+    fn test_system_resumed_reapplies_envelope_profile_and_threshold() {
+        // After resume the kernel may have lost our config. The reducer must
+        // emit exactly the three re-apply effects without mutating state.
+        let state = setup_state();
+        let out = reduce(&state, Transition::SystemResumed, &setup_limits(), &setup_thresholds())
+            .unwrap();
+        assert_eq!(out.new_state, state);
+        assert_eq!(out.effects.len(), 3);
+        assert!(out.effects.contains(&Effect::ApplyPowerEnvelope(state.power_target.clone())));
+        assert!(out.effects.contains(&Effect::ApplyPlatformProfile(state.active_profile.clone())));
+        assert!(out.effects.contains(&Effect::ApplyChargeThreshold(state.charge_end_threshold)));
+    }
+
+    // ---------- EnableFanAuto ----------
+
+    #[test]
+    fn test_enable_fan_auto_flips_flag_when_previously_disabled() {
+        // Today the re-evaluation produces zero effects because the inferred
+        // profile is only re-applied behind an envelope change in
+        // apply_target_and_profile; the contract for this transition is just
+        // that the flag flips. Persistence of the flag itself is a separate
+        // concern tracked in the audit.
+        let mut state = setup_state();
+        state.fan_follows_tdp = false;
+        let out = reduce(&state, Transition::EnableFanAuto, &setup_limits(), &setup_thresholds())
+            .unwrap();
+        assert!(out.new_state.fan_follows_tdp);
+    }
+
+    #[test]
+    fn test_enable_fan_auto_is_no_op_when_already_enabled() {
+        let state = setup_state(); // fan_follows_tdp = true
+        let out = reduce(&state, Transition::EnableFanAuto, &setup_limits(), &setup_thresholds())
+            .unwrap();
+        assert_eq!(out.new_state, state);
+        assert!(out.effects.is_empty());
+    }
+
+    // ---------- ChargeThresholdChanged ----------
+
+    #[test]
+    fn test_charge_threshold_changed_applies_and_persists() {
+        let state = setup_state(); // threshold = 80
+        let out = reduce(&state, Transition::ChargeThresholdChanged(60), &setup_limits(), &setup_thresholds())
+            .unwrap();
+        assert_eq!(out.new_state.charge_end_threshold, 60);
+        assert_eq!(out.effects, vec![Effect::ApplyChargeThreshold(60), Effect::PersistState]);
+    }
+
+    #[test]
+    fn test_charge_threshold_changed_is_no_op_when_unchanged() {
+        let state = setup_state(); // threshold = 80
+        let out = reduce(&state, Transition::ChargeThresholdChanged(80), &setup_limits(), &setup_thresholds())
+            .unwrap();
+        assert_eq!(out.new_state, state);
+        assert!(out.effects.is_empty());
+    }
+
+    // ---------- SetSpl boundaries ----------
+
+    #[test]
+    fn test_set_spl_just_below_min_is_rejected() {
+        let state = setup_state();
+        let result = reduce(&state, Transition::SetSpl(6), &setup_limits(), &setup_thresholds());
+        assert!(matches!(result, Err(HpdError::InvariantViolation(_))));
+    }
+
+    #[test]
+    fn test_set_spl_just_above_max_is_rejected() {
+        let state = setup_state();
+        let result = reduce(&state, Transition::SetSpl(36), &setup_limits(), &setup_thresholds());
+        assert!(matches!(result, Err(HpdError::InvariantViolation(_))));
+    }
+
+    #[test]
+    fn test_set_spl_at_min_boundary_is_accepted() {
+        let state = setup_state();
+        let out = reduce(&state, Transition::SetSpl(7), &setup_limits(), &setup_thresholds())
+            .unwrap();
+        assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(7_000));
+    }
+
+    #[test]
+    fn test_set_spl_at_max_boundary_is_accepted() {
+        let state = setup_state();
+        let out = reduce(&state, Transition::SetSpl(35), &setup_limits(), &setup_thresholds())
+            .unwrap();
+        assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(35_000));
+    }
+
+    // ---------- SetEnvelope invariant (FPPT >= SPPT) ----------
+
+    #[test]
+    fn test_set_envelope_rejects_fppt_below_sppt() {
+        // Complement to test_invariant_fppt_sppt_spl (SPPT < SPL): this covers
+        // the second invariant — FPPT < SPPT — in validate_power_envelope.
+        let state = setup_state();
+        let bad = PowerEnvelopeTarget {
+            spl: PowerMilliwatts(15_000),
+            sppt: PowerMilliwatts(20_000),
+            fppt: Some(PowerMilliwatts(18_000)),
+        };
+        let result = reduce(&state, Transition::SetEnvelope(bad), &setup_limits(), &setup_thresholds());
+        assert!(matches!(result, Err(HpdError::InvariantViolation(_))));
+    }
+
+    // ---------- SyncPowerTarget (rollback path) ----------
+
+    #[test]
+    fn test_sync_power_target_overwrites_state_without_side_effects() {
+        // Rollback: trust the kernel's view, mutate in-memory state, but do
+        // NOT emit ApplyPowerEnvelope (that would loop the executor).
+        let state = setup_state();
+        let real = PowerEnvelopeTarget {
+            spl: PowerMilliwatts(12_000),
+            sppt: PowerMilliwatts(13_800),
+            fppt: Some(PowerMilliwatts(15_000)),
+        };
+        let out = reduce(&state, Transition::SyncPowerTarget(real.clone()), &setup_limits(), &setup_thresholds())
+            .unwrap();
+        assert_eq!(out.new_state.power_target, real);
+        assert!(out.effects.is_empty(), "rollback must not produce effects, got {:?}", out.effects);
+    }
 }
