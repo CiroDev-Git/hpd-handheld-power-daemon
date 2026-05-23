@@ -95,7 +95,16 @@ where
         }
     };
     let thresholds = ProfileThresholds { low_frac: 0.33, high_frac: 0.67 };
-    let persister = StatePersister::new("/var/tmp/hpd_state.toml"); // FIXME(Lote 7): move to /var/lib/hpd/state.toml
+
+    // systemd's StateDirectory= injects STATE_DIRECTORY (e.g. /var/lib/hpd).
+    // Outside systemd (manual runs, simulator) fall back to /var/lib/hpd
+    // directly. /var/tmp is intentionally avoided: world-writable + survives
+    // reboots = symlink-race surface when running as root.
+    let state_path = std::env::var("STATE_DIRECTORY")
+        .map(|d| format!("{d}/state.toml"))
+        .unwrap_or_else(|_| "/var/lib/hpd/state.toml".to_string());
+    info!(path = %state_path, "Using state file");
+    let persister = StatePersister::new(state_path);
 
     let is_physically_plugged = backend.is_ac_connected().unwrap_or(false);
 

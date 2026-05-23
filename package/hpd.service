@@ -1,18 +1,44 @@
 [Unit]
 Description=Handheld Power Daemon (hpd)
 Documentation=https://github.com/CiroDev-Git/hpd-handheld-power-daemon
-# Make sure start after base system is ready
 After=multi-user.target dbus.service
+Wants=dbus.service
 
 [Service]
 Type=simple
-# Execute final binary
 ExecStart=/usr/local/bin/hpd-daemon
 Restart=on-failure
 RestartSec=5
-# Enable tracing logs
-Environment="RUST_LOG=info"
+Environment="RUST_LOG=hpd=info,warn"
+
+# Persistent state directory: systemd creates /var/lib/hpd with the right
+# permissions and exposes its path through the STATE_DIRECTORY env var.
+StateDirectory=hpd
+StateDirectoryMode=0700
+
+# --- Sandboxing ---
+# hpd is root-only and writes to a small, well-known set of sysfs paths.
+# Lock down everything else so a future bug can't escape the daemon.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# ProtectSystem=strict makes / read-only; we explicitly allow the sysfs
+# leaves the daemon actually writes to.
+ReadWritePaths=/sys/class/firmware-attributes/ /sys/class/power_supply/ /sys/firmware/acpi/
 
 [Install]
-# Link with system start-up
 WantedBy=multi-user.target
