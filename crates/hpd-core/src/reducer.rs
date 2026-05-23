@@ -139,7 +139,15 @@ pub fn reduce(
             };
 
             output.new_state.is_ac_connected = is_plugged;
-            
+
+            // Persist even when power_target didn't actually change: we still
+            // mutated last_dc_target / is_ac_connected and those must survive
+            // a reboot. apply_target_and_profile only emits PersistState when
+            // the target changed, so we top it up here if missing.
+            if !output.effects.iter().any(|e| matches!(e, Effect::PersistState)) {
+                output.effects.push(Effect::PersistState);
+            }
+
             if !output.effects.contains(&Effect::EmitDbusPropertiesChanged) {
                 output.effects.push(Effect::EmitDbusPropertiesChanged);
             }
@@ -315,5 +323,49 @@ mod tests {
             "u32::MAX watts must be rejected as overflow, got {:?}",
             result.err()
         );
+    }
+
+    #[test]
+    fn test_ac_plugged_persists_last_dc_target_even_when_target_unchanged() {
+        // Regression for Audit §3.5 / Lote 6: when the system is already at
+        // the Turbo target (e.g., a stale boot-time state) and the charger is
+        // plugged in, apply_target_and_profile sees no envelope change and
+        // skips PersistState. But we DO mutate last_dc_target and
+        // is_ac_connected, so we MUST persist or they're lost on reboot.
+        let limits = PowerEnvelopeLimits {
+            spl_min: PowerMilliwatts(7000),
+            spl_max: PowerMilliwatts(35000),
+            sppt_max: PowerMilliwatts(43000),
+            fppt_max: PowerMilliwatts(55000),
+        };
+        let thresholds = ProfileThresholds { low_frac: 0.33, high_frac: 0.67 };
+
+        // Start with the exact target that AcPowerChanged(true) -> SetPreset(Turbo)
+        // would produce (35W SPL, sppt = 35000*1.15 = 40250, fppt = 35000*1.25 = 43750).
+        // apply_target_and_profile sees no change and emits no PersistState.
+        let turbo_target = PowerEnvelopeTarget {
+            spl: PowerMilliwatts(35_000),
+            sppt: PowerMilliwatts(40_250),
+            fppt: Some(PowerMilliwatts(43_750)),
+        };
+        let state = ProfileState {
+            power_target: turbo_target.clone(),
+            active_profile: ProfileName::Performance,
+            is_ac_connected: false,
+            charge_end_threshold: 80,
+            fan_follows_tdp: true,
+            last_dc_target: None,
+        };
+
+        let output = reduce(&state, Transition::AcPowerChanged(true), &limits, &thresholds)
+            .expect("AcPowerChanged should succeed");
+
+        assert!(
+            output.effects.iter().any(|e| matches!(e, Effect::PersistState)),
+            "AcPowerChanged must emit PersistState even when target is unchanged; got effects={:?}",
+            output.effects
+        );
+        assert_eq!(output.new_state.last_dc_target, Some(turbo_target));
+        assert!(output.new_state.is_ac_connected);
     }
 }
