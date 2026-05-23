@@ -207,6 +207,15 @@ in 0.2.0 to consolidate. Subsequent minor releases will respect SemVer.
   $MAINPID` in the unit file. `ConfigurationDirectory=hpd` also
   added.
   *(Lote 18)*
+- **Graceful shutdown** — `hpd-daemon` now listens for both SIGINT
+  (Ctrl+C) and SIGTERM (systemd). On either signal it sends the new
+  `Transition::Shutdown` to the executor, which flushes the
+  in-memory state to disk via `PersistState` and then breaks its
+  `run()` loop. The daemon then awaits the executor (5s timeout
+  guard, well below systemd's 90s `TimeoutStopSec`) and closes the
+  D-Bus connection before returning. Previously the runtime simply
+  dropped on Ctrl+C and any pending state mutation was lost.
+  *(Lote 19)*
 
 ### Changed
 

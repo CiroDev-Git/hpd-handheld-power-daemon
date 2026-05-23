@@ -19,4 +19,9 @@ pub enum Transition {
     /// reducer treats it as a no-op so calling `reduce()` with this
     /// variant in isolation (e.g. in unit tests) is harmless.
     ConfigReload(RuntimeConfig),
+    /// Daemon is shutting down (SIGINT/SIGTERM received). The reducer
+    /// emits `Effect::PersistState` so the in-memory state hits disk
+    /// before the process exits; the Executor breaks its `run()` loop
+    /// after dispatching the resulting effects.
+    Shutdown,
 }

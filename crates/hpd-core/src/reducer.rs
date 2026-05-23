@@ -179,6 +179,14 @@ pub fn reduce(
         // Intercepted by the Executor before reduce() is called; the
         // reducer treats it as a no-op so isolated calls (tests) are safe.
         Transition::ConfigReload(_) => {}
+
+        Transition::Shutdown => {
+            // Final flush before exit: persist state without mutating it.
+            // The Executor breaks its run() loop after the resulting
+            // PersistState effect has been dispatched.
+            info!("Shutdown requested: persisting state before exit");
+            effects.push(Effect::PersistState);
+        }
     }
 
     Ok(ReducerOutput { new_state, effects })
@@ -558,6 +566,26 @@ mod tests {
             .unwrap();
         assert_eq!(out.new_state.power_target, real);
         assert!(out.effects.is_empty(), "rollback must not produce effects, got {:?}", out.effects);
+    }
+
+    // ---------- Shutdown ----------
+
+    #[test]
+    fn test_shutdown_emits_only_persist_state_and_leaves_state_untouched() {
+        // Last-chance flush before exit: the reducer must NOT mutate
+        // ProfileState (we want exactly what was already in memory to
+        // hit the disk) and must emit a single PersistState effect that
+        // the Executor will dispatch before breaking its run() loop.
+        let state = setup_state();
+        let out = reduce(
+            &state,
+            Transition::Shutdown,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert_eq!(out.new_state, state, "Shutdown must not mutate ProfileState");
+        assert_eq!(out.effects, vec![Effect::PersistState]);
     }
 
     // ---------- ConfigReload (no-op at the reducer layer) ----------

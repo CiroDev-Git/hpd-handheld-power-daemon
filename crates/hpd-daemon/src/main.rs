@@ -223,7 +223,7 @@ where
 
     // 8. Run async engine
     info!("Spawning main executor loop...");
-    let _executor_handle = tokio::spawn(async move {
+    let executor_handle = tokio::spawn(async move {
         executor.run().await;
     });
 
@@ -280,16 +280,42 @@ where
 
     info!("Daemon is fully running and listening for commands.");
 
-    // 10. Wait for shutdown signal (Ctrl+C or SIGTERM from systemd).
-    match signal::ctrl_c().await {
-        Ok(()) => {
-            info!("Received shutdown signal. Shutting down gracefully...");
-        },
-        Err(err) => {
-            error!("Unable to listen for shutdown signal: {}", err);
-        },
+    // 10. Wait for shutdown signal (Ctrl+C from a terminal, SIGTERM from
+    //     systemd) and trigger a graceful drain. SIGTERM registration only
+    //     fails on system-level breakage (no epoll, exhausted fds); if
+    //     that happens at startup the daemon can't reliably do its job, so
+    //     we propagate the error rather than degrade silently.
+    let mut sigterm = tokio::signal::unix::signal(SignalKind::terminate())?;
+    tokio::select! {
+        result = signal::ctrl_c() => {
+            match result {
+                Ok(()) => info!("Received SIGINT, shutting down gracefully..."),
+                Err(e) => error!(error = %e, "SIGINT handler failed"),
+            }
+        }
+        _ = sigterm.recv() => info!("Received SIGTERM, shutting down gracefully..."),
     }
 
+    // 11. Drain: tell the executor to persist state and exit.
+    if tx.send(Transition::Shutdown).await.is_err() {
+        warn!("Executor channel already closed before Shutdown could be sent");
+    }
+    // 5s is a belt-and-suspenders bound below systemd's 90s default
+    // TimeoutStopSec — if persistence hangs, log and move on rather than
+    // letting systemd SIGKILL us mid-write.
+    match tokio::time::timeout(std::time::Duration::from_secs(5), executor_handle).await {
+        Ok(Ok(())) => info!("Executor drained cleanly"),
+        Ok(Err(e)) => error!(error = %e, "Executor task panicked during shutdown"),
+        Err(_) => warn!("Executor did not exit within 5s; abandoning"),
+    }
+
+    // 12. Close the D-Bus connection so registered names are released
+    //     immediately instead of waiting for runtime teardown.
+    if let Err(e) = conn.close().await {
+        warn!(error = %e, "Closing D-Bus connection failed");
+    }
+
+    info!("Shutdown complete");
     Ok(())
 }
 

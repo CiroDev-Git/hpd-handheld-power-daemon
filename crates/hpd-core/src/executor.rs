@@ -84,6 +84,12 @@ impl<B: HwBackend> Executor<B> {
                 continue;
             }
 
+            // Shutdown is processed through the reducer (which emits
+            // PersistState), but we remember the variant so we can break
+            // the loop *after* the resulting effects have been
+            // dispatched — that guarantees state hits disk before exit.
+            let is_shutdown = matches!(transition, Transition::Shutdown);
+
             let current_state = self.state_tx.borrow().clone();
 
             match reduce(
@@ -109,6 +115,11 @@ impl<B: HwBackend> Executor<B> {
                 Err(e) => {
                     error!(error = %e, "Reducer rejected transition due to invariant violation");
                 }
+            }
+
+            if is_shutdown {
+                info!("Shutdown processed, executor exiting");
+                break;
             }
         }
 
