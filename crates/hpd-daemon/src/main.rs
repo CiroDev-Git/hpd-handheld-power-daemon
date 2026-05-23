@@ -1,8 +1,8 @@
 mod probe;
 mod suspend;
 
-use tracing::{error, info, Level};
-use tracing_subscriber::FmtSubscriber;
+use tracing::{error, info};
+use tracing_subscriber::{EnvFilter, FmtSubscriber};
 use tokio::sync::mpsc;
 use tokio::signal;
 
@@ -20,9 +20,11 @@ use hpd_backend_asus::AsusBackend;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Init logs system (journald/terminal)
+    // 1. Init logging (journald/terminal). Respects RUST_LOG; defaults to `hpd=info,warn`.
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("hpd=info,warn"));
     let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::DEBUG)
+        .with_env_filter(filter)
         .finish();
     tracing::subscriber::set_global_default(subscriber)?;
 
@@ -30,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 2. Detect hardware
     let dmi = probe::read_system_dmi();
-    info!("Hardware detected: {} - {}", dmi.board_vendor, dmi.board_name);
+    info!(vendor = %dmi.board_vendor, board = %dmi.board_name, "Hardware detected");
 
     // 3. Init L0 (I/O Real)
 
@@ -78,7 +80,11 @@ where
     // 5. Base config
     let limits = match backend.get_limits() {
         Ok(l) => {
-            info!("Hardware limits detected: {}W to {}W", l.spl_min.0 / 1000, l.spl_max.0 / 1000);
+            info!(
+                spl_min_w = l.spl_min.0 / 1000,
+                spl_max_w = l.spl_max.0 / 1000,
+                "Hardware limits detected"
+            );
             l
         },
         Err(e) => {

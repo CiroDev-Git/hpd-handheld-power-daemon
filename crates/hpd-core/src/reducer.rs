@@ -1,3 +1,5 @@
+use tracing::info;
+
 use hpd_capabilities::error::HpdError;
 use hpd_capabilities::power::PowerEnvelopeLimits;
 use hpd_capabilities::power::PowerEnvelopeTarget;
@@ -113,16 +115,16 @@ pub fn reduce(
             }
 
             let mut output = if is_plugged {
-                println!("🔌 Charger plugged. Saving current state on battery and applying Turbo...");
+                info!(preset = "turbo", "Charger plugged: saving DC target and applying preset");
                 let mut temp_output = reduce(state, Transition::SetPreset(SystemPreset::Turbo), device_limits, profile_thresholds)?;
                 temp_output.new_state.last_dc_target = Some(state.power_target.clone());
                 temp_output
             } else {
                 if let Some(ref prev_target) = state.last_dc_target {
-                    println!("🔌 Charger unplugged. Restoring previous state on battery...");
+                    info!(action = "restore_previous", "Charger unplugged: restoring previous DC target");
                     reduce(state, Transition::SetEnvelope(prev_target.clone()), device_limits, profile_thresholds)?
                 } else {
-                    println!("🔌 Charger unplugged. Applying Performance as default...");
+                    info!(preset = "performance", "Charger unplugged: applying default preset");
                     reduce(state, Transition::SetPreset(SystemPreset::Performance), device_limits, profile_thresholds)?
                 }
             };
@@ -138,8 +140,8 @@ pub fn reduce(
         }
 
         Transition::SystemResumed => {
-            println!("🌅 System resumed. Applying previous config...");
-            
+            info!("System resumed: reapplying last known config");
+
             let mut effects = Vec::new();
             
             effects.push(Effect::ApplyPowerEnvelope(state.power_target.clone()));
@@ -154,7 +156,7 @@ pub fn reduce(
 
         Transition::EnableFanAuto => {
             if !new_state.fan_follows_tdp {
-                println!("🔄 Starting auto fan mode...");
+                info!("Enabling auto cooling profile (follows TDP)");
                 new_state.fan_follows_tdp = true;
                 
                 return reduce(

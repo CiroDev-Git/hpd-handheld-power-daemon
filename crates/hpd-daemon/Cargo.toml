@@ -15,7 +15,7 @@ hpd-backend-valve = { path = "../hpd-backend-valve" }
 # System tools
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true }
-tracing-subscriber = "0.3" # pretty logger
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = { workspace = true }
 
 hpd-dbus = { path = "../hpd-dbus" }
