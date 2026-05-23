@@ -57,8 +57,8 @@ impl PowerDaemonInterface {
 
     #[zbus(property)]
     async fn current_spl(&self) -> u32 {
-        let spl_mw = self.state_rx.borrow().power_target.spl.0;
-        spl_mw / 1000 // Convert from mW to W for UI
+        // UI shows whole watts; conversion lives on the value type.
+        self.state_rx.borrow().power_target.spl.as_watts()
     }
 
     async fn set_charge_threshold(&self, threshold: u8) -> zbus::fdo::Result<()> {
@@ -91,10 +91,10 @@ impl PowerDaemonInterface {
 
     async fn get_hardware_limits(&self) -> zbus::fdo::Result<(u32, u32, u32, u32)> {
         Ok((
-            self.limits.spl_min.0 / 1000,
-            self.limits.spl_max.0 / 1000,
-            self.limits.sppt_max.0 / 1000,
-            self.limits.fppt_max.0 / 1000,
+            self.limits.spl_min.as_watts(),
+            self.limits.spl_max.as_watts(),
+            self.limits.sppt_max.as_watts(),
+            self.limits.fppt_max.as_watts(),
         ))
     }
 

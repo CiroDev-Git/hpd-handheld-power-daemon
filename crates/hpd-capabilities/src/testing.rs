@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use hpd_error::{BackendError, HpdError};
 
 use crate::backend::HwBackend;
-use crate::charge::ChargeControl;
+use crate::charge::{ChargeControl, DEFAULT_CHARGE_THRESHOLD};
 use crate::fan::FanControl;
 use crate::platform_profile::PlatformProfile;
 use crate::power::{PowerEnvelope, PowerEnvelopeLimits, PowerEnvelopeTarget};
@@ -59,7 +59,7 @@ impl MockBackend {
         Self {
             power: Arc::new(Mutex::new(initial_power)),
             profile: Arc::new(Mutex::new(ProfileName::Balanced)),
-            charge: Arc::new(Mutex::new(80)),
+            charge: Arc::new(Mutex::new(DEFAULT_CHARGE_THRESHOLD)),
             limits,
             ac_connected: Arc::new(AtomicBool::new(false)),
             fail_writes: Arc::new(AtomicBool::new(false)),

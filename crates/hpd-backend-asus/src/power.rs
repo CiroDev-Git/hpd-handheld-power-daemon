@@ -12,6 +12,12 @@ const ATTR_SPL:  &str = "ppt_pl1_spl";
 const ATTR_SPPT: &str = "ppt_pl2_sppt";
 const ATTR_FPPT: &str = "ppt_pl3_fppt";
 
+// Fallback boost-rail maxima for ASUS handhelds when `max_value` is not
+// exposed by the driver. Documented values for the ROG Ally / Ally X /
+// Xbox Ally X family.
+const ASUS_DEFAULT_SPPT_MAX_MW: u32 = 43_000;
+const ASUS_DEFAULT_FPPT_MAX_MW: u32 = 53_000;
+
 pub struct AsusPowerBackend<S: SysfsIo> {
     sysfs: S,
 }
@@ -30,13 +36,13 @@ impl<S: SysfsIo> AsusPowerBackend<S> {
             reason: format!("expected integer at {}", path),
         })?;
         // Convert from W (kernel) to mW (domain).
-        Ok(PowerMilliwatts(watts * 1000))
+        PowerMilliwatts::from_watts(watts)
     }
 
     fn write_watts(&self, attr: &str, target_mw: PowerMilliwatts) -> Result<(), HpdError> {
         let path = format!("{}/{}/current_value", BASE_PATH, attr);
         // Convert from mW (domain) to W (kernel).
-        let watts = target_mw.0 / 1000;
+        let watts = target_mw.as_watts();
         self.sysfs.write_string(&path, &watts.to_string())?;
         Ok(())
     }
@@ -48,11 +54,10 @@ impl<S: SysfsIo> PowerEnvelope for AsusPowerBackend<S> {
         let spl_max = self.read_watts(ATTR_SPL, "max_value")?;
 
         // Fallbacks for hardware that doesn't expose the max attribute.
-        // Magic numbers tagged for extraction in Lote 15.
         let sppt_max = self.read_watts(ATTR_SPPT, "max_value")
-            .unwrap_or(PowerMilliwatts(43_000));
+            .unwrap_or(PowerMilliwatts(ASUS_DEFAULT_SPPT_MAX_MW));
         let fppt_max = self.read_watts(ATTR_FPPT, "max_value")
-            .unwrap_or(PowerMilliwatts(53_000));
+            .unwrap_or(PowerMilliwatts(ASUS_DEFAULT_FPPT_MAX_MW));
 
         Ok(PowerEnvelopeLimits {
             spl_min,

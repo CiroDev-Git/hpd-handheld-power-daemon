@@ -12,6 +12,13 @@ use crate::invariants::validate_power_envelope;
 use crate::state::ProfileState;
 use crate::transition::Transition;
 
+/// Smart-mode envelope derivation: when only SPL is provided, SPPT and FPPT
+/// are scaled above it by these factors and then clamped to hw `*_max`.
+/// Values match the historic in-reducer literals; documented here so they
+/// can be revisited without grepping the codebase.
+pub const SPPT_FACTOR: f32 = 1.15;
+pub const FPPT_FACTOR: f32 = 1.25;
+
 pub struct ReducerOutput {
     pub new_state: ProfileState,
     pub effects: Vec<Effect>,
@@ -31,8 +38,8 @@ pub fn reduce(
     match transition {
 
         Transition::SetPreset(preset) => {
-            let min_w = device_limits.spl_min.0 / 1000;
-            let max_w = device_limits.spl_max.0 / 1000;
+            let min_w = device_limits.spl_min.as_watts();
+            let max_w = device_limits.spl_max.as_watts();
 
             let target_watts = match preset {
                 TdpPreset::Eco => min_w,
@@ -48,27 +55,21 @@ pub fn reduce(
         // SMART MODE (get boost automatically)
         // -----------------------------------------------------
         Transition::SetSpl(watts) => {
-            // checked_mul prevents wrap-around for huge user input (e.g., u32::MAX),
-            // which would otherwise produce a small wrapped value that spuriously
-            // passes the range check below.
-            let spl_mw = watts.checked_mul(1000).ok_or_else(|| {
-                HpdError::InvariantViolation(format!(
-                    "watts value {} too large to convert to milliwatts",
-                    watts
-                ))
-            })?;
+            // PowerMilliwatts::from_watts encapsulates the overflow check
+            // that protects against wrap-around for huge user input.
+            let spl = PowerMilliwatts::from_watts(watts)?;
 
-            if spl_mw < device_limits.spl_min.0 || spl_mw > device_limits.spl_max.0 {
+            if spl < device_limits.spl_min || spl > device_limits.spl_max {
                 return Err(HpdError::InvariantViolation(
                     format!("SPL ({}W) out of hardware range", watts)
                 ));
             }
 
-            let sppt_mw = ((spl_mw as f32 * 1.15) as u32).min(device_limits.sppt_max.0);
-            let fppt_mw = ((spl_mw as f32 * 1.25) as u32).min(device_limits.fppt_max.0);
+            let sppt_mw = ((spl.0 as f32 * SPPT_FACTOR) as u32).min(device_limits.sppt_max.0);
+            let fppt_mw = ((spl.0 as f32 * FPPT_FACTOR) as u32).min(device_limits.fppt_max.0);
 
             let new_target = PowerEnvelopeTarget {
-                spl: PowerMilliwatts(spl_mw),
+                spl,
                 sppt: PowerMilliwatts(sppt_mw),
                 fppt: Some(PowerMilliwatts(fppt_mw)),
             };
@@ -220,6 +221,7 @@ fn apply_target_and_profile(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hpd_capabilities::charge::DEFAULT_CHARGE_THRESHOLD;
     use hpd_capabilities::power::{PowerEnvelopeTarget, PowerEnvelopeLimits};
     use hpd_capabilities::profile::{ProfileName, ProfileThresholds};
     use hpd_capabilities::units::PowerMilliwatts;
@@ -233,7 +235,7 @@ mod tests {
             },
             active_profile: ProfileName::Balanced,
             is_ac_connected: false,
-            charge_end_threshold: 80,
+            charge_end_threshold: DEFAULT_CHARGE_THRESHOLD,
             fan_follows_tdp: true,
             last_dc_target: None
         }
@@ -248,7 +250,7 @@ mod tests {
             sppt_max: PowerMilliwatts(43000),
             fppt_max: PowerMilliwatts(53000),
         };
-        let thresholds = ProfileThresholds { low_frac: 0.33, high_frac: 0.67 };
+        let thresholds = ProfileThresholds::DEFAULT;
 
         // Invalid attempt: SPPT lower than SPL
         let bad_target = PowerEnvelopeTarget {
@@ -276,7 +278,7 @@ mod tests {
             sppt_max: PowerMilliwatts(43000),
             fppt_max: PowerMilliwatts(53000),
         };
-        let thresholds = ProfileThresholds { low_frac: 0.33, high_frac: 0.67 };
+        let thresholds = ProfileThresholds::DEFAULT;
 
         // Trying to increase to 30W (almost max capability), should infer Performance
         let high_target = PowerEnvelopeTarget {
@@ -303,7 +305,7 @@ mod tests {
             sppt_max: PowerMilliwatts(43000),
             fppt_max: PowerMilliwatts(55000),
         };
-        let thresholds = ProfileThresholds { low_frac: 0.33, high_frac: 0.67 };
+        let thresholds = ProfileThresholds::DEFAULT;
 
         let result = reduce(&state, Transition::SetSpl(u32::MAX), &limits, &thresholds);
 
@@ -327,7 +329,7 @@ mod tests {
             sppt_max: PowerMilliwatts(43000),
             fppt_max: PowerMilliwatts(55000),
         };
-        let thresholds = ProfileThresholds { low_frac: 0.33, high_frac: 0.67 };
+        let thresholds = ProfileThresholds::DEFAULT;
 
         // Start with the exact target that AcPowerChanged(true) -> SetPreset(Turbo)
         // would produce (35W SPL, sppt = 35000*1.15 = 40250, fppt = 35000*1.25 = 43750).
@@ -368,7 +370,7 @@ mod tests {
     }
 
     fn setup_thresholds() -> ProfileThresholds {
-        ProfileThresholds { low_frac: 0.33, high_frac: 0.67 }
+        ProfileThresholds::DEFAULT
     }
 
     // ---------- AcPowerChanged ----------

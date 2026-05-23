@@ -42,7 +42,7 @@ fn limits() -> PowerEnvelopeLimits {
 }
 
 fn thresholds() -> ProfileThresholds {
-    ProfileThresholds { low_frac: 0.33, high_frac: 0.67 }
+    ProfileThresholds::DEFAULT
 }
 
 fn initial_state() -> ProfileState {

@@ -10,6 +10,12 @@ use crate::reducer::reduce;
 use crate::state::ProfileState;
 use crate::transition::Transition;
 
+/// Bound on the Transition mpsc channel. Sized for the bursty case of a
+/// user spamming the CLI while AC + suspend events also enqueue
+/// transitions; 32 has been more than enough in practice and gives
+/// back-pressure long before any producer can OOM us.
+pub const TRANSITION_CHANNEL_CAPACITY: usize = 32;
+
 /// Main daemon orchestrator
 pub struct Executor<B: HwBackend> {
     backend: B,

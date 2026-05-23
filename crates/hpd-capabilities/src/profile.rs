@@ -57,6 +57,12 @@ pub struct ProfileThresholds {
     pub high_frac: f32,
 }
 
+impl ProfileThresholds {
+    /// Production default used by the daemon and most tests: SPL fractions
+    /// below 33% map to PowerSaver, 33–67% to Balanced, 67%+ to Performance.
+    pub const DEFAULT: Self = Self { low_frac: 0.33, high_frac: 0.67 };
+}
+
 /// Convenience preset for the TDP envelope.
 ///
 /// `TdpPreset` selects a target wattage on the SPL rail; it is **not** the

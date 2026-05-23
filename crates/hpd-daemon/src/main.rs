@@ -83,8 +83,8 @@ where
     let limits = match backend.get_limits() {
         Ok(l) => {
             info!(
-                spl_min_w = l.spl_min.0 / 1000,
-                spl_max_w = l.spl_max.0 / 1000,
+                spl_min_w = l.spl_min.as_watts(),
+                spl_max_w = l.spl_max.as_watts(),
                 "Hardware limits detected"
             );
             l
@@ -94,7 +94,7 @@ where
             return Err(e.into());
         }
     };
-    let thresholds = ProfileThresholds { low_frac: 0.33, high_frac: 0.67 };
+    let thresholds = ProfileThresholds::DEFAULT;
 
     // systemd's StateDirectory= injects STATE_DIRECTORY (e.g. /var/lib/hpd).
     // Outside systemd (manual runs, simulator) fall back to /var/lib/hpd
@@ -123,7 +123,9 @@ where
                 fppt: Some(limits.spl_min)
             });
             let current_profile = backend.get_active_profile().unwrap_or(ProfileName::Balanced);
-            let current_charge_limit = backend.get_end_threshold().unwrap_or(80);
+            let current_charge_limit = backend
+                .get_end_threshold()
+                .unwrap_or(hpd_capabilities::charge::DEFAULT_CHARGE_THRESHOLD);
 
             ProfileState {
                 power_target: current_target,
@@ -137,7 +139,7 @@ where
     };
 
     // 6. Create communication channels
-    let (tx, rx) = mpsc::channel::<Transition>(32);
+    let (tx, rx) = mpsc::channel::<Transition>(hpd_core::executor::TRANSITION_CHANNEL_CAPACITY);
     let internal_tx = tx.clone(); // For rollback
 
     info!("Starting hardware event monitors...");
