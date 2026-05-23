@@ -139,9 +139,6 @@ impl<B: HwBackend> Executor<B> {
                 let current_state = self.state_tx.borrow().clone();
                 self.persister.save(&current_state).await;
             }
-            Effect::EmitDbusPropertiesChanged => {
-                debug!("PropertiesChanged signal implicitly handled by state watch channel");
-            }
         }
     }
 

@@ -185,10 +185,18 @@ where
 
     // 9. Start D-Bus server
     info!("Starting D-Bus server...");
+    const DBUS_BUS_NAME: &str = "dev.cirodev.hpd.PowerDaemon1";
+    const DBUS_OBJECT_PATH: &str = "/dev/cirodev/hpd/PowerDaemon1";
+
+    // Clone the state receiver: one copy lives inside the interface (for
+    // synchronous property reads), the other drives the PropertiesChanged
+    // emitter task spawned below.
+    let state_rx_for_watcher = state_rx.clone();
+
     let dbus_interface = hpd_dbus::service::PowerDaemonInterface::new(
-        tx.clone(), 
-        state_rx, 
-        limits
+        tx.clone(),
+        state_rx,
+        limits,
     );
 
     let conn_builder = if std::env::var("HPD_SIMULATOR").is_ok() {
@@ -198,12 +206,24 @@ where
         info!("Using System Bus (Production Mode)");
         zbus::ConnectionBuilder::system()?
     };
-    
-    let _conn = conn_builder
-        .name("dev.cirodev.hpd.PowerDaemon1")?
-        .serve_at("/dev/cirodev/hpd/PowerDaemon1", dbus_interface)?
+
+    let conn = conn_builder
+        .name(DBUS_BUS_NAME)?
+        .serve_at(DBUS_OBJECT_PATH, dbus_interface)?
         .build()
         .await?;
+
+    // Spawn the PropertiesChanged emitter. Each state mutation in the
+    // executor publishes a new ProfileState on the watch channel; we
+    // observe it and call the zbus-generated `<prop>_changed` notifiers
+    // for the properties whose underlying field actually changed. This is
+    // the real wiring behind §3.1 of AUDIT_V1; the previous "implicit"
+    // approach was a no-op for external D-Bus clients.
+    let iface_ref = conn
+        .object_server()
+        .interface::<_, hpd_dbus::service::PowerDaemonInterface>(DBUS_OBJECT_PATH)
+        .await?;
+    tokio::spawn(spawn_properties_changed_emitter(state_rx_for_watcher, iface_ref));
 
     info!("Daemon is fully running and listening for commands.");
 
@@ -218,4 +238,49 @@ where
     }
 
     Ok(())
+}
+
+/// Watch the executor's state channel and emit zbus `PropertiesChanged`
+/// signals for the D-Bus properties whose underlying field changed.
+///
+/// The task exits cleanly when the executor drops its state sender (i.e.
+/// during daemon shutdown), at which point `changed()` returns `Err`.
+async fn spawn_properties_changed_emitter(
+    mut state_rx: tokio::sync::watch::Receiver<ProfileState>,
+    iface_ref: zbus::InterfaceRef<hpd_dbus::service::PowerDaemonInterface>,
+) {
+    // Snapshot the initial state without holding the borrow across the await.
+    let mut last = state_rx.borrow().clone();
+
+    loop {
+        if state_rx.changed().await.is_err() {
+            info!("State channel closed, stopping D-Bus properties watcher");
+            return;
+        }
+
+        // borrow_and_update marks the value as seen so the next `changed()`
+        // fires only for newer mutations.
+        let new = state_rx.borrow_and_update().clone();
+
+        let ctx = iface_ref.signal_context();
+        let iface = iface_ref.get().await;
+
+        if new.power_target.spl != last.power_target.spl {
+            if let Err(e) = iface.current_spl_changed(ctx).await {
+                error!(error = %e, "Failed to emit current_spl PropertiesChanged");
+            }
+        }
+        if new.active_profile != last.active_profile {
+            if let Err(e) = iface.active_profile_changed(ctx).await {
+                error!(error = %e, "Failed to emit active_profile PropertiesChanged");
+            }
+        }
+        if new.charge_end_threshold != last.charge_end_threshold {
+            if let Err(e) = iface.charge_end_threshold_changed(ctx).await {
+                error!(error = %e, "Failed to emit charge_end_threshold PropertiesChanged");
+            }
+        }
+
+        last = new;
+    }
 }

@@ -90,11 +90,10 @@ pub fn reduce(
         Transition::SetProfile(new_profile) => {
             if new_state.active_profile != new_profile {
                 new_state.active_profile = new_profile.clone();
-                new_state.fan_follows_tdp = false; 
-                
+                new_state.fan_follows_tdp = false;
+
                 effects.push(Effect::ApplyPlatformProfile(new_profile));
                 effects.push(Effect::PersistState);
-                effects.push(Effect::EmitDbusPropertiesChanged);
             }
         }
 
@@ -103,15 +102,14 @@ pub fn reduce(
                 new_state.charge_end_threshold = threshold;
                 effects.push(Effect::ApplyChargeThreshold(threshold));
                 effects.push(Effect::PersistState);
-                effects.push(Effect::EmitDbusPropertiesChanged);
             }
         }
 
         Transition::SyncPowerTarget(real_target) => {
             // Forced rollback. Kernel overrode (or rejected) the hpd config.
+            // PropertiesChanged is emitted automatically by the daemon's
+            // properties watcher when state_tx receives this new value.
             new_state.power_target = real_target;
-            // Emit the real values to UI instead of the value hpd tried to set.
-            effects.push(Effect::EmitDbusPropertiesChanged);
         }
 
         Transition::AcPowerChanged(is_plugged) => {
@@ -146,10 +144,6 @@ pub fn reduce(
             // the target changed, so we top it up here if missing.
             if !output.effects.iter().any(|e| matches!(e, Effect::PersistState)) {
                 output.effects.push(Effect::PersistState);
-            }
-
-            if !output.effects.contains(&Effect::EmitDbusPropertiesChanged) {
-                output.effects.push(Effect::EmitDbusPropertiesChanged);
             }
 
             return Ok(output);
@@ -220,12 +214,9 @@ fn apply_target_and_profile(
         }
 
         effects.push(Effect::PersistState);
-        effects.push(Effect::EmitDbusPropertiesChanged);
-
     }
 
     Ok(ReducerOutput { new_state, effects })
-
 }
 
 #[cfg(test)]

@@ -45,6 +45,14 @@ in 0.2.0 to consolidate. Subsequent minor releases will respect SemVer.
   which was an unstable internal representation. The new format
   roundtrips through `set_profile` and `ProfileName::FromStr`.
   *(Lote 9 — Audit §3.6)*
+- **`PropertiesChanged` signals are now emitted.** Previously every
+  property change was a silent in-memory update; D-Bus clients had
+  to poll. They now receive
+  `org.freedesktop.DBus.Properties.PropertiesChanged` whenever
+  `current_spl`, `active_profile` or `charge_end_threshold` change.
+  This may surface latent bugs in clients that previously assumed
+  signals would never fire.
+  *(Lote 10 — Audit §3.1)*
 
 ### ⚠ Breaking — internal API (Rust)
 
@@ -56,6 +64,11 @@ in 0.2.0 to consolidate. Subsequent minor releases will respect SemVer.
 
 ### Added
 
+- **`spawn_properties_changed_emitter` task** in `hpd-daemon/main.rs`
+  watches the executor's state channel and calls zbus's generated
+  `<prop>_changed` notifiers for each property whose underlying field
+  changed (per-field diff to avoid spam).
+  *(Lote 10 — Audit §3.1)*
 - **`hpd-error` crate** (workspace layer L-1) holding the canonical
   `HpdError`, `SysfsError` and the new structured `BackendError`. Only
   dependency is `thiserror`. License `GPL-3.0-or-later`. Public surface
@@ -160,6 +173,13 @@ in 0.2.0 to consolidate. Subsequent minor releases will respect SemVer.
 
 ### Removed
 
+- **`Effect::EmitDbusPropertiesChanged`** variant and all its push
+  sites in the reducer + the no-op match arm in the executor. The
+  daemon now emits PropertiesChanged via a dedicated watcher task,
+  so the synthetic effect is dead weight. The manual deduplication
+  block in `AcPowerChanged` (`if !output.effects.contains(...)`)
+  also disappears.
+  *(Lote 10 — Audit §3.10)*
 - **Dead types and methods**
   - `BatteryPercent` unit (unused). *(Lote 1)*
   - `HpdError::DbusClient(String)` variant (unused). *(Lote 1)*
