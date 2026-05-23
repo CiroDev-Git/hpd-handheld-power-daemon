@@ -33,8 +33,11 @@ use crate::units::Rpm;
 /// ordered sequence of these to verify what the L3 executor dispatched.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RecordedCall {
+    /// `PowerEnvelope::set_target` was invoked.
     SetTarget(PowerEnvelopeTarget),
+    /// `PlatformProfile::set_active_profile` was invoked.
     SetProfile(ProfileName),
+    /// `ChargeControl::set_end_threshold` was invoked.
     SetChargeThreshold(u8),
 }
 
@@ -43,18 +46,28 @@ pub enum RecordedCall {
 /// moving another clone into the `Executor`.
 #[derive(Clone)]
 pub struct MockBackend {
+    /// Current programmed power envelope.
     pub power: Arc<Mutex<PowerEnvelopeTarget>>,
+    /// Current ACPI platform profile.
     pub profile: Arc<Mutex<ProfileName>>,
+    /// Current charge end threshold (percent).
     pub charge: Arc<Mutex<u8>>,
+    /// Hardware-reported envelope limits returned by `get_limits`.
     pub limits: PowerEnvelopeLimits,
+    /// Value returned by `is_ac_connected()`.
     pub ac_connected: Arc<AtomicBool>,
     /// When true, every `set_*` returns `Err` without mutating internal
     /// state — letting `get_*` continue to report the real hardware value.
     pub fail_writes: Arc<AtomicBool>,
+    /// Append-only log of every successful write the backend received.
     pub write_log: Arc<Mutex<Vec<RecordedCall>>>,
 }
 
 impl MockBackend {
+    /// Build a fresh `MockBackend` seeded with the given initial envelope
+    /// and reported limits. Other fields take their documented defaults
+    /// (Balanced profile, AC disconnected, `fail_writes = false`, empty
+    /// log, charge = `DEFAULT_CHARGE_THRESHOLD`).
     pub fn new(initial_power: PowerEnvelopeTarget, limits: PowerEnvelopeLimits) -> Self {
         Self {
             power: Arc::new(Mutex::new(initial_power)),
@@ -67,6 +80,9 @@ impl MockBackend {
         }
     }
 
+    /// Returns a snapshot of every write recorded so far. Lock is
+    /// released before returning, so calling this in a tight loop is
+    /// fine.
     pub fn calls(&self) -> Vec<RecordedCall> {
         self.write_log
             .lock()

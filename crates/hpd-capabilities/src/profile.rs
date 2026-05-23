@@ -1,3 +1,7 @@
+//! Platform cooling profile + TDP preset value types and the
+//! runtime-tunable [`RuntimeConfig`] that bundles them with the smart-mode
+//! boost factors.
+
 use std::fmt;
 use std::str::FromStr;
 use serde::{Deserialize, Serialize};
@@ -18,9 +22,14 @@ use serde::{Deserialize, Serialize};
 /// is preserved as `Custom`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProfileName {
+    /// Low fan curve, quiet operation (ACPI "low-power" / "quiet").
     PowerSaver,
+    /// Default ACPI "balanced" profile.
     Balanced,
+    /// High fan curve for sustained boost workloads.
     Performance,
+    /// Catch-all for vendor-specific profiles the kernel exposes but
+    /// the daemon does not model explicitly.
     Custom(String),
 }
 
@@ -51,9 +60,16 @@ impl FromStr for ProfileName {
     }
 }
 
+/// Cut-off SPL fractions used by the reducer's auto-profile inference:
+/// SPL below `low_frac` → `PowerSaver`, between → `Balanced`, above
+/// `high_frac` → `Performance`. Both fields are in `[0.0, 1.0]`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProfileThresholds {
+    /// Fraction of the SPL range below which the auto-inferred profile is
+    /// `PowerSaver`.
     pub low_frac: f32,
+    /// Fraction of the SPL range above which the auto-inferred profile is
+    /// `Performance`.
     pub high_frac: f32,
 }
 
@@ -78,8 +94,13 @@ impl Default for ProfileThresholds {
 /// about TOML or the daemon's on-disk schema.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeConfig {
+    /// Cooling-profile inference cut-offs (see [`ProfileThresholds`]).
     pub profile_thresholds: ProfileThresholds,
+    /// SPL→SPPT multiplier applied by smart-mode `Transition::SetSpl`.
+    /// Result is then clamped to `device_limits.sppt_max`.
     pub sppt_factor: f32,
+    /// SPL→FPPT multiplier applied by smart-mode `Transition::SetSpl`.
+    /// Result is then clamped to `device_limits.fppt_max`.
     pub fppt_factor: f32,
 }
 
@@ -117,7 +138,7 @@ impl Default for RuntimeConfig {
 pub enum TdpPreset {
     /// Minimum supported SPL on this hardware.
     Eco,
-    /// Midpoint between `spl_min` and `spl_max`.
+    /// Midpoint SPL between `spl_min` and `spl_max`.
     Balanced,
     /// Maximum supported SPL on this hardware.
     Max,

@@ -9,8 +9,12 @@ use hpd_capabilities::profile::ProfileName;
 /// notifiers. See `daemon::main::spawn_properties_changed_emitter`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Effect {
+    /// Write a new power envelope to the L1 backend.
     ApplyPowerEnvelope(PowerEnvelopeTarget),
+    /// Write the ACPI platform profile to the L1 backend.
     ApplyPlatformProfile(ProfileName),
+    /// Write the battery charge end threshold to the L1 backend.
     ApplyChargeThreshold(u8),
+    /// Flush the current `ProfileState` to disk via the persister.
     PersistState,
 }

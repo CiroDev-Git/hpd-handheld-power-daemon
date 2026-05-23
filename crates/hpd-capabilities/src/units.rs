@@ -1,3 +1,5 @@
+//! Strongly-typed power and fan units exchanged across capability traits.
+
 use serde::{Deserialize, Serialize};
 
 use crate::error::HpdError;
@@ -7,8 +9,15 @@ use crate::error::HpdError;
 /// power-conversion logic across the workspace.
 pub const MILLIWATTS_PER_WATT: u32 = 1_000;
 
+/// Power expressed in milliwatts. The whole workspace deals in mW
+/// internally; conversions to and from whole watts (the kernel-facing
+/// representation) live on this type via [`PowerMilliwatts::from_watts`]
+/// and [`PowerMilliwatts::as_watts`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct PowerMilliwatts(pub u32);
+pub struct PowerMilliwatts(
+    /// Raw value in milliwatts.
+    pub u32,
+);
 
 impl PowerMilliwatts {
     /// Build a `PowerMilliwatts` from an integer wattage. Returns
@@ -34,5 +43,10 @@ impl PowerMilliwatts {
     }
 }
 
+/// Rotational speed in revolutions per minute, as read from the
+/// hwmon `fanN_input` files.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Rpm(pub u16);
+pub struct Rpm(
+    /// Raw RPM value.
+    pub u16,
+);

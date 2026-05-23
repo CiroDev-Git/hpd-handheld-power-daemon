@@ -242,6 +242,16 @@ in 0.2.0 to consolidate. Subsequent minor releases will respect SemVer.
   manual call to `org.freedesktop.PolicyKit1.Authority` over zbus;
   no extra dependency added.
   *(Lote 20)*
+- **`#![warn(missing_docs)]` on `hpd-capabilities`.** Every public
+  trait, struct, enum, variant, field and method in the L2 capability
+  crate now carries a `///` doc comment, and the lint is enforced at
+  the crate root so future additions can't slip in undocumented.
+  `cargo doc -p hpd-capabilities --no-deps` renders without warnings.
+  `hpd-core` and `hpd-sysfs` got the same documentation pass at item
+  level (module-level `//!` headers + `///` on every pub item) but
+  without enabling the lint yet — a follow-up will turn it on once
+  the existing items are stable.
+  *(Lote 21)*
 
 ### Changed
 

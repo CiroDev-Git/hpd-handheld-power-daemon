@@ -1,3 +1,5 @@
+//! Pure state-transition function.
+
 use tracing::info;
 
 use hpd_capabilities::error::HpdError;
@@ -12,8 +14,14 @@ use crate::invariants::validate_power_envelope;
 use crate::state::ProfileState;
 use crate::transition::Transition;
 
+/// Combined output of a single [`reduce`] call: the post-transition
+/// state and the ordered list of side-effects the executor must dispatch
+/// to honour it.
 pub struct ReducerOutput {
+    /// State after the transition has been applied.
     pub new_state: ProfileState,
+    /// Side-effects (hardware writes, persistence) to be dispatched by
+    /// the executor in order.
     pub effects: Vec<Effect>,
 }
 

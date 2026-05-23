@@ -35,6 +35,11 @@ pub struct Executor<B: HwBackend> {
 }
 
 impl<B: HwBackend> Executor<B> {
+    /// Build a new executor and return it alongside a `watch::Receiver`
+    /// observers can subscribe to (used by `hpd-dbus` to emit
+    /// `PropertiesChanged`). `internal_tx` is a clone of the sender side
+    /// of `transition_rx`; the executor uses it to enqueue
+    /// `Transition::SyncPowerTarget` when a hardware write fails.
     pub fn new(
         backend: B,
         initial_state: ProfileState,
@@ -59,6 +64,9 @@ impl<B: HwBackend> Executor<B> {
         (executor, state_rx)
     }
 
+    /// Drains the transition channel until it closes, applying the
+    /// reducer and dispatching the resulting effects in order. Exits
+    /// cleanly once a `Transition::Shutdown` has been processed.
     pub async fn run(mut self) {
         info!("Executor started. Listening for transitions...");
 

@@ -1,12 +1,17 @@
+//! Production implementation of [`SysfsIo`] backed by `std::fs`.
+
 use std::fs;
 use std::path::Path;
 use hpd_error::SysfsError;
 use crate::io::SysfsIo;
 
+/// Real-filesystem implementor of [`SysfsIo`]. Zero-size — instances
+/// hold no state, every method goes straight to the kernel.
 #[derive(Clone, Default)]
 pub struct RealSysfs;
 
 impl RealSysfs {
+    /// Convenience constructor (identical to `RealSysfs::default()`).
     pub fn new() -> Self {
         Self
     }
