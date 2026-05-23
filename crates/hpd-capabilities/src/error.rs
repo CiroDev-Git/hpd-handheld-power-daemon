@@ -7,10 +7,7 @@ pub enum HpdError {
     
     #[error("Backend error: {reason}")]
     Backend { reason: String },
-    
-    #[error("D-Bus client error: {0}")]
-    DbusClient(String),
-    
+
     #[error("Feature not supported on this hardware")]
     FeatureUnsupported,
     

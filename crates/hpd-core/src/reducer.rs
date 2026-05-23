@@ -96,10 +96,6 @@ pub fn reduce(
             }
         }
 
-        Transition::ConfigReload => {
-            effects.push(Effect::EmitDbusPropertiesChanged);
-        }
-
         Transition::SyncPowerTarget(real_target) => {
             // A forzed rollback. Kernel overrides (or stop) the hdp config.
             new_state.power_target = real_target;

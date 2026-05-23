@@ -4,7 +4,4 @@ use serde::{Deserialize, Serialize};
 pub struct PowerMilliwatts(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BatteryPercent(pub u8);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rpm(pub u16);

@@ -53,11 +53,5 @@ pub mod testing {
         fn exists(&self, path: impl AsRef<Path>) -> bool {
             self.resolve(path).exists()
         }
-
-        fn is_writable(&self, path: impl AsRef<Path>) -> bool {
-            let real_path = self.resolve(path);
-            let metadata = fs::metadata(&real_path);
-            metadata.is_ok() && !metadata.unwrap().permissions().readonly()
-        }
     }
 }

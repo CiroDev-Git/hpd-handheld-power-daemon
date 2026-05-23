@@ -9,7 +9,6 @@ pub enum Transition {
     SetEnvelope(PowerEnvelopeTarget),
     SetProfile(ProfileName),
     ChargeThresholdChanged(u8),
-    ConfigReload,
     SyncPowerTarget(PowerEnvelopeTarget),
     AcPowerChanged(bool),
     SystemResumed,

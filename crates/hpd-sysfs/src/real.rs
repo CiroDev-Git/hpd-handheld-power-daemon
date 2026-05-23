@@ -30,14 +30,4 @@ impl SysfsIo for RealSysfs {
     fn exists(&self, path: impl AsRef<Path>) -> bool {
         path.as_ref().exists()
     }
-
-    fn is_writable(&self, path: impl AsRef<Path>) -> bool {
-        let path_ref = path.as_ref();
-        // Real check of write opening using append or write
-        // In sysfs, sometimes exists() is true but without permissions
-        fs::OpenOptions::new()
-            .write(true)
-            .open(path_ref)
-            .is_ok()
-    }
 }
