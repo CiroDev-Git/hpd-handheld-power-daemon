@@ -1,7 +1,7 @@
 //! `SysfsIo` trait — the minimum surface L1 backends need from sysfs.
 
-use std::path::Path;
 use hpd_error::SysfsError;
+use std::path::Path;
 
 /// Read / write / probe individual sysfs files.
 ///

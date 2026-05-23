@@ -1,8 +1,8 @@
+use futures_util::stream::StreamExt;
 use hpd_core::transition::Transition;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 use zbus::Connection;
-use futures_util::stream::StreamExt;
 
 #[zbus::proxy(
     interface = "org.freedesktop.login1.Manager",
@@ -10,7 +10,7 @@ use futures_util::stream::StreamExt;
     default_path = "/org/freedesktop/login1"
 )]
 trait LoginManager {
-    /// logind signal: 
+    /// logind signal:
     /// start = true (to sleep) | start = false (wake up)
     #[zbus(signal)]
     fn prepare_for_sleep(&self, start: bool) -> zbus::Result<()>;

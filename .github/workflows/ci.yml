@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel in-progress runs when a new commit is pushed to the same ref —
+# saves a lot of CI minutes during rebase-heavy PR cycles.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  # Primary job: fmt + clippy + tests + release build on Linux.
+  # All four steps must pass for the workspace to be considered green.
+  build-test:
+    name: Linux (fmt, clippy, test, release)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo build artefacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace
+
+      - name: cargo build --release
+        run: cargo build --workspace --release
+
+  # Secondary job: the simulator build is what macOS / dev hosts use.
+  # Verifying it compiles on macOS prevents accidental Linux-only
+  # changes leaking into the simulator path.
+  build-macos-simulator:
+    name: macOS simulator build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build artefacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo build (daemon + cli, simulator features)
+        run: cargo build -p hpd-daemon -p hpd-cli --features hpd-daemon/simulator

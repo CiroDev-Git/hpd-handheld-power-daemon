@@ -1,9 +1,9 @@
 //! Atomic on-disk persistence for [`ProfileState`].
 
+use crate::state::ProfileState;
 use std::path::PathBuf;
 use tokio::fs;
 use tracing::{debug, error};
-use crate::state::ProfileState;
 
 /// Owns the path to the TOML state file and handles atomic writes
 /// (temp file + rename).
@@ -23,7 +23,8 @@ impl StatePersister {
     /// file does not exist, cannot be read, or fails to parse — the
     /// daemon falls back to defaults rather than refusing to start.
     pub async fn load(&self) -> Option<ProfileState> {
-        if !self.path.exists() { // path.exists() is sync; tokio::fs::try_exists is the async equivalent
+        if !self.path.exists() {
+            // path.exists() is sync; tokio::fs::try_exists is the async equivalent
             return None;
         }
 

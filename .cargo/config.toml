@@ -2,7 +2,9 @@
 [target.'cfg(all())']
 rustflags = [
     "-F", "unsafe_code",         # Forbid unsafe (except in hpd-netlink, which opts in with #[allow])
-    "-W", "clippy::unwrap_used", # Warn on unwrap
-    "-W", "clippy::expect_used", # Warn on expect
-    "-W", "clippy::panic",       # Warn on panic
 ]
+# Per-crate `clippy::unwrap_used / expect_used / panic` lints live as
+# `#![cfg_attr(not(test), warn(...))]` attributes on each lib.rs / main.rs.
+# That way the strict lints apply to production code only — test modules
+# can keep their own `.unwrap()` / `.expect()` / `panic!` without forcing
+# noisy `#[allow]` boilerplate everywhere.

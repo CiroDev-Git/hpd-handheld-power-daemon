@@ -24,6 +24,10 @@
 //!   is invisible in rustdoc output without the feature.)
 
 #![warn(missing_docs)]
+#![cfg_attr(
+    not(test),
+    warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
 
 pub mod backend;
 pub mod charge;
@@ -31,9 +35,9 @@ pub mod error;
 pub mod fan;
 pub mod platform_profile;
 pub mod power;
+pub mod probe;
 pub mod profile;
 pub mod units;
-pub mod probe;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

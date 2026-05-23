@@ -252,6 +252,44 @@ in 0.2.0 to consolidate. Subsequent minor releases will respect SemVer.
   without enabling the lint yet — a follow-up will turn it on once
   the existing items are stable.
   *(Lote 21)*
+- **GitHub Actions CI** (`.github/workflows/ci.yml`). Two jobs:
+  `build-test` on Ubuntu runs `cargo fmt --check`,
+  `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo test --workspace`, and `cargo build --workspace --release`;
+  `build-macos-simulator` on macOS verifies the
+  `cargo build -p hpd-daemon -p hpd-cli --features hpd-daemon/simulator`
+  path keeps working. Both jobs cache cargo artefacts via
+  `Swatinem/rust-cache` and cancel stale runs on the same ref.
+  README gains the CI + license badges.
+  *(Lote 22)*
+- **`rust-toolchain.toml`** pinning the channel to `stable` with
+  `rustfmt` and `clippy` components, so contributor toolchains stay
+  in lockstep with CI.
+  *(Lote 22)*
+
+### Changed (Lote 22 follow-on)
+
+- **Lint policy refactored**: `clippy::unwrap_used`,
+  `clippy::expect_used`, and `clippy::panic` are no longer applied
+  globally via `RUSTFLAGS` in `.cargo/config.toml`. They now live as
+  `#![cfg_attr(not(test), warn(...))]` attributes on each crate's
+  `lib.rs` / `main.rs`, so production code is held to the strict
+  bar while test modules can keep their idiomatic `.unwrap()` /
+  `.expect()` / `panic!` without per-site `#[allow]` boilerplate.
+  This is what unblocks the `-D warnings` invocation in CI.
+- **`Transition::SystemResumed` reducer arm** rewritten to build its
+  `Vec<Effect>` with the `vec![]` macro instead of `push`-after-`new`
+  (clippy::vec_init_then_push).
+- **`hpd-daemon` netlink thread** now logs and exits the worker
+  thread on `tokio::runtime::Builder::build()` failure instead of
+  `.expect("Failed to build local tokio runtime for netlink")`. The
+  main daemon stays up; AC plug events are simply missed.
+- **`hpd-sysfs::mock::testing`** module gets an inner
+  `#![allow(clippy::unwrap_used, clippy::expect_used)]` matching the
+  pattern already in `hpd-capabilities::testing`, plus a `Default`
+  impl on `MockSysfs` to satisfy `clippy::new_without_default`.
+- **`hpd-netlink`** unused `error` / `debug` imports moved inside
+  the Linux-only submodule so the macOS build no longer warns.
 
 ### Changed
 

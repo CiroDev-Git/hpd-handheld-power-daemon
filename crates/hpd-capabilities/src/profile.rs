@@ -2,9 +2,9 @@
 //! runtime-tunable [`RuntimeConfig`] that bundles them with the smart-mode
 //! boost factors.
 
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
-use serde::{Deserialize, Serialize};
 
 /// Domain representation of a platform cooling profile.
 ///
@@ -76,11 +76,16 @@ pub struct ProfileThresholds {
 impl ProfileThresholds {
     /// Production default used by the daemon and most tests: SPL fractions
     /// below 33% map to PowerSaver, 33–67% to Balanced, 67%+ to Performance.
-    pub const DEFAULT: Self = Self { low_frac: 0.33, high_frac: 0.67 };
+    pub const DEFAULT: Self = Self {
+        low_frac: 0.33,
+        high_frac: 0.67,
+    };
 }
 
 impl Default for ProfileThresholds {
-    fn default() -> Self { Self::DEFAULT }
+    fn default() -> Self {
+        Self::DEFAULT
+    }
 }
 
 /// Runtime-tunable subset of the daemon's configuration — everything the
@@ -115,7 +120,9 @@ impl RuntimeConfig {
 }
 
 impl Default for RuntimeConfig {
-    fn default() -> Self { Self::DEFAULT }
+    fn default() -> Self {
+        Self::DEFAULT
+    }
 }
 
 /// Convenience preset for the TDP envelope.
@@ -198,7 +205,8 @@ mod tests {
         ];
         for p in cases {
             let s = p.to_string();
-            let parsed = s.parse::<ProfileName>()
+            let parsed = s
+                .parse::<ProfileName>()
                 .unwrap_or_else(|e| panic!("roundtrip failed for {:?}: {}", p, e));
             assert_eq!(parsed, p, "Display/FromStr roundtrip broken for {:?}", p);
         }
@@ -206,11 +214,26 @@ mod tests {
 
     #[test]
     fn profile_fromstr_accepts_acpi_aliases_and_case() {
-        assert_eq!("quiet".parse::<ProfileName>().unwrap(), ProfileName::PowerSaver);
-        assert_eq!("low-power".parse::<ProfileName>().unwrap(), ProfileName::PowerSaver);
-        assert_eq!("POWER-SAVER".parse::<ProfileName>().unwrap(), ProfileName::PowerSaver);
-        assert_eq!("Balanced".parse::<ProfileName>().unwrap(), ProfileName::Balanced);
-        assert_eq!("PERFORMANCE".parse::<ProfileName>().unwrap(), ProfileName::Performance);
+        assert_eq!(
+            "quiet".parse::<ProfileName>().unwrap(),
+            ProfileName::PowerSaver
+        );
+        assert_eq!(
+            "low-power".parse::<ProfileName>().unwrap(),
+            ProfileName::PowerSaver
+        );
+        assert_eq!(
+            "POWER-SAVER".parse::<ProfileName>().unwrap(),
+            ProfileName::PowerSaver
+        );
+        assert_eq!(
+            "Balanced".parse::<ProfileName>().unwrap(),
+            ProfileName::Balanced
+        );
+        assert_eq!(
+            "PERFORMANCE".parse::<ProfileName>().unwrap(),
+            ProfileName::Performance
+        );
     }
 
     #[test]
@@ -244,7 +267,10 @@ mod tests {
     #[test]
     fn tdp_preset_fromstr_accepts_case_insensitive() {
         assert_eq!("ECO".parse::<TdpPreset>().unwrap(), TdpPreset::Eco);
-        assert_eq!("Balanced".parse::<TdpPreset>().unwrap(), TdpPreset::Balanced);
+        assert_eq!(
+            "Balanced".parse::<TdpPreset>().unwrap(),
+            TdpPreset::Balanced
+        );
         assert_eq!("MAX".parse::<TdpPreset>().unwrap(), TdpPreset::Max);
     }
 

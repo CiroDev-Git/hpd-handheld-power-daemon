@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(test),
+    warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 mod dbus;
 
 use clap::{Parser, Subcommand};
@@ -71,9 +76,7 @@ enum ChargeAction {
 #[derive(Subcommand)]
 enum FanAction {
     /// Set a manual profile (Quiet, Balanced, Performance)
-    Set { 
-        profile: String 
-    },
+    Set { profile: String },
     /// Reset fan control to Daemon (based on TDP)
     Auto,
 }
@@ -94,7 +97,10 @@ async fn main() {
     let connection = match connection_result {
         Ok(conn) => conn,
         Err(e) => {
-            eprintln!("Fatal error: Cannot connect to D-Bus. Is the D-Bus system running?\nDetail: {}", e);
+            eprintln!(
+                "Fatal error: Cannot connect to D-Bus. Is the D-Bus system running?\nDetail: {}",
+                e
+            );
             process::exit(1);
         }
     };
@@ -108,7 +114,7 @@ async fn main() {
         }
     };
 
-    // Command dispatch 
+    // Command dispatch
     if let Err(e) = execute_command(cli, proxy).await {
         eprintln!("Error executing command: {}", e);
         process::exit(1);
@@ -140,14 +146,17 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
             }
         },
         Commands::Preset { name } => {
-            println!("🚀 Requesting profile change to '{}'...", name.to_uppercase());
+            println!(
+                "🚀 Requesting profile change to '{}'...",
+                name.to_uppercase()
+            );
             if let Err(e) = proxy.set_preset(&name).await {
                 eprintln!("❌ Error applying preset: {}", e);
             } else {
                 println!("✅ Preset applied successfully.");
                 println!("(Cooling profile has changed automatically).");
             }
-        },
+        }
         Commands::Limits => {
             let (spl_min, spl_max, sppt_max, fppt_max) = proxy.get_hardware_limits().await?;
             println!("📊 Detected hardware limits:");
@@ -155,21 +164,21 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
             println!("  • SPL Max (Base):    {}W", spl_max);
             println!("  • SPPT Max (Boost):  {}W", sppt_max);
             println!("  • FPPT Max (Peak):   {}W", fppt_max);
-        },
+        }
         Commands::Status => {
             print_dashboard(&proxy).await?;
-        },
+        }
         Commands::Monitor => {
             println!("Starting real time monitor. Ctrl+C to exit...");
-            loop {                
+            loop {
                 print!("\x1B[2J\x1B[1;1H");
-                
+
                 print_dashboard(&proxy).await?;
 
                 // Sleep 1 second
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
-        },
+        }
         Commands::Fan { action } => match action {
             FanAction::Set { profile } => {
                 proxy.set_profile(&profile).await?;
@@ -191,14 +200,18 @@ async fn print_dashboard(proxy: &PowerDaemonProxy<'_>) -> zbus::Result<()> {
     let charge_limit = proxy.charge_end_threshold().await?;
 
     let is_ac = proxy.is_ac_connected().await?;
-    let power_icon = if is_ac { "⚡ Connected (AC)" } else { "🔋 Battery (DC)" };
+    let power_icon = if is_ac {
+        "⚡ Connected (AC)"
+    } else {
+        "🔋 Battery (DC)"
+    };
 
     println!("=======================================");
     println!("  🎮 Handheld Power Daemon Status 🎮  ");
     println!("=======================================");
     println!("   ⚡ TDP (SPL):        {}W", spl_watts);
     println!("  ❄️ Cooling Profile:  {}", profile);
-    println!("  🔌 Power adapter:    {}", power_icon); 
+    println!("  🔌 Power adapter:    {}", power_icon);
     println!("  🔋 Battery Limit:    {}%", charge_limit);
     println!("=======================================");
 

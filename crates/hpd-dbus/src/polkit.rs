@@ -59,7 +59,10 @@ async fn check_inner(
     use zbus::zvariant::Value;
 
     let Some(sender) = header.sender() else {
-        warn!(action = action_id, "Method call has no sender; denying (fail-closed)");
+        warn!(
+            action = action_id,
+            "Method call has no sender; denying (fail-closed)"
+        );
         return false;
     };
     let sender_name = sender.as_str().to_string();

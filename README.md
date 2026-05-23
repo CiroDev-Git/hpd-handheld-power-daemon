@@ -1,5 +1,8 @@
 # hpd — Handheld Power Daemon
 
+[![CI](https://github.com/CiroDev-Git/hpd-handheld-power-daemon/actions/workflows/ci.yml/badge.svg)](https://github.com/CiroDev-Git/hpd-handheld-power-daemon/actions/workflows/ci.yml)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+
 A Linux system daemon for Windows-handheld-class PCs that owns four things
 the platform usually scatters across BIOS, firmware attributes and ad-hoc
 sysfs writes:

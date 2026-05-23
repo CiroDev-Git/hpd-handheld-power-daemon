@@ -15,10 +15,10 @@ trait PowerDaemon {
 
     #[zbus(property)]
     fn current_spl(&self) -> zbus::Result<u32>;
-    
+
     #[zbus(property)]
     fn active_profile(&self) -> zbus::Result<String>;
-    
+
     #[zbus(property)]
     fn charge_end_threshold(&self) -> zbus::Result<u8>;
 

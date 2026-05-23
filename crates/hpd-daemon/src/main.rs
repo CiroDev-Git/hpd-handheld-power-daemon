@@ -1,23 +1,28 @@
+#![cfg_attr(
+    not(test),
+    warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 mod config;
 mod probe;
 mod suspend;
 
 use std::path::PathBuf;
 
-use tracing::{error, info, warn};
-use tracing_subscriber::{EnvFilter, FmtSubscriber};
-use tokio::sync::mpsc;
 use tokio::signal;
 use tokio::signal::unix::SignalKind;
+use tokio::sync::mpsc;
+use tracing::{error, info, warn};
+use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
-#[cfg(feature = "vendor-asus")]
-use hpd_sysfs::RealSysfs;
 use hpd_capabilities::power::PowerEnvelopeTarget;
 use hpd_capabilities::profile::ProfileName;
-use hpd_core::state::ProfileState;
-use hpd_core::transition::Transition;
 use hpd_core::executor::Executor;
 use hpd_core::persistence::StatePersister;
+use hpd_core::state::ProfileState;
+use hpd_core::transition::Transition;
+#[cfg(feature = "vendor-asus")]
+use hpd_sysfs::RealSysfs;
 
 use crate::config::DaemonConfig;
 
@@ -29,11 +34,9 @@ use hpd_backend_asus::AsusBackend;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Init logging (journald/terminal). Respects RUST_LOG; defaults to `hpd=info,warn`.
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("hpd=info,warn"));
-    let subscriber = FmtSubscriber::builder()
-        .with_env_filter(filter)
-        .finish();
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("hpd=info,warn"));
+    let subscriber = FmtSubscriber::builder().with_env_filter(filter).finish();
     tracing::subscriber::set_global_default(subscriber)?;
 
     info!("Starting Handheld Power Daemon (hpd)...");
@@ -51,16 +54,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             info!("Starting in SIMULATOR mode...");
             let mock = hpd_sysfs::MockSysfs::new();
 
-            mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/min_value", "7");
-            mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/max_value", "35");
-            mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/current_value", "15");
-            mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl2_sppt/max_value", "43");
-            mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl2_sppt/current_value", "15");
-            mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl3_fppt/max_value", "55");
-            mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl3_fppt/current_value", "15");
+            mock.create_file(
+                "sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/min_value",
+                "7",
+            );
+            mock.create_file(
+                "sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/max_value",
+                "35",
+            );
+            mock.create_file(
+                "sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/current_value",
+                "15",
+            );
+            mock.create_file(
+                "sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl2_sppt/max_value",
+                "43",
+            );
+            mock.create_file(
+                "sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl2_sppt/current_value",
+                "15",
+            );
+            mock.create_file(
+                "sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl3_fppt/max_value",
+                "55",
+            );
+            mock.create_file(
+                "sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl3_fppt/current_value",
+                "15",
+            );
             mock.create_file("sys/firmware/acpi/platform_profile", "balanced");
-            mock.create_file("sys/firmware/acpi/platform_profile_choices", "quiet balanced performance");
-            mock.create_file("sys/class/power_supply/BAT0/charge_control_end_threshold", "80");
+            mock.create_file(
+                "sys/firmware/acpi/platform_profile_choices",
+                "quiet balanced performance",
+            );
+            mock.create_file(
+                "sys/class/power_supply/BAT0/charge_control_end_threshold",
+                "80",
+            );
 
             // Simulator currently only models ASUS firmware (enforced via
             // the feature's `vendor-asus` dependency in Cargo.toml).
@@ -87,8 +117,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn run_daemon<B>(backend: B) -> Result<(), Box<dyn std::error::Error>>
-where 
-    B: hpd_capabilities::backend::HwBackend + 'static 
+where
+    B: hpd_capabilities::backend::HwBackend + 'static,
 {
     // 5. Daemon configuration. `ConfigurationDirectory=hpd` in the unit
     //    file points us at /etc/hpd. Outside systemd we fall back to
@@ -106,7 +136,7 @@ where
                 "Hardware limits detected"
             );
             l
-        },
+        }
         Err(e) => {
             error!("CRITICAL: Cannot read hardware limits: {}. Exiting.", e);
             return Err(e.into());
@@ -130,16 +160,18 @@ where
             info!("Previous state loaded successfully from disk.");
             state.is_ac_connected = is_physically_plugged;
             state
-        },
+        }
         None => {
             info!("No previous state found (or failed to read). Defaulting to hardware values...");
             // First time after installation, read currentconfig of device
             let current_target = backend.get_target().unwrap_or(PowerEnvelopeTarget {
                 spl: limits.spl_min,
                 sppt: limits.spl_min,
-                fppt: Some(limits.spl_min)
+                fppt: Some(limits.spl_min),
             });
-            let current_profile = backend.get_active_profile().unwrap_or(ProfileName::Balanced);
+            let current_profile = backend
+                .get_active_profile()
+                .unwrap_or(ProfileName::Balanced);
             let current_charge_limit = backend
                 .get_end_threshold()
                 .unwrap_or(daemon_config.default_charge_threshold);
@@ -150,7 +182,7 @@ where
                 charge_end_threshold: current_charge_limit,
                 fan_follows_tdp: true,
                 is_ac_connected: is_physically_plugged,
-                last_dc_target: None
+                last_dc_target: None,
             }
         }
     };
@@ -187,20 +219,32 @@ where
 
     info!("Starting hardware event monitors...");
     let tx_netlink = tx.clone(); // Give to monitor their own remote control
-    // 1. Use a native OS thread so the netlink monitor never blocks the main pool.
+                                 // 1. Use a native OS thread so the netlink monitor never blocks the main pool.
     std::thread::spawn(move || {
-        // 2. Single-thread async runtime pinned to this thread.
-        let rt = tokio::runtime::Builder::new_current_thread()
+        // 2. Single-thread async runtime pinned to this thread. Construction
+        //    can only fail under pathological system state (no fds, no
+        //    epoll); if that happens the netlink monitor is dead in the
+        //    water — log and exit the thread instead of panicking, the
+        //    main daemon keeps running without AC plug events.
+        let rt = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .expect("Failed to build local tokio runtime for netlink");
+        {
+            Ok(rt) => rt,
+            Err(e) => {
+                error!(error = %e, "Failed to build netlink runtime; AC plug events will be missed");
+                return;
+            }
+        };
 
         // 3. Run the !Send netlink task safely on a LocalSet.
         rt.block_on(async move {
             let local = tokio::task::LocalSet::new();
-            local.run_until(async move {
-                hpd_netlink::spawn_power_monitor(tx_netlink).await;
-            }).await;
+            local
+                .run_until(async move {
+                    hpd_netlink::spawn_power_monitor(tx_netlink).await;
+                })
+                .await;
         });
     });
 
@@ -227,7 +271,6 @@ where
         executor.run().await;
     });
 
-
     // 9. Start D-Bus server
     info!("Starting D-Bus server...");
     const DBUS_BUS_NAME: &str = "dev.cirodev.hpd.PowerDaemon1";
@@ -238,11 +281,7 @@ where
     // emitter task spawned below.
     let state_rx_for_watcher = state_rx.clone();
 
-    let dbus_interface = hpd_dbus::service::PowerDaemonInterface::new(
-        tx.clone(),
-        state_rx,
-        limits,
-    );
+    let dbus_interface = hpd_dbus::service::PowerDaemonInterface::new(tx.clone(), state_rx, limits);
 
     // Session bus is only a valid target when the simulator path is
     // compiled in; production builds always bind to the system bus
@@ -276,7 +315,10 @@ where
         .object_server()
         .interface::<_, hpd_dbus::service::PowerDaemonInterface>(DBUS_OBJECT_PATH)
         .await?;
-    tokio::spawn(spawn_properties_changed_emitter(state_rx_for_watcher, iface_ref));
+    tokio::spawn(spawn_properties_changed_emitter(
+        state_rx_for_watcher,
+        iface_ref,
+    ));
 
     info!("Daemon is fully running and listening for commands.");
 

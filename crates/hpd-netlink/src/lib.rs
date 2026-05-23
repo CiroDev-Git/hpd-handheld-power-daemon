@@ -1,6 +1,11 @@
+#![cfg_attr(
+    not(test),
+    warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 use hpd_core::transition::Transition;
 use tokio::sync::mpsc;
-use tracing::{error, info, debug};
+use tracing::info;
 
 // ========================================================
 // PRODUCTION MODE (Compily on Linux)
@@ -10,6 +15,7 @@ mod linux {
     use super::*;
     use futures_util::StreamExt;
     use tokio_udev::{AsyncMonitorSocket, MonitorBuilder};
+    use tracing::{debug, error};
 
     const SUBSYS_POWER: &str = "power_supply";
     const PROP_ONLINE: &str = "POWER_SUPPLY_ONLINE";
@@ -61,14 +67,20 @@ mod linux {
             let sysname = event.sysname();
             let name = sysname.to_string_lossy().to_uppercase();
             if name.contains(IDENTIFIER_AC) || name.contains(IDENTIFIER_ADP) {
-                            
                 // ONLINE (1 = Connected, 0 = Disconnected)
                 if let Some(online_val) = event.property_value(PROP_ONLINE) {
                     let is_ac_plugged: bool = online_val == VAL_ONLINE_TRUE;
-                    
-                    info!("⚡ Hardware event detected: Charger connected = {}", is_ac_plugged);
 
-                    if tx.send(Transition::AcPowerChanged(is_ac_plugged)).await.is_err() {
+                    info!(
+                        "⚡ Hardware event detected: Charger connected = {}",
+                        is_ac_plugged
+                    );
+
+                    if tx
+                        .send(Transition::AcPowerChanged(is_ac_plugged))
+                        .await
+                        .is_err()
+                    {
                         error!("Netlink monitor: Main executor not available. Stopping monitor.");
                         break;
                     }

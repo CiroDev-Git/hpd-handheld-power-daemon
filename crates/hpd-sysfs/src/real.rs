@@ -1,9 +1,9 @@
 //! Production implementation of [`SysfsIo`] backed by `std::fs`.
 
+use crate::io::SysfsIo;
+use hpd_error::SysfsError;
 use std::fs;
 use std::path::Path;
-use hpd_error::SysfsError;
-use crate::io::SysfsIo;
 
 /// Real-filesystem implementor of [`SysfsIo`]. Zero-size — instances
 /// hold no state, every method goes straight to the kernel.
@@ -28,8 +28,7 @@ impl SysfsIo for RealSysfs {
     fn write_string(&self, path: impl AsRef<Path>, val: &str) -> Result<(), SysfsError> {
         let path_ref = path.as_ref();
         tracing::debug!(path = %path_ref.display(), val, "Writing to sysfs");
-        fs::write(path_ref, val)
-            .map_err(|e| SysfsError::from_io(path_ref, e))
+        fs::write(path_ref, val).map_err(|e| SysfsError::from_io(path_ref, e))
     }
 
     fn exists(&self, path: impl AsRef<Path>) -> bool {

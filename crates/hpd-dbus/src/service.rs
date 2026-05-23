@@ -1,14 +1,14 @@
-use zbus::interface;
+use std::str::FromStr;
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, error};
-use std::str::FromStr;
+use zbus::interface;
 
-use hpd_core::transition::Transition;
-use hpd_core::state::ProfileState;
 use hpd_capabilities::power::PowerEnvelopeLimits;
 use hpd_capabilities::profile::ProfileName;
+use hpd_core::state::ProfileState;
+use hpd_core::transition::Transition;
 
-use hpd_capabilities::charge::{MIN_CHARGE_THRESHOLD, MAX_CHARGE_THRESHOLD};
+use hpd_capabilities::charge::{MAX_CHARGE_THRESHOLD, MIN_CHARGE_THRESHOLD};
 
 use crate::actions::PolkitAction;
 use crate::polkit;
@@ -25,7 +25,11 @@ impl PowerDaemonInterface {
         state_rx: watch::Receiver<ProfileState>,
         limits: PowerEnvelopeLimits,
     ) -> Self {
-        Self { tx, state_rx, limits }
+        Self {
+            tx,
+            state_rx,
+            limits,
+        }
     }
 }
 
@@ -39,7 +43,6 @@ fn executor_down() -> zbus::fdo::Error {
 
 #[interface(name = "dev.cirodev.hpd.PowerDaemon1")]
 impl PowerDaemonInterface {
-
     /// Change SPL
     async fn set_spl(
         &self,
@@ -68,7 +71,8 @@ impl PowerDaemonInterface {
         if !polkit::check(conn, &header, PolkitAction::SetTdp).await {
             return Err(auth_denied());
         }
-        let preset = preset_name.parse::<hpd_capabilities::profile::TdpPreset>()
+        let preset = preset_name
+            .parse::<hpd_capabilities::profile::TdpPreset>()
             .map_err(zbus::fdo::Error::InvalidArgs)?;
         if self.tx.send(Transition::SetPreset(preset)).await.is_err() {
             error!("Failed to send transition to executor");
@@ -91,12 +95,19 @@ impl PowerDaemonInterface {
     ) -> zbus::fdo::Result<()> {
         debug!("D-Bus received request to Set Charge Limit: {}%", threshold);
         if !(MIN_CHARGE_THRESHOLD..=MAX_CHARGE_THRESHOLD).contains(&threshold) {
-            return Err(zbus::fdo::Error::InvalidArgs("Charge limit must be between 20 and 100".into()));
+            return Err(zbus::fdo::Error::InvalidArgs(
+                "Charge limit must be between 20 and 100".into(),
+            ));
         }
         if !polkit::check(conn, &header, PolkitAction::SetCharge).await {
             return Err(auth_denied());
         }
-        if self.tx.send(Transition::ChargeThresholdChanged(threshold)).await.is_err() {
+        if self
+            .tx
+            .send(Transition::ChargeThresholdChanged(threshold))
+            .await
+            .is_err()
+        {
             error!("Failed to send transition to executor");
             return Err(executor_down());
         }
@@ -138,9 +149,13 @@ impl PowerDaemonInterface {
         if !polkit::check(conn, &header, PolkitAction::SetProfile).await {
             return Err(auth_denied());
         }
-        let profile_enum = ProfileName::from_str(profile)
-            .map_err(zbus::fdo::Error::InvalidArgs)?;
-        if self.tx.send(Transition::SetProfile(profile_enum)).await.is_err() {
+        let profile_enum = ProfileName::from_str(profile).map_err(zbus::fdo::Error::InvalidArgs)?;
+        if self
+            .tx
+            .send(Transition::SetProfile(profile_enum))
+            .await
+            .is_err()
+        {
             return Err(executor_down());
         }
         Ok(())

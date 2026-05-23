@@ -58,7 +58,7 @@ impl<B: HwBackend> Executor<B> {
             transition_rx,
             state_tx,
             internal_tx,
-            persister
+            persister,
         };
 
         (executor, state_rx)
@@ -143,11 +143,20 @@ impl<B: HwBackend> Executor<B> {
                     error!(error = %e, "Failed to apply Power Envelope to hardware");
                     match self.backend.get_target() {
                         Ok(real_target) => {
-                            warn!("Rolling back state to match hardware reality: {:?}", real_target);
-                            let _ = self.internal_tx.send(Transition::SyncPowerTarget(real_target)).await;
+                            warn!(
+                                "Rolling back state to match hardware reality: {:?}",
+                                real_target
+                            );
+                            let _ = self
+                                .internal_tx
+                                .send(Transition::SyncPowerTarget(real_target))
+                                .await;
                         }
                         Err(read_err) => {
-                            error!("CRITICAL: Hardware state unreadable after write failure: {}", read_err);
+                            error!(
+                                "CRITICAL: Hardware state unreadable after write failure: {}",
+                                read_err
+                            );
                         }
                     }
                 } else {

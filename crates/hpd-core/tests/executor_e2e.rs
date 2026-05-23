@@ -63,11 +63,7 @@ fn initial_state() -> ProfileState {
 /// Per-process-unique temp path, cleared at test entry so re-runs don't see
 /// stale persisted state.
 fn fresh_temp_path(label: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!(
-        "hpd_e2e_{}_{}.toml",
-        label,
-        std::process::id()
-    ));
+    let path = std::env::temp_dir().join(format!("hpd_e2e_{}_{}.toml", label, std::process::id()));
     let _ = std::fs::remove_file(&path);
     path
 }
@@ -140,10 +136,12 @@ async fn test_executor_applies_envelope_and_persists() {
 
     wait_until(
         || {
-            backend_handle.calls().iter().any(|c| matches!(
-                c,
-                RecordedCall::SetTarget(t) if t.spl == PowerMilliwatts(20_000)
-            ))
+            backend_handle.calls().iter().any(|c| {
+                matches!(
+                    c,
+                    RecordedCall::SetTarget(t) if t.spl == PowerMilliwatts(20_000)
+                )
+            })
         },
         1_000,
         "SetTarget(spl=20000) on backend",
@@ -220,7 +218,9 @@ async fn test_executor_propagates_state_to_watch_receiver() {
     );
     let exec_handle = tokio::spawn(executor.run());
 
-    tx.send(Transition::ChargeThresholdChanged(70)).await.unwrap();
+    tx.send(Transition::ChargeThresholdChanged(70))
+        .await
+        .unwrap();
     let updated = wait_state(&mut state_rx, |s| s.charge_end_threshold == 70).await;
     assert_eq!(updated.charge_end_threshold, 70);
 

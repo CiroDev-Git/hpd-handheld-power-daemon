@@ -15,9 +15,9 @@
 //! condition to recover from.
 #![allow(clippy::expect_used)]
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use hpd_error::{BackendError, HpdError};
 

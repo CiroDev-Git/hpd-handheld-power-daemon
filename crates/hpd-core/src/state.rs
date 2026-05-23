@@ -1,8 +1,8 @@
 //! Persistent state of the daemon.
 
-use serde::{Deserialize, Serialize};
 use hpd_capabilities::power::PowerEnvelopeTarget;
 use hpd_capabilities::profile::ProfileName;
+use serde::{Deserialize, Serialize};
 
 /// Immutable snapshot of everything the L3 executor needs to know
 /// across transitions and across reboots. Wrapped in a

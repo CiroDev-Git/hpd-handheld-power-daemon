@@ -42,7 +42,6 @@ pub fn reduce(
     let mut effects = Vec::new();
 
     match transition {
-
         Transition::SetPreset(preset) => {
             let min_w = device_limits.spl_min.as_watts();
             let max_w = device_limits.spl_max.as_watts();
@@ -54,7 +53,12 @@ pub fn reduce(
                 TdpPreset::Max => max_w,
             };
 
-            return reduce(state, Transition::SetSpl(target_watts), device_limits, config);
+            return reduce(
+                state,
+                Transition::SetSpl(target_watts),
+                device_limits,
+                config,
+            );
         }
 
         // -----------------------------------------------------
@@ -66,13 +70,16 @@ pub fn reduce(
             let spl = PowerMilliwatts::from_watts(watts)?;
 
             if spl < device_limits.spl_min || spl > device_limits.spl_max {
-                return Err(HpdError::InvariantViolation(
-                    format!("SPL ({}W) out of hardware range", watts)
-                ));
+                return Err(HpdError::InvariantViolation(format!(
+                    "SPL ({}W) out of hardware range",
+                    watts
+                )));
             }
 
-            let sppt_mw = ((spl.0 as f32 * config.sppt_factor) as u32).min(device_limits.sppt_max.0);
-            let fppt_mw = ((spl.0 as f32 * config.fppt_factor) as u32).min(device_limits.fppt_max.0);
+            let sppt_mw =
+                ((spl.0 as f32 * config.sppt_factor) as u32).min(device_limits.sppt_max.0);
+            let fppt_mw =
+                ((spl.0 as f32 * config.fppt_factor) as u32).min(device_limits.fppt_max.0);
 
             let new_target = PowerEnvelopeTarget {
                 spl,
@@ -82,7 +89,12 @@ pub fn reduce(
 
             validate_power_envelope(&new_target)?;
 
-            return apply_target_and_profile(state, new_target, device_limits, &config.profile_thresholds);
+            return apply_target_and_profile(
+                state,
+                new_target,
+                device_limits,
+                &config.profile_thresholds,
+            );
         }
 
         // -----------------------------------------------------
@@ -91,7 +103,12 @@ pub fn reduce(
         Transition::SetEnvelope(new_target) => {
             validate_power_envelope(&new_target)?;
 
-            return apply_target_and_profile(state, new_target, device_limits, &config.profile_thresholds);
+            return apply_target_and_profile(
+                state,
+                new_target,
+                device_limits,
+                &config.profile_thresholds,
+            );
         }
 
         Transition::SetProfile(new_profile) => {
@@ -130,15 +147,33 @@ pub fn reduce(
 
             let mut output = if is_plugged {
                 info!(preset = %TdpPreset::Max, "Charger plugged: saving DC target and applying preset");
-                let mut temp_output = reduce(state, Transition::SetPreset(TdpPreset::Max), device_limits, config)?;
+                let mut temp_output = reduce(
+                    state,
+                    Transition::SetPreset(TdpPreset::Max),
+                    device_limits,
+                    config,
+                )?;
                 temp_output.new_state.last_dc_target = Some(state.power_target.clone());
                 temp_output
             } else if let Some(ref prev_target) = state.last_dc_target {
-                info!(action = "restore_previous", "Charger unplugged: restoring previous DC target");
-                reduce(state, Transition::SetEnvelope(prev_target.clone()), device_limits, config)?
+                info!(
+                    action = "restore_previous",
+                    "Charger unplugged: restoring previous DC target"
+                );
+                reduce(
+                    state,
+                    Transition::SetEnvelope(prev_target.clone()),
+                    device_limits,
+                    config,
+                )?
             } else {
                 info!(preset = %TdpPreset::Balanced, "Charger unplugged: applying default preset");
-                reduce(state, Transition::SetPreset(TdpPreset::Balanced), device_limits, config)?
+                reduce(
+                    state,
+                    Transition::SetPreset(TdpPreset::Balanced),
+                    device_limits,
+                    config,
+                )?
             };
 
             output.new_state.is_ac_connected = is_plugged;
@@ -147,26 +182,26 @@ pub fn reduce(
             // mutated last_dc_target / is_ac_connected and those must survive
             // a reboot. apply_target_and_profile only emits PersistState when
             // the target changed, so we top it up here if missing.
-            if !output.effects.iter().any(|e| matches!(e, Effect::PersistState)) {
+            if !output
+                .effects
+                .iter()
+                .any(|e| matches!(e, Effect::PersistState))
+            {
                 output.effects.push(Effect::PersistState);
             }
 
             return Ok(output);
-
         }
 
         Transition::SystemResumed => {
             info!("System resumed: reapplying last known config");
-
-            let mut effects = Vec::new();
-            
-            effects.push(Effect::ApplyPowerEnvelope(state.power_target.clone()));
-            effects.push(Effect::ApplyPlatformProfile(state.active_profile.clone()));
-            effects.push(Effect::ApplyChargeThreshold(state.charge_end_threshold));
-            
             return Ok(ReducerOutput {
                 new_state: state.clone(),
-                effects,
+                effects: vec![
+                    Effect::ApplyPowerEnvelope(state.power_target.clone()),
+                    Effect::ApplyPlatformProfile(state.active_profile.clone()),
+                    Effect::ApplyChargeThreshold(state.charge_end_threshold),
+                ],
             });
         }
 
@@ -206,28 +241,21 @@ fn apply_target_and_profile(
     device_limits: &PowerEnvelopeLimits,
     thresholds: &ProfileThresholds,
 ) -> Result<ReducerOutput, HpdError> {
-
     let mut new_state = current_state.clone();
     let mut effects = Vec::new();
 
     if new_state.power_target != new_target {
-
         new_state.power_target = new_target.clone();
         effects.push(Effect::ApplyPowerEnvelope(new_target.clone()));
 
         // Auto-Profile
         if new_state.fan_follows_tdp {
-            let inferred_profile = infer_profile_from_spl(
-                &new_target, 
-                device_limits, 
-                thresholds
-            );
+            let inferred_profile = infer_profile_from_spl(&new_target, device_limits, thresholds);
 
             if new_state.active_profile != inferred_profile {
                 new_state.active_profile = inferred_profile.clone();
                 effects.push(Effect::ApplyPlatformProfile(inferred_profile));
             }
-
         }
 
         effects.push(Effect::PersistState);
@@ -240,7 +268,7 @@ fn apply_target_and_profile(
 mod tests {
     use super::*;
     use hpd_capabilities::charge::DEFAULT_CHARGE_THRESHOLD;
-    use hpd_capabilities::power::{PowerEnvelopeTarget, PowerEnvelopeLimits};
+    use hpd_capabilities::power::{PowerEnvelopeLimits, PowerEnvelopeTarget};
     use hpd_capabilities::profile::{ProfileName, RuntimeConfig};
     use hpd_capabilities::units::PowerMilliwatts;
 
@@ -255,7 +283,7 @@ mod tests {
             is_ac_connected: false,
             charge_end_threshold: DEFAULT_CHARGE_THRESHOLD,
             fan_follows_tdp: true,
-            last_dc_target: None
+            last_dc_target: None,
         }
     }
 
@@ -273,15 +301,15 @@ mod tests {
         // Invalid attempt: SPPT lower than SPL
         let bad_target = PowerEnvelopeTarget {
             spl: PowerMilliwatts(20000),
-            sppt: PowerMilliwatts(15000), 
+            sppt: PowerMilliwatts(15000),
             fppt: Some(PowerMilliwatts(25000)),
         };
 
         let result = reduce(
-            &state, 
-            Transition::SetEnvelope(bad_target), 
-            &limits, 
-            &config
+            &state,
+            Transition::SetEnvelope(bad_target),
+            &limits,
+            &config,
         );
 
         assert!(result.is_err(), "Must fail because SPPT < SPL");
@@ -305,10 +333,18 @@ mod tests {
             fppt: Some(PowerMilliwatts(30000)),
         };
 
-        let output = reduce(&state, Transition::SetEnvelope(high_target), &limits, &config).unwrap();
+        let output = reduce(
+            &state,
+            Transition::SetEnvelope(high_target),
+            &limits,
+            &config,
+        )
+        .unwrap();
 
         assert_eq!(output.new_state.active_profile, ProfileName::Performance);
-        assert!(output.effects.contains(&Effect::ApplyPlatformProfile(ProfileName::Performance)));
+        assert!(output
+            .effects
+            .contains(&Effect::ApplyPlatformProfile(ProfileName::Performance)));
     }
 
     #[test]
@@ -370,7 +406,10 @@ mod tests {
             .expect("AcPowerChanged should succeed");
 
         assert!(
-            output.effects.iter().any(|e| matches!(e, Effect::PersistState)),
+            output
+                .effects
+                .iter()
+                .any(|e| matches!(e, Effect::PersistState)),
             "AcPowerChanged must emit PersistState even when target is unchanged; got effects={:?}",
             output.effects
         );
@@ -398,9 +437,18 @@ mod tests {
         // Redundant AcPowerChanged(false) on an already-DC state must yield zero
         // effects (no spurious re-apply / persistence).
         let state = setup_state();
-        let out = reduce(&state, Transition::AcPowerChanged(false), &setup_limits(), &setup_config())
-            .unwrap();
-        assert!(out.effects.is_empty(), "expected no effects, got {:?}", out.effects);
+        let out = reduce(
+            &state,
+            Transition::AcPowerChanged(false),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert!(
+            out.effects.is_empty(),
+            "expected no effects, got {:?}",
+            out.effects
+        );
         assert_eq!(out.new_state, state);
     }
 
@@ -408,10 +456,18 @@ mod tests {
     fn test_ac_plugged_saves_dc_target_and_applies_max_preset() {
         // Charger goes in: snapshot the current DC target and ramp SPL to spl_max.
         let state = setup_state(); // DC, target (15,15,15)
-        let out = reduce(&state, Transition::AcPowerChanged(true), &setup_limits(), &setup_config())
-            .unwrap();
+        let out = reduce(
+            &state,
+            Transition::AcPowerChanged(true),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
         assert!(out.new_state.is_ac_connected);
-        assert_eq!(out.new_state.last_dc_target, Some(state.power_target.clone()));
+        assert_eq!(
+            out.new_state.last_dc_target,
+            Some(state.power_target.clone())
+        );
         assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(35_000));
         assert!(out.effects.contains(&Effect::PersistState));
     }
@@ -428,8 +484,13 @@ mod tests {
         state.is_ac_connected = true;
         state.last_dc_target = Some(saved.clone());
 
-        let out = reduce(&state, Transition::AcPowerChanged(false), &setup_limits(), &setup_config())
-            .unwrap();
+        let out = reduce(
+            &state,
+            Transition::AcPowerChanged(false),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
         assert!(!out.new_state.is_ac_connected);
         assert_eq!(out.new_state.power_target, saved);
         assert!(out.effects.contains(&Effect::PersistState));
@@ -443,8 +504,13 @@ mod tests {
         state.is_ac_connected = true;
         state.last_dc_target = None;
 
-        let out = reduce(&state, Transition::AcPowerChanged(false), &setup_limits(), &setup_config())
-            .unwrap();
+        let out = reduce(
+            &state,
+            Transition::AcPowerChanged(false),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
         assert!(!out.new_state.is_ac_connected);
         assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(21_000));
     }
@@ -456,13 +522,24 @@ mod tests {
         // After resume the kernel may have lost our config. The reducer must
         // emit exactly the three re-apply effects without mutating state.
         let state = setup_state();
-        let out = reduce(&state, Transition::SystemResumed, &setup_limits(), &setup_config())
-            .unwrap();
+        let out = reduce(
+            &state,
+            Transition::SystemResumed,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
         assert_eq!(out.new_state, state);
         assert_eq!(out.effects.len(), 3);
-        assert!(out.effects.contains(&Effect::ApplyPowerEnvelope(state.power_target.clone())));
-        assert!(out.effects.contains(&Effect::ApplyPlatformProfile(state.active_profile.clone())));
-        assert!(out.effects.contains(&Effect::ApplyChargeThreshold(state.charge_end_threshold)));
+        assert!(out
+            .effects
+            .contains(&Effect::ApplyPowerEnvelope(state.power_target.clone())));
+        assert!(out
+            .effects
+            .contains(&Effect::ApplyPlatformProfile(state.active_profile.clone())));
+        assert!(out
+            .effects
+            .contains(&Effect::ApplyChargeThreshold(state.charge_end_threshold)));
     }
 
     // ---------- EnableFanAuto ----------
@@ -476,16 +553,26 @@ mod tests {
         // concern tracked in the audit.
         let mut state = setup_state();
         state.fan_follows_tdp = false;
-        let out = reduce(&state, Transition::EnableFanAuto, &setup_limits(), &setup_config())
-            .unwrap();
+        let out = reduce(
+            &state,
+            Transition::EnableFanAuto,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
         assert!(out.new_state.fan_follows_tdp);
     }
 
     #[test]
     fn test_enable_fan_auto_is_no_op_when_already_enabled() {
         let state = setup_state(); // fan_follows_tdp = true
-        let out = reduce(&state, Transition::EnableFanAuto, &setup_limits(), &setup_config())
-            .unwrap();
+        let out = reduce(
+            &state,
+            Transition::EnableFanAuto,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
         assert_eq!(out.new_state, state);
         assert!(out.effects.is_empty());
     }
@@ -495,17 +582,30 @@ mod tests {
     #[test]
     fn test_charge_threshold_changed_applies_and_persists() {
         let state = setup_state(); // threshold = 80
-        let out = reduce(&state, Transition::ChargeThresholdChanged(60), &setup_limits(), &setup_config())
-            .unwrap();
+        let out = reduce(
+            &state,
+            Transition::ChargeThresholdChanged(60),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
         assert_eq!(out.new_state.charge_end_threshold, 60);
-        assert_eq!(out.effects, vec![Effect::ApplyChargeThreshold(60), Effect::PersistState]);
+        assert_eq!(
+            out.effects,
+            vec![Effect::ApplyChargeThreshold(60), Effect::PersistState]
+        );
     }
 
     #[test]
     fn test_charge_threshold_changed_is_no_op_when_unchanged() {
         let state = setup_state(); // threshold = 80
-        let out = reduce(&state, Transition::ChargeThresholdChanged(80), &setup_limits(), &setup_config())
-            .unwrap();
+        let out = reduce(
+            &state,
+            Transition::ChargeThresholdChanged(80),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
         assert_eq!(out.new_state, state);
         assert!(out.effects.is_empty());
     }
@@ -515,30 +615,50 @@ mod tests {
     #[test]
     fn test_set_spl_just_below_min_is_rejected() {
         let state = setup_state();
-        let result = reduce(&state, Transition::SetSpl(6), &setup_limits(), &setup_config());
+        let result = reduce(
+            &state,
+            Transition::SetSpl(6),
+            &setup_limits(),
+            &setup_config(),
+        );
         assert!(matches!(result, Err(HpdError::InvariantViolation(_))));
     }
 
     #[test]
     fn test_set_spl_just_above_max_is_rejected() {
         let state = setup_state();
-        let result = reduce(&state, Transition::SetSpl(36), &setup_limits(), &setup_config());
+        let result = reduce(
+            &state,
+            Transition::SetSpl(36),
+            &setup_limits(),
+            &setup_config(),
+        );
         assert!(matches!(result, Err(HpdError::InvariantViolation(_))));
     }
 
     #[test]
     fn test_set_spl_at_min_boundary_is_accepted() {
         let state = setup_state();
-        let out = reduce(&state, Transition::SetSpl(7), &setup_limits(), &setup_config())
-            .unwrap();
+        let out = reduce(
+            &state,
+            Transition::SetSpl(7),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
         assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(7_000));
     }
 
     #[test]
     fn test_set_spl_at_max_boundary_is_accepted() {
         let state = setup_state();
-        let out = reduce(&state, Transition::SetSpl(35), &setup_limits(), &setup_config())
-            .unwrap();
+        let out = reduce(
+            &state,
+            Transition::SetSpl(35),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
         assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(35_000));
     }
 
@@ -554,7 +674,12 @@ mod tests {
             sppt: PowerMilliwatts(20_000),
             fppt: Some(PowerMilliwatts(18_000)),
         };
-        let result = reduce(&state, Transition::SetEnvelope(bad), &setup_limits(), &setup_config());
+        let result = reduce(
+            &state,
+            Transition::SetEnvelope(bad),
+            &setup_limits(),
+            &setup_config(),
+        );
         assert!(matches!(result, Err(HpdError::InvariantViolation(_))));
     }
 
@@ -570,10 +695,19 @@ mod tests {
             sppt: PowerMilliwatts(13_800),
             fppt: Some(PowerMilliwatts(15_000)),
         };
-        let out = reduce(&state, Transition::SyncPowerTarget(real.clone()), &setup_limits(), &setup_config())
-            .unwrap();
+        let out = reduce(
+            &state,
+            Transition::SyncPowerTarget(real.clone()),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
         assert_eq!(out.new_state.power_target, real);
-        assert!(out.effects.is_empty(), "rollback must not produce effects, got {:?}", out.effects);
+        assert!(
+            out.effects.is_empty(),
+            "rollback must not produce effects, got {:?}",
+            out.effects
+        );
     }
 
     // ---------- Shutdown ----------
@@ -592,7 +726,10 @@ mod tests {
             &setup_config(),
         )
         .unwrap();
-        assert_eq!(out.new_state, state, "Shutdown must not mutate ProfileState");
+        assert_eq!(
+            out.new_state, state,
+            "Shutdown must not mutate ProfileState"
+        );
         assert_eq!(out.effects, vec![Effect::PersistState]);
     }
 

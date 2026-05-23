@@ -8,7 +8,7 @@ const BASE_PATH: &str = "/sys/class/firmware-attributes/asus-armoury/attributes"
 // Canonical attribute names exposed by the upstream `asus-armoury` driver.
 // Verified on ROG Xbox Ally X (board RC73XA) against Linux's
 // drivers/platform/x86/asus-armoury/.
-const ATTR_SPL:  &str = "ppt_pl1_spl";
+const ATTR_SPL: &str = "ppt_pl1_spl";
 const ATTR_SPPT: &str = "ppt_pl2_sppt";
 const ATTR_FPPT: &str = "ppt_pl3_fppt";
 
@@ -54,9 +54,11 @@ impl<S: SysfsIo> PowerEnvelope for AsusPowerBackend<S> {
         let spl_max = self.read_watts(ATTR_SPL, "max_value")?;
 
         // Fallbacks for hardware that doesn't expose the max attribute.
-        let sppt_max = self.read_watts(ATTR_SPPT, "max_value")
+        let sppt_max = self
+            .read_watts(ATTR_SPPT, "max_value")
             .unwrap_or(PowerMilliwatts(ASUS_DEFAULT_SPPT_MAX_MW));
-        let fppt_max = self.read_watts(ATTR_FPPT, "max_value")
+        let fppt_max = self
+            .read_watts(ATTR_FPPT, "max_value")
             .unwrap_or(PowerMilliwatts(ASUS_DEFAULT_FPPT_MAX_MW));
 
         Ok(PowerEnvelopeLimits {
@@ -94,23 +96,44 @@ impl<S: SysfsIo> PowerEnvelope for AsusPowerBackend<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hpd_sysfs::MockSysfs; // Simulator based on TempDir
     use hpd_capabilities::units::PowerMilliwatts;
+    use hpd_sysfs::MockSysfs; // Simulator based on TempDir
 
     #[test]
     fn test_asus_power_translation_mw_to_watts() {
         // 1. Arrange: Prepare system with fake files
         let mock = MockSysfs::new();
-        
+
         // MockSysfs strips the leading '/' when handling absolute paths.
-        mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/current_value", "15");
-        mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl2_sppt/current_value", "15");
-        mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl3_fppt/current_value", "15");
-        mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/min_value", "7");
-        mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/max_value", "35");
+        mock.create_file(
+            "sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/current_value",
+            "15",
+        );
+        mock.create_file(
+            "sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl2_sppt/current_value",
+            "15",
+        );
+        mock.create_file(
+            "sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl3_fppt/current_value",
+            "15",
+        );
+        mock.create_file(
+            "sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/min_value",
+            "7",
+        );
+        mock.create_file(
+            "sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/max_value",
+            "35",
+        );
         // Canonical max attributes for the boost rails.
-        mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl2_sppt/max_value", "43");
-        mock.create_file("sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl3_fppt/max_value", "55");
+        mock.create_file(
+            "sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl2_sppt/max_value",
+            "43",
+        );
+        mock.create_file(
+            "sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl3_fppt/max_value",
+            "55",
+        );
 
         let backend = AsusPowerBackend::new(mock.clone());
 
@@ -119,7 +142,9 @@ mod tests {
         assert_eq!(target.spl, PowerMilliwatts(15000));
         assert_eq!(target.sppt, PowerMilliwatts(15000));
 
-        let limits = backend.get_limits().expect("Must be able to read the limits");
+        let limits = backend
+            .get_limits()
+            .expect("Must be able to read the limits");
         assert_eq!(limits.spl_min, PowerMilliwatts(7000));
         assert_eq!(limits.spl_max, PowerMilliwatts(35000));
         // Regression for the ppt_fppt vs ppt_pl3_fppt bug (Audit §3.2 / Lote 4).
@@ -134,12 +159,20 @@ mod tests {
             fppt: Some(PowerMilliwatts(30000)),
         };
 
-        backend.set_target(&new_target).expect("Must be able to write the target");
+        backend
+            .set_target(&new_target)
+            .expect("Must be able to write the target");
 
         // Use the mock to spy what was written in file
-        let spl_written = mock.read_string("/sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/current_value")
+        let spl_written = mock
+            .read_string(
+                "/sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/current_value",
+            )
             .unwrap();
-        let sppt_written = mock.read_string("/sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl2_sppt/current_value")
+        let sppt_written = mock
+            .read_string(
+                "/sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl2_sppt/current_value",
+            )
             .unwrap();
 
         assert_eq!(spl_written, "20", "20000mW must translate to string '20'");

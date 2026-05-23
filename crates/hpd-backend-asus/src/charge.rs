@@ -1,4 +1,4 @@
-use hpd_capabilities::charge::{ChargeControl, MIN_CHARGE_THRESHOLD, MAX_CHARGE_THRESHOLD};
+use hpd_capabilities::charge::{ChargeControl, MAX_CHARGE_THRESHOLD, MIN_CHARGE_THRESHOLD};
 use hpd_capabilities::error::{BackendError, HpdError};
 use hpd_sysfs::SysfsIo;
 
@@ -21,9 +21,7 @@ impl<S: SysfsIo> AsusChargeBackend<S> {
 }
 
 impl<S: SysfsIo> ChargeControl for AsusChargeBackend<S> {
-
     fn is_ac_connected(&self) -> Result<bool, HpdError> {
-
         for path in AC_PATHS.iter() {
             if let Ok(val_str) = self.sysfs.read_string(path) {
                 return Ok(val_str.trim() == "1");

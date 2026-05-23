@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(test),
+    warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 //! Domain layer (workspace **L3**) of `hpd`.
 //!
 //! Owns the Transition → reducer → Effect → Executor state machine
@@ -6,10 +11,10 @@
 //! and the persistence layer.
 
 pub mod effect;
+pub mod executor;
 pub mod inference;
 pub mod invariants;
+pub mod persistence;
 pub mod reducer;
 pub mod state;
 pub mod transition;
-pub mod executor;
-pub mod persistence;

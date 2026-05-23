@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(test),
+    warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 //! Cross-crate error types for the `hpd` workspace.
 //!
 //! This crate sits at layer L-1: it depends on nothing internal and is

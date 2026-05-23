@@ -1,0 +1,8 @@
+[toolchain]
+# Tracked stable channel so CI and local builds stay in lockstep on
+# lints and language features. When a specific minimum version becomes
+# load-bearing (e.g. an MSRV is declared), pin to that version here
+# and document the reason in the commit that moves it.
+channel = "stable"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

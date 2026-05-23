@@ -1,15 +1,26 @@
 #[cfg(feature = "mock")]
 pub mod testing {
+    // Test fixture: `unwrap` / `expect` are intentional. A poisoned mutex
+    // or failing temp-dir creation here would indicate a broken test
+    // harness, not a runtime condition to recover from.
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use crate::io::SysfsIo;
+    use hpd_error::SysfsError;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use tempfile::TempDir;
-    use hpd_error::SysfsError;
-    use crate::io::SysfsIo;
 
     #[derive(Clone)]
     pub struct MockSysfs {
         root: Arc<TempDir>,
+    }
+
+    impl Default for MockSysfs {
+        fn default() -> Self {
+            Self::new()
+        }
     }
 
     impl MockSysfs {
@@ -46,8 +57,7 @@ pub mod testing {
 
         fn write_string(&self, path: impl AsRef<Path>, val: &str) -> Result<(), SysfsError> {
             let real_path = self.resolve(&path);
-            fs::write(&real_path, val)
-                .map_err(|e| SysfsError::from_io(path.as_ref(), e))
+            fs::write(&real_path, val).map_err(|e| SysfsError::from_io(path.as_ref(), e))
         }
 
         fn exists(&self, path: impl AsRef<Path>) -> bool {
