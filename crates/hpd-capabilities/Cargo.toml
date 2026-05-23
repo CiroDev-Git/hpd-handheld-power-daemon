@@ -3,6 +3,12 @@ name = "hpd-capabilities"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+# Exposes `testing::MockBackend` for downstream integration tests (e.g. hpd-core).
+# Pure additive: no extra runtime deps required.
+testing = []
+
 [dependencies]
 hpd-error = { path = "../hpd-error" }
 serde = { workspace = true }

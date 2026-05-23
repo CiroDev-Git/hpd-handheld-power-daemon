@@ -10,3 +10,10 @@ tracing = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 serde = { workspace = true }
 toml = { workspace = true }
+
+[dev-dependencies]
+# Re-pulls hpd-capabilities with the `testing` feature so integration tests
+# can use `hpd_capabilities::testing::MockBackend`. Cargo unifies features
+# across normal + dev deps, so production builds remain unaffected.
+hpd-capabilities = { path = "../hpd-capabilities", features = ["testing"] }
+tokio = { workspace = true, features = ["sync", "macros", "rt", "rt-multi-thread", "time", "fs"] }
