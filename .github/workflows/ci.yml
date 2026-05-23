@@ -29,6 +29,9 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install system dependencies (libudev)
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+
       - name: Cache cargo build artefacts
         uses: Swatinem/rust-cache@v2
 
