@@ -1,0 +1,265 @@
+name: Release
+
+# Triggered by annotated tag pushes only. Tag grammar (enforced by
+# the regex below + a runtime version-vs-manifest check in the build
+# job):
+#   v<MAJOR>.<MINOR>.<PATCH>                    → Public Release  (PROD)
+#   v<MAJOR>.<MINOR>.<PATCH>-rc.<N>             → Draft Release   (STG)
+#   v<MAJOR>.<MINOR>.<PATCH>-{alpha,beta}.<N>   → Draft Release   (STG)
+#
+# Anything else is ignored. See docs/release/PIPELINE.md for the design
+# and docs/release/RELEASE_CHECKLIST.md for the maintainer runbook.
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+
+# Cancel an in-flight release build if a new tag points to the same
+# ref. Tag-pushes are rare so this mostly protects against a fast
+# re-tag after a workflow failure.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# `gh release create` needs `contents: write`. Nothing else is needed.
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ----------------------------------------------------------------
+  # 1. Verify: re-run the four CI gates on the exact tagged commit.
+  #    Mirrors ci.yml but is intentionally a separate workflow so a
+  #    broken `main` can't sneak through into a release tag.
+  # ----------------------------------------------------------------
+  verify:
+    name: Verify (fmt, clippy, test, doc)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          components: rustfmt, clippy
+
+      - name: Install system dependencies (libudev)
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+
+      - name: Cache cargo build artefacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace
+
+      - name: cargo doc (deny warnings)
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps
+
+  # ----------------------------------------------------------------
+  # 2. Build + publish: assemble the x86_64-linux tarball, compute
+  #    checksums, optionally GPG-sign, and create the GitHub Release.
+  # ----------------------------------------------------------------
+  release:
+    name: Build x86_64-linux tarball + publish Release
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ------------------------------------------------------------
+      # Parse the tag and decide whether this is a pre-release.
+      # ------------------------------------------------------------
+      - name: Parse version from tag
+        id: parse
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          version="${tag#v}"
+          if [[ "$version" == *-* ]]; then
+            is_prerelease=true
+          else
+            is_prerelease=false
+          fi
+          echo "tag=$tag"             >> "$GITHUB_OUTPUT"
+          echo "version=$version"     >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"
+          echo "Parsed: tag=$tag version=$version is_prerelease=$is_prerelease"
+
+      # Guard against a tag whose version doesn't match the manifest.
+      # This is the single most common release mishap and the easiest
+      # to fix-forward — catching it here saves a broken Release.
+      - name: Verify workspace.package.version matches tag
+        run: |
+          set -euo pipefail
+          manifest_version=$(awk '
+            /^\[workspace.package\]/ { in_block = 1; next }
+            in_block && /^\[/        { exit }
+            in_block && /^version/   {
+              match($0, /"[^"]+"/);
+              v = substr($0, RSTART + 1, RLENGTH - 2);
+              print v;
+              exit
+            }
+          ' Cargo.toml)
+          tag_version="${{ steps.parse.outputs.version }}"
+          if [ "$manifest_version" != "$tag_version" ]; then
+            echo "::error::Tag version ($tag_version) does not match Cargo.toml workspace.package.version ($manifest_version). Bump Cargo.toml first, push, then re-tag."
+            exit 1
+          fi
+          echo "Manifest version matches tag: $manifest_version"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.85.0
+
+      - name: Install system dependencies (libudev)
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+
+      - name: Cache cargo build artefacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo build --release
+        run: cargo build --workspace --release
+
+      - name: Strip release binaries
+        run: |
+          strip target/release/hpd-daemon
+          strip target/release/hpdctl
+
+      # ------------------------------------------------------------
+      # Assemble the tarball. Layout is locked in
+      # docs/release/PIPELINE.md §3 — don't change without bumping
+      # the doc.
+      # ------------------------------------------------------------
+      - name: Assemble release tarball
+        id: assemble
+        run: |
+          set -euo pipefail
+          version="${{ steps.parse.outputs.version }}"
+          stage="hpd-${version}-x86_64-linux"
+          tarball="${stage}.tar.gz"
+
+          mkdir "$stage"
+          cp target/release/hpd-daemon target/release/hpdctl "$stage/"
+          cp install.sh uninstall.sh LICENSE README.md CHANGELOG.md "$stage/"
+          cp -r package "$stage/"
+
+          tar -czf "$tarball" "$stage"
+          sha256sum "$tarball" > SHA256SUMS
+
+          echo "stage=$stage"     >> "$GITHUB_OUTPUT"
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+
+          echo "Built artifacts:"
+          ls -la "$tarball" SHA256SUMS
+          echo "Tarball contents:"
+          tar -tzf "$tarball"
+
+      # ------------------------------------------------------------
+      # GPG signing is opt-in. The release ships without a .asc when
+      # the secrets are absent — checksums are still attached and
+      # the maintainer can sign manually after the fact (see
+      # docs/release/RELEASE_CHECKLIST.md §7).
+      # ------------------------------------------------------------
+      - name: GPG-sign SHA256SUMS (opt-in)
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE:  ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GPG_PRIVATE_KEY:-}" ]; then
+            echo "::notice::GPG signing skipped: no GPG_PRIVATE_KEY repository secret configured."
+            exit 0
+          fi
+          if [ -z "${GPG_PASSPHRASE:-}" ]; then
+            echo "::error::GPG_PRIVATE_KEY is set but GPG_PASSPHRASE is not. Configure both or neither."
+            exit 1
+          fi
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --yes --import
+          echo "$GPG_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback \
+              --passphrase-fd 0 \
+              --detach-sign --armor \
+              --output SHA256SUMS.asc \
+              SHA256SUMS
+          echo "Signature written:"
+          ls -la SHA256SUMS.asc
+
+      # ------------------------------------------------------------
+      # Extract the matching CHANGELOG section for use as Release
+      # notes. If the section isn't present (e.g. someone forgot to
+      # rename `[Unreleased]` → `[X.Y.Z]`), fall back to the
+      # annotated-tag message.
+      # ------------------------------------------------------------
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        run: |
+          set -euo pipefail
+          version="${{ steps.parse.outputs.version }}"
+          chmod +x scripts/extract-changelog-section.sh
+          if ./scripts/extract-changelog-section.sh "$version" > RELEASE_NOTES.md 2>extract.err; then
+            echo "::notice::Release notes extracted from CHANGELOG section [$version]"
+          else
+            echo "::warning::No CHANGELOG section [$version]. Falling back to annotated-tag message."
+            cat extract.err
+            git tag -l --format='%(contents)' "v${version}" > RELEASE_NOTES.md
+          fi
+          echo "----- RELEASE NOTES -----"
+          cat RELEASE_NOTES.md
+          echo "----- END -----"
+
+      # ------------------------------------------------------------
+      # Publish. RC tags create a Draft Release (invisible to
+      # non-maintainers); stable tags create a Public Release.
+      # ------------------------------------------------------------
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.parse.outputs.tag }}
+          VERSION: ${{ steps.parse.outputs.version }}
+          IS_PRERELEASE: ${{ steps.parse.outputs.is_prerelease }}
+          TARBALL: ${{ steps.assemble.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          args=(
+            "$TAG"
+            "$TARBALL"
+            "SHA256SUMS"
+            --title    "hpd v${VERSION}"
+            --notes-file RELEASE_NOTES.md
+          )
+          if [ -f SHA256SUMS.asc ]; then
+            args+=("SHA256SUMS.asc")
+          fi
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            # Drafts are invisible; mark as prerelease too so even if
+            # the maintainer accidentally publishes it the "Latest"
+            # badge stays on the last stable.
+            args+=(--draft --prerelease)
+          fi
+          echo "Creating release with args: ${args[*]}"
+          gh release create "${args[@]}"
+
+      # Upload the tarball + checksums as a workflow artifact too,
+      # so they survive a Release deletion and can be re-attached
+      # via `gh release upload` if anything goes wrong post-publish.
+      - name: Upload artifacts for safekeeping
+        uses: actions/upload-artifact@v4
+        with:
+          name: hpd-${{ steps.parse.outputs.version }}-x86_64-linux
+          path: |
+            ${{ steps.assemble.outputs.tarball }}
+            SHA256SUMS
+            SHA256SUMS.asc
+            RELEASE_NOTES.md
+          if-no-files-found: warn
+          retention-days: 90

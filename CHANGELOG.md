@@ -73,6 +73,30 @@ remediation plan at [`docs/audit/REMEDIATION_PLAN_V1.md`](docs/audit/REMEDIATION
   trip on `HPD_SIMULATOR=1` + `--features simulator` having to
   be passed together.
   *(Lote 47 — Audit V2 Phase 4)*
+- **`.github/workflows/release.yml`** + **`scripts/extract-changelog-section.sh`**.
+  Implements the GitHub-native release model designed in
+  [`docs/release/PIPELINE.md`](docs/release/PIPELINE.md). Triggers on
+  annotated tags matching `v<X>.<Y>.<Z>` (stable → Public Release) and
+  `v<X>.<Y>.<Z>-*` (RC/alpha/beta → Draft Release).
+  Two jobs: `verify` re-runs the four CI gates (fmt/clippy/test/doc) on
+  the exact tagged commit; `release` (a) guards that
+  `workspace.package.version` in `Cargo.toml` matches the tag, (b)
+  builds the stripped `x86_64-linux` binaries, (c) assembles
+  `hpd-X.Y.Z-x86_64-linux.tar.gz` with the layout locked in
+  PIPELINE.md §3 (binaries + install/uninstall scripts + LICENSE +
+  README + CHANGELOG + full `package/` tree), (d) computes
+  `SHA256SUMS`, (e) optionally GPG-signs it when
+  `GPG_PRIVATE_KEY` + `GPG_PASSPHRASE` repo secrets are configured
+  (skipped with a `::notice::` otherwise), (f) extracts the matching
+  CHANGELOG section as release notes (falls back to the
+  annotated-tag message if absent), and (g) calls
+  `gh release create` with `--draft --prerelease` for RCs or a plain
+  publish for stable. All artifacts are also uploaded as a 90-day
+  workflow artifact for safekeeping.
+  The helper script is standalone-runnable (`./scripts/extract-changelog-section.sh 1.0.0`),
+  exits 1 with a clear error and a list of available headers when
+  the version isn't found.
+  *(Lote 50 — Audit V2 Phase 5)*
 - **`docs/release/` — release pipeline design + runbook** (3 files,
   ~870 lines total). Three companion documents establishing the
   GitHub-native release model:
