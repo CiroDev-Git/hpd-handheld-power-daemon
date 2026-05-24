@@ -24,6 +24,14 @@ remediation plan at [`docs/audit/REMEDIATION_PLAN_V1.md`](docs/audit/REMEDIATION
   `hpd-daemon`. Documentation coverage now matches the L-1→L4
   workspace layout.
   *(Lote 43 — Audit V2 Phase 3)*
+- **Per-crate `README.md` for all 9 crates.** Each crate now ships a
+  one-page README covering purpose, workspace layer, dependencies,
+  a runnable example, and the `cargo doc` invocation that opens the
+  generated rustdoc. The daemon README additionally documents the
+  composition root's architecture diagram, signal handling, and the
+  on-disk filesystem layout. Useful entry-point for contributors who
+  want to navigate the workspace without opening every `lib.rs` first.
+  *(Lote 44 — Audit V2 Phase 3)*
 
 ---
 
