@@ -570,7 +570,6 @@ version = "1.0.0"
 dependencies = [
  "hpd-capabilities",
  "hpd-sysfs",
- "tracing",
 ]
 
 [[package]]

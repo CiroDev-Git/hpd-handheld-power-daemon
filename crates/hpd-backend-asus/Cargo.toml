@@ -11,7 +11,6 @@ description          = "ASUS armoury firmware-attribute backend for hpd (layer L
 [dependencies]
 hpd-capabilities = { path = "../hpd-capabilities" }
 hpd-sysfs = { path = "../hpd-sysfs" }
-tracing = { workspace = true }
 
 [dev-dependencies]
 hpd-sysfs = { path = "../hpd-sysfs", features = ["mock"] }
