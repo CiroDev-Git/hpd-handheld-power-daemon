@@ -83,8 +83,9 @@ async fn main() {
     // Parsing args from terminal
     let cli = Cli::parse();
 
-    // Trying to connect to Session Bus (the same one that daeomon use currently)
-
+    // System bus in production; session bus only when HPD_SIMULATOR
+    // is set (matches the daemon, which only binds to the session bus
+    // when itself built with the `simulator` feature).
     let connection_result = if std::env::var("HPD_SIMULATOR").is_ok() {
         zbus::Connection::session().await
     } else {

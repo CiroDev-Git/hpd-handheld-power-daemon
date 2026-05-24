@@ -2,8 +2,8 @@
 
 //! ACPI platform / cooling profile capability.
 
-use crate::error::HpdError;
 use crate::profile::ProfileName;
+use hpd_error::HpdError;
 
 /// Read and write the active ACPI platform profile
 /// (`/sys/firmware/acpi/platform_profile`).

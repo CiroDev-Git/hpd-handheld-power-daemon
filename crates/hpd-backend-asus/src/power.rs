@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use hpd_capabilities::error::{BackendError, HpdError};
 use hpd_capabilities::power::{PowerEnvelope, PowerEnvelopeLimits, PowerEnvelopeTarget};
 use hpd_capabilities::units::PowerMilliwatts;
+use hpd_error::{BackendError, HpdError};
 use hpd_sysfs::SysfsIo;
 
 const BASE_PATH: &str = "/sys/class/firmware-attributes/asus-armoury/attributes";
@@ -154,12 +154,14 @@ mod tests {
             .expect("Must be able to read the limits");
         assert_eq!(limits.spl_min, PowerMilliwatts(7000));
         assert_eq!(limits.spl_max, PowerMilliwatts(35000));
-        // Regression for the ppt_fppt vs ppt_pl3_fppt bug (Audit §3.2 / Lote 4).
-        // If get_limits reads the wrong attribute it falls back to 53000.
         assert_eq!(limits.sppt_max, PowerMilliwatts(43000));
+        // Regression for the ppt_fppt vs ppt_pl3_fppt bug (Audit §3.2 / Lote 4).
+        // If get_limits reads the wrong attribute it falls back silently to
+        // ASUS_DEFAULT_FPPT_MAX_MW (53000), so this `55_000` assertion is
+        // what proves the canonical attribute is being read.
         assert_eq!(limits.fppt_max, PowerMilliwatts(55000));
 
-        // 3. Act & Assert (Write): Write 25000mW y check that disk stored "25"
+        // 3. Act & Assert (Write): write 25000mW and check that disk stored "25".
         let new_target = PowerEnvelopeTarget {
             spl: PowerMilliwatts(20000),
             sppt: PowerMilliwatts(25000),

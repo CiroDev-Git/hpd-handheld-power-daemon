@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use hpd_capabilities::error::{BackendError, HpdError};
 use hpd_capabilities::fan::FanControl;
 use hpd_capabilities::units::Rpm;
+use hpd_error::{BackendError, HpdError};
 use hpd_sysfs::SysfsIo;
 
 /// Upper bound (exclusive) on hwmon device indices the kernel may assign.

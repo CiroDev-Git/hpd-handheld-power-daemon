@@ -2,7 +2,7 @@
 
 //! Battery charge-control capability.
 
-use crate::error::HpdError;
+use hpd_error::HpdError;
 
 /// Minimum charge end threshold the daemon will accept. Lower values
 /// would prevent some controllers from accepting writes at all.

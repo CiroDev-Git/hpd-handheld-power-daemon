@@ -10,11 +10,12 @@ rust-version.workspace = true
 description          = "Domain layer for hpd (L3): pure reducer + Executor + state machine + persistence."
 
 [dependencies]
+hpd-error        = { path = "../hpd-error" }
 hpd-capabilities = { path = "../hpd-capabilities" }
-tracing = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
-serde = { workspace = true }
-toml = { workspace = true }
+tracing          = { workspace = true }
+tokio            = { workspace = true, features = ["sync"] }
+serde            = { workspace = true }
+toml             = { workspace = true }
 
 [dev-dependencies]
 # Re-pulls hpd-capabilities with the `testing` feature so integration tests

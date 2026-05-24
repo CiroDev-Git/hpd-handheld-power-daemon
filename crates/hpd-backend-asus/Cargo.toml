@@ -10,8 +10,9 @@ rust-version.workspace = true
 description          = "ASUS armoury firmware-attribute backend for hpd (layer L1): TDP, charge, profile, fan."
 
 [dependencies]
+hpd-error        = { path = "../hpd-error" }
 hpd-capabilities = { path = "../hpd-capabilities" }
-hpd-sysfs = { path = "../hpd-sysfs" }
+hpd-sysfs        = { path = "../hpd-sysfs" }
 
 [dev-dependencies]
 hpd-sysfs = { path = "../hpd-sysfs", features = ["mock"] }

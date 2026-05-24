@@ -20,4 +20,4 @@ pub use io::SysfsIo;
 pub use real::RealSysfs;
 
 #[cfg(feature = "mock")]
-pub use mock::testing::MockSysfs;
+pub use mock::MockSysfs;

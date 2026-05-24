@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::HpdError;
+use hpd_error::HpdError;
 
 /// Conversion factor between watts (kernel-facing) and milliwatts
 /// (domain-facing). Centralised so the literal `1000` never appears in

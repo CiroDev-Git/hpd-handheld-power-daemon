@@ -2,8 +2,8 @@
 
 //! Fan telemetry capability.
 
-use crate::error::HpdError;
 use crate::units::Rpm;
+use hpd_error::HpdError;
 
 /// Read-only access to fan RPM readings.
 pub trait FanControl: Send + Sync {

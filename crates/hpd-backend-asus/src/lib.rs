@@ -8,12 +8,12 @@ pub mod profile;
 
 use hpd_capabilities::backend::HwBackend;
 use hpd_capabilities::charge::ChargeControl;
-use hpd_capabilities::error::HpdError;
 use hpd_capabilities::fan::FanControl;
 use hpd_capabilities::platform_profile::PlatformProfile;
 use hpd_capabilities::power::{PowerEnvelope, PowerEnvelopeLimits, PowerEnvelopeTarget};
 use hpd_capabilities::profile::ProfileName;
 use hpd_capabilities::units::Rpm;
+use hpd_error::HpdError;
 use hpd_sysfs::SysfsIo;
 
 pub struct AsusBackend<S: SysfsIo + Clone> {

@@ -4,11 +4,11 @@
 
 use tracing::info;
 
-use hpd_capabilities::error::HpdError;
 use hpd_capabilities::power::PowerEnvelopeLimits;
 use hpd_capabilities::power::PowerEnvelopeTarget;
 use hpd_capabilities::profile::{ProfileThresholds, RuntimeConfig, TdpPreset};
 use hpd_capabilities::units::PowerMilliwatts;
+use hpd_error::HpdError;
 
 use crate::effect::Effect;
 use crate::inference::infer_profile_from_spl;

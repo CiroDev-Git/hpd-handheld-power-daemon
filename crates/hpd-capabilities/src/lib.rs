@@ -26,7 +26,6 @@
 #![warn(missing_docs)]
 pub mod backend;
 pub mod charge;
-pub mod error;
 pub mod fan;
 pub mod platform_profile;
 pub mod power;

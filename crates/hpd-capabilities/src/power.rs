@@ -2,8 +2,8 @@
 
 //! TDP power-envelope capability.
 
-use crate::error::HpdError;
 use crate::units::PowerMilliwatts;
+use hpd_error::HpdError;
 use serde::{Deserialize, Serialize};
 
 /// Hardware-reported upper bounds for each rail of the power envelope.

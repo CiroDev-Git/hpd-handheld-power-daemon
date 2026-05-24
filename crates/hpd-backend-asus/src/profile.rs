@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use hpd_capabilities::error::HpdError;
 use hpd_capabilities::platform_profile::PlatformProfile;
 use hpd_capabilities::profile::ProfileName;
+use hpd_error::HpdError;
 use hpd_sysfs::SysfsIo;
 
 const PROFILE_PATH: &str = "/sys/firmware/acpi/platform_profile";

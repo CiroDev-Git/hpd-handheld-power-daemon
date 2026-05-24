@@ -3,8 +3,8 @@
 //! Cross-field invariants enforced before any [`crate::effect::Effect`]
 //! is dispatched.
 
-use hpd_capabilities::error::HpdError;
 use hpd_capabilities::power::PowerEnvelopeTarget;
+use hpd_error::HpdError;
 
 /// Validates `FPPT ≥ SPPT ≥ SPL`. Called by every reducer branch that
 /// produces a new [`PowerEnvelopeTarget`] before forwarding it as an

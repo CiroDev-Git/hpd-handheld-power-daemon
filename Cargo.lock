@@ -569,6 +569,7 @@ name = "hpd-backend-asus"
 version = "1.0.0"
 dependencies = [
  "hpd-capabilities",
+ "hpd-error",
  "hpd-sysfs",
 ]
 
@@ -594,6 +595,7 @@ name = "hpd-core"
 version = "1.0.0"
 dependencies = [
  "hpd-capabilities",
+ "hpd-error",
  "serde",
  "tokio",
  "toml",
