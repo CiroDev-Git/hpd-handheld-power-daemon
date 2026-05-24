@@ -5,27 +5,49 @@
     warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
 )]
 
+// Daemon sub-modules are only reachable through `run_daemon`, which is
+// only compiled in when at least one vendor backend is active. Without
+// a vendor feature the binary still builds (CI verifies this) but
+// every entry point below `main` is dead code — gate them so the
+// build stays warning-free under `--no-default-features`.
+#[cfg(feature = "vendor-asus")]
 mod config;
+#[cfg(feature = "vendor-asus")]
 mod probe;
+#[cfg(feature = "vendor-asus")]
 mod suspend;
 
-use std::path::PathBuf;
-
-use tokio::signal;
-use tokio::signal::unix::SignalKind;
-use tokio::sync::mpsc;
-use tracing::{error, info, warn};
+use tracing::error;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
+#[cfg(feature = "vendor-asus")]
+use std::path::PathBuf;
+
+#[cfg(feature = "vendor-asus")]
+use tokio::signal;
+#[cfg(feature = "vendor-asus")]
+use tokio::signal::unix::SignalKind;
+#[cfg(feature = "vendor-asus")]
+use tokio::sync::mpsc;
+#[cfg(feature = "vendor-asus")]
+use tracing::{info, warn};
+
+#[cfg(feature = "vendor-asus")]
 use hpd_capabilities::power::PowerEnvelopeTarget;
+#[cfg(feature = "vendor-asus")]
 use hpd_capabilities::profile::ProfileName;
+#[cfg(feature = "vendor-asus")]
 use hpd_core::executor::Executor;
+#[cfg(feature = "vendor-asus")]
 use hpd_core::persistence::StatePersister;
+#[cfg(feature = "vendor-asus")]
 use hpd_core::state::ProfileState;
+#[cfg(feature = "vendor-asus")]
 use hpd_core::transition::Transition;
 #[cfg(feature = "vendor-asus")]
 use hpd_sysfs::RealSysfs;
 
+#[cfg(feature = "vendor-asus")]
 use crate::config::DaemonConfig;
 
 #[cfg(feature = "vendor-asus")]
@@ -35,21 +57,39 @@ use hpd_backend_asus::AsusBackend;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Init logging (journald/terminal). Respects RUST_LOG; defaults to `hpd=info,warn`.
+    // Init logging unconditionally so the "no vendor compiled in" build
+    // still prints something useful before exiting. Respects RUST_LOG;
+    // defaults to `hpd=info,warn`.
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("hpd=info,warn"));
     let subscriber = FmtSubscriber::builder().with_env_filter(filter).finish();
     tracing::subscriber::set_global_default(subscriber)?;
 
+    // No vendor backend compiled in → log and exit cleanly. Build with
+    // `--features vendor-asus` (or just the default feature set) for a
+    // working daemon. Exit code 2 distinguishes "misconfigured build"
+    // from "hardware not supported" (exit 1).
+    #[cfg(not(feature = "vendor-asus"))]
+    {
+        error!("No vendor backend compiled in (build with --features vendor-asus). Exiting.");
+        std::process::exit(2);
+    }
+
+    #[cfg(feature = "vendor-asus")]
+    {
+        run_real_main().await
+    }
+}
+
+#[cfg(feature = "vendor-asus")]
+async fn run_real_main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting Handheld Power Daemon (hpd)...");
 
-    // 2. Detect hardware
+    // Detect hardware.
     let dmi = probe::read_system_dmi();
     info!(vendor = %dmi.board_vendor, board = %dmi.board_name, "Hardware detected");
 
-    // 3. Init L0 (I/O Real)
-
-    // --- Simulator mode (compiled in only with `--features simulator`) ---
+    // Simulator mode (compiled in only with `--features simulator`).
     #[cfg(feature = "simulator")]
     {
         if std::env::var("HPD_SIMULATOR").is_ok() {
@@ -94,30 +134,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "80",
             );
 
-            // Simulator currently only models ASUS firmware (enforced via
-            // the feature's `vendor-asus` dependency in Cargo.toml).
+            // Simulator only models ASUS firmware (enforced via
+            // simulator → vendor-asus in Cargo.toml).
             run_daemon(AsusBackend::new(mock)).await?;
             return Ok(());
         }
     }
-    // ---------------------------------
 
-    // --- Production mode ---
-    // 4. Choose L1 (Backend) based on detection. Each vendor block is
-    //    compile-time-gated by its `vendor-*` feature.
-    #[cfg(feature = "vendor-asus")]
-    {
-        if let Some(asus_model) = matches_asus_handheld(&dmi) {
-            info!("ASUS handheld detected: {:?}", asus_model);
-            run_daemon(AsusBackend::new(RealSysfs::new())).await?;
-            return Ok(());
-        }
+    // Production mode: pick the L1 backend by DMI detection.
+    if let Some(asus_model) = matches_asus_handheld(&dmi) {
+        info!("ASUS handheld detected: {:?}", asus_model);
+        run_daemon(AsusBackend::new(RealSysfs::new())).await?;
+        return Ok(());
     }
 
     error!("Hardware not supported or recognized (no vendor backend matched). Exiting gracefully.");
     std::process::exit(1);
 }
 
+#[cfg(feature = "vendor-asus")]
 async fn run_daemon<B>(backend: B) -> Result<(), Box<dyn std::error::Error>>
 where
     B: hpd_capabilities::backend::HwBackend + 'static,
@@ -368,6 +403,7 @@ where
 ///
 /// The task exits cleanly when the executor drops its state sender (i.e.
 /// during daemon shutdown), at which point `changed()` returns `Err`.
+#[cfg(feature = "vendor-asus")]
 async fn spawn_properties_changed_emitter(
     mut state_rx: tokio::sync::watch::Receiver<ProfileState>,
     iface_ref: zbus::InterfaceRef<hpd_dbus::service::PowerDaemonInterface>,
