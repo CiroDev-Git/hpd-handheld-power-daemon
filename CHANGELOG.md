@@ -11,7 +11,7 @@ remediation plan at [`docs/audit/REMEDIATION_PLAN_V1.md`](docs/audit/REMEDIATION
 
 ---
 
-## [Unreleased] — 1.0.0 target
+## [1.0.0] — 2026-05-24
 
 This release jumps directly from `0.1.0` to `1.0.0`. The intermediate
 `0.2.0` trajectory the project briefly advertised was abandoned: the
