@@ -6,20 +6,20 @@ on:
   pull_request:
 
 # Cancel in-progress runs when a new commit is pushed to the same ref —
-# saves a lot of CI minutes during rebase-heavy PR cycles.
+# saves CI minutes during rebase-heavy PR cycles.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -D warnings
 
 jobs:
-  # Primary job: fmt + clippy + tests + release build on Linux.
-  # All four steps must pass for the workspace to be considered green.
+  # Primary job: fmt + clippy + tests + doc + release build on Linux,
+  # with the default feature set. All steps must pass for the workspace
+  # to be considered green.
   build-test:
-    name: Linux (fmt, clippy, test, release)
+    name: Linux (fmt, clippy, test, doc, release)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,8 +44,23 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
+      - name: cargo doc (deny warnings)
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps
+
       - name: cargo build --release
         run: cargo build --workspace --release
+
+      - name: Upload release binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: hpd-linux-x86_64
+          path: |
+            target/release/hpd-daemon
+            target/release/hpdctl
+          if-no-files-found: error
+          retention-days: 30
 
   # Secondary job: the simulator build is what macOS / dev hosts use.
   # Verifying it compiles on macOS prevents accidental Linux-only
@@ -64,3 +79,59 @@ jobs:
 
       - name: cargo build (daemon + cli, simulator features)
         run: cargo build -p hpd-daemon -p hpd-cli --features hpd-daemon/simulator
+
+  # Feature matrix: verifies every documented build combination compiles
+  # warning-free. Catches the class of bug Lote 29 fixed (modules left
+  # reachable only behind a vendor cfg producing dead-code warnings on
+  # non-default builds) and any future drift.
+  feature-matrix:
+    name: Feature matrix (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: "no-default-features"
+            flags: "--no-default-features"
+          - label: "vendor-asus (explicit)"
+            flags: "--no-default-features --features vendor-asus"
+          - label: "simulator"
+            flags: "--no-default-features --features simulator"
+          - label: "all-features"
+            flags: "--all-features"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.85.0
+
+      - name: Install system dependencies (libudev)
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+
+      - name: Cache cargo build artefacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo build -p hpd-daemon ${{ matrix.flags }}
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo build -p hpd-daemon ${{ matrix.flags }}
+
+  # Supply-chain checks: known-vulnerable deps (cargo-audit against the
+  # RustSec advisory DB) + license / banned-crate / duplicate-version
+  # policy (cargo-deny against deny.toml at repo root).
+  supply-chain:
+    name: Supply chain (audit + deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.85.0
+
+      - name: cargo audit
+        uses: rustsec/audit-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: cargo deny
+        uses: EmbarkStudios/cargo-deny-action@v1

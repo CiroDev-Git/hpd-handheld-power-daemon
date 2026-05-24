@@ -1,0 +1,82 @@
+# cargo-deny configuration for the hpd workspace.
+#
+# Run locally with: `cargo deny check`.
+# CI invokes `EmbarkStudios/cargo-deny-action@v1` against this file —
+# see `.github/workflows/ci.yml`.
+#
+# The workspace itself ships under GPL-3.0-or-later (decision A of
+# REMEDIATION_PLAN_V2 §B). Transitive deps must use licences that are
+# compatible with GPLv3 redistribution; this file pins the allow-list.
+
+[graph]
+# Target multiple platforms so the audit covers the Linux production
+# binary and the macOS simulator dev path equally.
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "aarch64-unknown-linux-gnu" },
+    { triple = "x86_64-apple-darwin" },
+    { triple = "aarch64-apple-darwin" },
+]
+
+[advisories]
+# `cargo audit` covers the same advisory DB; cargo-deny inherits its
+# behaviour here. We want any unmaintained / vulnerable crate to fail
+# the build; yanked versions are merely a warning since they may not
+# yet have an advisory record.
+version = 2
+yanked  = "warn"
+ignore  = []
+
+[licenses]
+version    = "2"
+confidence-threshold = 0.85
+# Compatible licences for a GPL-3.0-or-later codebase. MIT, Apache,
+# BSD-2/3, ISC, Zlib, Unicode-DFS — all standard Rust ecosystem
+# permissive licences that compose freely with GPL. MPL-2.0 is
+# allowed because its file-level copyleft does not infect the whole
+# binary.
+allow = [
+    "GPL-3.0",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "LGPL-3.0",
+    "LGPL-3.0-only",
+    "LGPL-3.0-or-later",
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",
+]
+# Explicit deny list: licences known to be incompatible with GPL
+# redistribution. Empty by default; populate if a transitive dep
+# starts pulling something non-redistributable.
+exceptions = []
+
+[bans]
+# Multiple major versions of the same crate is a smell — usually
+# means a transitive dep is pinning an older line. `warn` rather
+# than deny so the CI doesn't refuse to build over a third-party
+# transient, but the warning is visible.
+multiple-versions = "warn"
+# Wildcard dep specs in our own manifests are forbidden — we want
+# every version pin to be intentional.
+wildcards         = "deny"
+deny              = []
+skip              = []
+skip-tree         = []
+
+[sources]
+# Only crates.io is allowed as a source by default. Pull from git
+# only when we explicitly opt in — keeps supply-chain surface small.
+unknown-registry = "deny"
+unknown-git      = "deny"
+allow-registry   = ["https://github.com/rust-lang/crates.io-index"]
+allow-git        = []
