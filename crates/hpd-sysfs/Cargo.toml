@@ -16,4 +16,4 @@ mock = ["dep:tempfile"]
 [dependencies]
 hpd-error = { path = "../hpd-error" }
 tracing = { workspace = true }
-tempfile = { version = "3.10", optional = true }
+tempfile = { workspace = true, optional = true }

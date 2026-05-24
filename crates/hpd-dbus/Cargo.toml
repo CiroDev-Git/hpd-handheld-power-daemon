@@ -17,8 +17,8 @@ default = []
 simulator = []
 
 [dependencies]
-hpd-core = { path = "../hpd-core" }
+hpd-core         = { path = "../hpd-core" }
 hpd-capabilities = { path = "../hpd-capabilities" }
-zbus = "4.1"
-tokio = { workspace = true, features = ["sync"] }
-tracing = { workspace = true }
+zbus             = { workspace = true }
+tokio            = { workspace = true, features = ["sync"] }
+tracing          = { workspace = true }

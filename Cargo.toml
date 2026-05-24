@@ -35,14 +35,28 @@ repository   = "https://github.com/CiroDev-Git/hpd-handheld-power-daemon"
 homepage     = "https://github.com/CiroDev-Git/hpd-handheld-power-daemon"
 
 [workspace.dependencies]
-# Error handling (rule: zero unwrap, explicit errors)
+# Error handling (rule: zero unwrap, explicit errors).
 thiserror = "1.0"
-tracing = "0.1"
 
-# Async & I/O
-tokio = { version = "1.36", features = ["full"] }
-zbus = "4.1" # D-Bus and PPD integration
+# Logging — tracing core + the subscriber the daemon installs at startup.
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# Parsing & serialization
+# Async runtime + D-Bus + udev. zbus stays at 4.x; tokio is pinned to a
+# specific minor because the executor's MSRV depends on it. tokio-udev
+# is only pulled in by hpd-netlink under cfg(target_os = "linux").
+tokio        = { version = "1.36", features = ["full"] }
+zbus         = "4.1"
+tokio-udev   = "0.7"
+futures-util = "0.3"
+
+# Parsing & serialization.
 serde = { version = "1.0", features = ["derive"] }
-toml = "0.8"
+toml  = "0.8"
+
+# CLI argument parsing — only consumed by hpd-cli.
+clap = { version = "4.4", features = ["derive"] }
+
+# Test-only fixture deps. `tempfile` is the on-disk root for MockSysfs;
+# pulled in optionally by hpd-sysfs behind its `mock` feature.
+tempfile = "3.10"

@@ -9,11 +9,11 @@ homepage.workspace   = true
 description          = "udev power-supply event monitor for hpd (layer L0; Linux-only, no-op stub on other platforms)."
 
 [dependencies]
-tokio = { version = "1", features = ["rt", "macros", "net"] }
-futures-util = "0.3"
-tracing = "0.1"
-hpd-core = { path = "../hpd-core" }
+tokio        = { workspace = true, features = ["rt", "macros", "net"] }
+futures-util = { workspace = true }
+tracing      = { workspace = true }
+hpd-core     = { path = "../hpd-core" }
 
-# Only download and compile udev on Linux
+# Only download and compile udev on Linux.
 [target.'cfg(target_os = "linux")'.dependencies]
-tokio-udev = "0.7"
+tokio-udev = { workspace = true }
