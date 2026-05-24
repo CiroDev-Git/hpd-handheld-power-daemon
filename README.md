@@ -204,6 +204,23 @@ live in [`CHANGELOG.md`](CHANGELOG.md).
 
 ---
 
+## Contributing
+
+Bug reports, vendor backends, doc improvements, and CI work are all
+welcome. Start with [`CONTRIBUTING.md`](CONTRIBUTING.md) — it covers
+the four local gates CI enforces, the commit/CHANGELOG conventions,
+the SemVer policy on the public surface, and the recipes for adding
+a new D-Bus method or a new vendor backend.
+
+Per-OS development guides live under [`docs/dev/`](docs/dev):
+
+- Linux: [`docs/dev/LINUX.md`](docs/dev/LINUX.md) — production-shape
+  + iterative `cargo run` workflows.
+- macOS: [`docs/dev/MACOS.md`](docs/dev/MACOS.md) — simulator-first
+  workflow against the session D-Bus.
+
+---
+
 ## License
 
 `GPL-3.0-or-later`. Full text in [`LICENSE`](LICENSE). Contributions

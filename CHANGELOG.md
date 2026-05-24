@@ -73,6 +73,25 @@ remediation plan at [`docs/audit/REMEDIATION_PLAN_V1.md`](docs/audit/REMEDIATION
   trip on `HPD_SIMULATOR=1` + `--features simulator` having to
   be passed together.
   *(Lote 47 — Audit V2 Phase 4)*
+- **`CONTRIBUTING.md` — contribution guide** (~370 lines, 12
+  sections). The contract between contributors and maintainers:
+  scope (welcome vs. out-of-scope contributions), prerequisites,
+  the four local gates CI enforces (`fmt`/`clippy`/`test`/`doc`)
+  with the workspace.lints rules they translate into, hard rules
+  (no `unsafe_code`, no `.unwrap()`/`.expect()`/`panic!` in
+  production code, pure reducer, polkit-before-enqueue, SPDX
+  headers, `missing_docs`), commit conventions (imperative
+  subject ≤70 chars, body wrapped at 72, audit-lote tag,
+  co-author trailer, atomic commits), CHANGELOG hygiene
+  (Keep-a-Changelog format, breaking-by-audience subsection,
+  release rename ritual), the SemVer policy on the public
+  surface (D-Bus interface, CLI, on-disk state, polkit actions,
+  config), short-form recipes for adding a D-Bus method or
+  vendor backend cross-linking the full version in
+  `docs/ARCHITECTURE.md`, a copy-pasteable PR checklist, review
+  process, security disclosure channel, and code of conduct. The
+  root README now points contributors here as the entry-point.
+  *(Lote 48 — Audit V2 Phase 4)*
 
 ---
 
