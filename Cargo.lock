@@ -575,16 +575,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hpd-backend-lenovo"
-version = "1.0.0"
-dependencies = [
- "hpd-capabilities",
- "hpd-sysfs",
- "thiserror",
- "tracing",
-]
-
-[[package]]
 name = "hpd-backend-valve"
 version = "1.0.0"
 dependencies = [
@@ -630,7 +620,6 @@ version = "1.0.0"
 dependencies = [
  "futures-util",
  "hpd-backend-asus",
- "hpd-backend-lenovo",
  "hpd-backend-valve",
  "hpd-capabilities",
  "hpd-core",

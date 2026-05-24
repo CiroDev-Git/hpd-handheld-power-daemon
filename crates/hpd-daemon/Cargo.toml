@@ -15,7 +15,6 @@ default = ["vendor-asus"]
 # the live DMI. With none enabled the daemon still builds but exits at
 # startup since no backend can be selected.
 vendor-asus   = ["dep:hpd-backend-asus"]
-vendor-lenovo = ["dep:hpd-backend-lenovo"]
 vendor-valve  = ["dep:hpd-backend-valve"]
 # Build-time switch that compiles in the MockSysfs path used by
 # `HPD_SIMULATOR=1` on macOS / dev hosts without real sysfs. Implies
@@ -28,7 +27,6 @@ hpd-capabilities = { path = "../hpd-capabilities" }
 hpd-core = { path = "../hpd-core" }
 hpd-sysfs = { path = "../hpd-sysfs" }
 hpd-backend-asus   = { path = "../hpd-backend-asus",   optional = true }
-hpd-backend-lenovo = { path = "../hpd-backend-lenovo", optional = true }
 hpd-backend-valve  = { path = "../hpd-backend-valve",  optional = true }
 
 # System tools

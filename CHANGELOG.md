@@ -370,6 +370,16 @@ strictly.
 
 ### Removed
 
+- **`hpd-backend-lenovo` placeholder crate.** It only implemented
+  `PowerEnvelope` (returning `FeatureUnsupported`), never implemented
+  `HwBackend`, and was never wired into the daemon's vendor cascade —
+  enabling `vendor-lenovo` produced a daemon that would refuse to
+  detect any hardware. Shipping it as a public `1.0.0` crate would
+  lock the project to honour a contract it never delivered. The
+  matching `vendor-lenovo` Cargo feature on `hpd-daemon` is also
+  removed. Reintroduce as a real backend in a 1.x minor when an
+  implementation lands.
+  *(Lote 26 — Audit V2 §4.16.1)*
 - **`SystemPreset` enum** and the `silent` / `performance` / `turbo`
   string aliases that mapped to it. Replaced by `TdpPreset` (see
   Added). No backwards-compat aliases kept.
