@@ -138,10 +138,25 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: cargo audit
-        uses: rustsec/audit-check@v1
+      # Cache the compiled cargo-audit binary across runs. Keyed on the
+      # runner OS + stable toolchain date so it refreshes when stable bumps.
+      - name: Cache cargo-audit binary
+        id: cache-audit
+        uses: actions/cache@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}-${{ steps.toolchain.outputs.cachekey }}
+
+      - name: Install cargo-audit
+        if: steps.cache-audit.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit
+
+      # Run scoped to Linux targets only: advisories marked `os = ["windows"]`
+      # (e.g. RUSTSEC-2024-0019 / mio named-pipes) are not relevant to this
+      # Linux-only daemon and are filtered out by --target. The deny.toml
+      # [graph] section already excludes Windows for the same reason.
+      - name: cargo audit
+        run: cargo audit --target x86_64-unknown-linux-gnu
 
       - name: cargo deny
         uses: EmbarkStudios/cargo-deny-action@v1
