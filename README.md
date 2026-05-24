@@ -31,7 +31,7 @@ Everything sits behind a single D-Bus interface
 | ASUS ROG Ally X        | `hpd-backend-asus`   | ✅ | ✅ | ✅ | ✅ | **Stable** |
 | ASUS ROG Xbox Ally X   | `hpd-backend-asus`   | ✅ | ✅ | ✅ | ✅ | **Stable** (primary test target — board `RC73XA`) |
 | Lenovo Legion Go       | —                    | — | — | — | — | Planned — no backend crate yet ([open an issue](https://github.com/CiroDev-Git/hpd-handheld-power-daemon/issues) to contribute) |
-| Valve Steam Deck       | `hpd-backend-valve`  | — | — | — | — | Placeholder crate, no backend code yet |
+| Valve Steam Deck       | —                    | — | — | — | — | Planned — no backend crate yet ([open an issue](https://github.com/CiroDev-Git/hpd-handheld-power-daemon/issues) to contribute) |
 
 Detection is driven by DMI (`/sys/class/dmi/id/`). Adding a new vendor
 means creating a sibling crate that implements the four L2 traits from
@@ -177,7 +177,7 @@ L0   hpd-sysfs          Sysfs read/write trait + RealSysfs + MockSysfs
      hpd-netlink        udev AC/DC event monitor (Linux-only)
 L2   hpd-capabilities   Trait surface for L1 backends + value types
 L1   hpd-backend-asus   ASUS armoury firmware-attribute backend
-     hpd-backend-valve            Stub (Lenovo placeholder removed in 1.0; reintroduce as 1.x minor)
+                                  (Lenovo and Valve placeholder backends removed in 1.0; reintroduce as 1.x minors when real implementations land)
 L3   hpd-core           Pure reducer + Executor + state machine
 L4   hpd-dbus           zbus interface
      hpd-cli (hpdctl)   D-Bus client

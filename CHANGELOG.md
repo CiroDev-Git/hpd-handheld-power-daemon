@@ -380,6 +380,13 @@ strictly.
   removed. Reintroduce as a real backend in a 1.x minor when an
   implementation lands.
   *(Lote 26 — Audit V2 §4.16.1)*
+- **`hpd-backend-valve` placeholder crate.** Same shape as the
+  Lenovo crate above: stub implementation, unwired in `main.rs`,
+  shipping as `1.0.0` would have committed the project to an
+  interface contract it never delivered. The matching `vendor-valve`
+  Cargo feature on `hpd-daemon` is also removed. Reintroduce as a
+  real Steam Deck backend in a 1.x minor.
+  *(Lote 27 — Audit V2 §4.16.2)*
 - **`SystemPreset` enum** and the `silent` / `performance` / `turbo`
   string aliases that mapped to it. Replaced by `TdpPreset` (see
   Added). No backwards-compat aliases kept.
