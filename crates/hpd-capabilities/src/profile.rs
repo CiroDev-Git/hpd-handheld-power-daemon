@@ -65,7 +65,14 @@ impl FromStr for ProfileName {
 /// Cut-off SPL fractions used by the reducer's auto-profile inference:
 /// SPL below `low_frac` → `PowerSaver`, between → `Balanced`, above
 /// `high_frac` → `Performance`. Both fields are in `[0.0, 1.0]`.
+///
+/// `#[serde(default)]` at struct level so a partial TOML (e.g.
+/// `low_frac` set without `high_frac`) falls back to the missing
+/// field's default rather than erroring. Combined with the
+/// `#[serde(flatten)]` carrier in `hpd_daemon::config::DaemonConfig`
+/// this is what makes the on-disk config "any subset is valid".
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ProfileThresholds {
     /// Fraction of the SPL range below which the auto-inferred profile is
     /// `PowerSaver`.
@@ -99,7 +106,14 @@ impl Default for ProfileThresholds {
 /// Defined in `hpd-capabilities` rather than `hpd-core` so the
 /// `Transition` enum can carry it without `hpd-core` needing to know
 /// about TOML or the daemon's on-disk schema.
+///
+/// `#[serde(default)]` at struct level so this type composes safely
+/// inside a `#[serde(flatten)]` carrier (see
+/// `hpd_daemon::config::DaemonConfig`): a TOML that sets only some of
+/// the runtime fields falls back to defaults for the rest instead of
+/// erroring.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct RuntimeConfig {
     /// Cooling-profile inference cut-offs (see [`ProfileThresholds`]).
     pub profile_thresholds: ProfileThresholds,

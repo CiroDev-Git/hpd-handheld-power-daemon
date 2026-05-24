@@ -8,35 +8,59 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tracing::{info, warn};
 
 use hpd_capabilities::charge::DEFAULT_CHARGE_THRESHOLD;
-use hpd_capabilities::profile::{ProfileThresholds, RuntimeConfig};
+use hpd_capabilities::profile::RuntimeConfig;
 use hpd_core::executor::TRANSITION_CHANNEL_CAPACITY;
 
 /// Daemon runtime configuration.
 ///
-/// `#[serde(default)]` at both struct and (transitively) field level
-/// means a missing field falls back to its `Default` value. That keeps
-/// old TOMLs valid as the schema grows.
+/// Two field groups:
 ///
-/// Field groups:
-/// * `state_path`, `channel_capacity` — startup-only; logged with a
-///   warning if changed via `Transition::ConfigReload` since they can
-///   only take effect at the next daemon restart.
-/// * `default_charge_threshold` — seeds the very first persisted state
-///   when the backend can't report the current value. Reload is a no-op.
-/// * everything wrapped in `RuntimeConfig` — fully hot-swappable.
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+/// * **Startup-only fields** (`state_path`, `channel_capacity`,
+///   `default_charge_threshold`) live directly on this struct. A
+///   `Transition::ConfigReload` cannot change them in-flight — the
+///   daemon logs that a restart is required.
+/// * **Runtime-tunable fields** live inside the embedded
+///   [`RuntimeConfig`]. `#[serde(flatten)]` keeps the on-disk TOML
+///   schema flat (operators still write `sppt_factor = 1.20` at the
+///   top level, not `[runtime] sppt_factor = 1.20`) so this refactor
+///   is *zero migration* for installed configs.
+///
+/// `#[serde(default)]` at struct level — and on both `RuntimeConfig`
+/// and `ProfileThresholds` underneath — means any subset of fields is
+/// valid. Adding new fields never breaks an old config.
+///
+/// `Serialize` is deliberately **not** derived: nothing in the tree
+/// writes a `DaemonConfig` back to disk today. Add it the day a
+/// `--dump-config` (or similar) command lands, not before.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct DaemonConfig {
+    /// Where the daemon persists `ProfileState`. Under systemd this is
+    /// normally overridden by the `STATE_DIRECTORY` env var injected
+    /// via `StateDirectory=hpd`.
     pub state_path: PathBuf,
+
+    /// Bound on the internal `Transition` mpsc channel. Startup-only.
     pub channel_capacity: usize,
+
+    /// Charge end threshold to seed the very first persisted state on
+    /// hosts where no state file exists yet and the backend cannot
+    /// report the current value. Startup-only.
     pub default_charge_threshold: u8,
-    pub profile_thresholds: ProfileThresholds,
-    pub sppt_factor: f32,
-    pub fppt_factor: f32,
+
+    /// Hot-swappable subset: thresholds + SPPT/FPPT boost multipliers
+    /// the reducer reads on every transition. Replaced wholesale on
+    /// `Transition::ConfigReload(RuntimeConfig)`.
+    ///
+    /// `#[serde(flatten)]` exposes its fields at the top level of the
+    /// TOML so existing configs do not need to nest them under a
+    /// `[runtime]` table.
+    #[serde(flatten)]
+    pub runtime: RuntimeConfig,
 }
 
 impl Default for DaemonConfig {
@@ -45,9 +69,7 @@ impl Default for DaemonConfig {
             state_path: PathBuf::from("/var/lib/hpd/state.toml"),
             channel_capacity: TRANSITION_CHANNEL_CAPACITY,
             default_charge_threshold: DEFAULT_CHARGE_THRESHOLD,
-            profile_thresholds: ProfileThresholds::DEFAULT,
-            sppt_factor: RuntimeConfig::DEFAULT.sppt_factor,
-            fppt_factor: RuntimeConfig::DEFAULT.fppt_factor,
+            runtime: RuntimeConfig::DEFAULT,
         }
     }
 }
@@ -84,13 +106,100 @@ impl DaemonConfig {
     }
 
     /// Project the hot-swappable subset that travels with
-    /// `Transition::ConfigReload`. Daemon-only fields (paths, channel
-    /// sizing, startup-only defaults) stay behind.
+    /// `Transition::ConfigReload`. After Lote 36 this is a thin clone
+    /// of the embedded `runtime` field — kept as a method so the
+    /// callsites in `main.rs` (and any future ones) read intent
+    /// rather than poking the struct internals.
     pub fn to_runtime(&self) -> RuntimeConfig {
-        RuntimeConfig {
-            profile_thresholds: self.profile_thresholds.clone(),
-            sppt_factor: self.sppt_factor,
-            fppt_factor: self.fppt_factor,
-        }
+        self.runtime.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Test code may use `.unwrap()` / `.expect()` / `panic!` freely;
+    // the strict bar in `[workspace.lints.clippy]` applies to
+    // production code only.
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use hpd_capabilities::profile::ProfileThresholds;
+
+    /// `#[serde(flatten)]` carries the on-disk schema invariant: the
+    /// runtime sub-fields live at the *top* of the TOML document, not
+    /// inside a `[runtime]` table. Locks the format so operators'
+    /// existing configs keep working across the Lote 36 refactor.
+    #[test]
+    fn flatten_keeps_runtime_fields_at_top_level() {
+        let toml = r#"
+state_path = "/tmp/foo.toml"
+sppt_factor = 1.25
+
+[profile_thresholds]
+low_frac  = 0.40
+high_frac = 0.80
+"#;
+        let cfg: DaemonConfig = toml::from_str(toml).expect("parse");
+        assert_eq!(cfg.state_path, PathBuf::from("/tmp/foo.toml"));
+        // Runtime sub-fields parsed from flat top-level keys.
+        assert_eq!(cfg.runtime.sppt_factor, 1.25);
+        assert_eq!(cfg.runtime.profile_thresholds.low_frac, 0.40);
+        assert_eq!(cfg.runtime.profile_thresholds.high_frac, 0.80);
+        // Missing runtime sub-field took the default.
+        assert_eq!(cfg.runtime.fppt_factor, RuntimeConfig::DEFAULT.fppt_factor);
+        // Missing startup-only field took the default.
+        assert_eq!(
+            cfg.channel_capacity,
+            DaemonConfig::default().channel_capacity
+        );
+    }
+
+    /// Survival invariant (REMEDIATION_V1 §D): an empty config must
+    /// parse to `Default::default()`. Combined with the flatten test
+    /// above this proves the "any subset is valid" property.
+    #[test]
+    fn empty_toml_parses_to_default() {
+        let cfg: DaemonConfig = toml::from_str("").expect("empty TOML parses");
+        assert_eq!(cfg, DaemonConfig::default());
+    }
+
+    /// Round-trip against the shipped operator template — the file
+    /// `install.sh` deploys as `/etc/hpd/config.toml.example`. If a
+    /// future edit silently changes the schema, this test breaks. We
+    /// embed the file contents at compile time so the test does not
+    /// need the file at runtime (CI sandboxing is fine).
+    #[test]
+    fn shipped_example_template_parses_to_defaults() {
+        const EXAMPLE: &str = include_str!("../../../package/hpd-example.toml");
+        let cfg =
+            toml::from_str::<DaemonConfig>(EXAMPLE).expect("shipped hpd-example.toml must parse");
+        assert_eq!(
+            cfg,
+            DaemonConfig::default(),
+            "every field in the example template is commented out, so the parsed config must match Default::default()"
+        );
+    }
+
+    /// `to_runtime` is the projection that travels with a
+    /// `Transition::ConfigReload`. Before Lote 36 it built a new
+    /// `RuntimeConfig` field-by-field; after the refactor it is just
+    /// a clone of the embedded field. Confirms the simplification did
+    /// not change observable behaviour.
+    #[test]
+    fn to_runtime_clones_embedded_runtime_verbatim() {
+        let cfg = DaemonConfig {
+            state_path: PathBuf::from("/var/lib/hpd/state.toml"),
+            channel_capacity: 64,
+            default_charge_threshold: 90,
+            runtime: RuntimeConfig {
+                profile_thresholds: ProfileThresholds {
+                    low_frac: 0.25,
+                    high_frac: 0.75,
+                },
+                sppt_factor: 1.10,
+                fppt_factor: 1.30,
+            },
+        };
+        assert_eq!(cfg.to_runtime(), cfg.runtime);
     }
 }
