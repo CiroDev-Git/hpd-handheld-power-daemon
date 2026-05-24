@@ -73,6 +73,38 @@ remediation plan at [`docs/audit/REMEDIATION_PLAN_V1.md`](docs/audit/REMEDIATION
   trip on `HPD_SIMULATOR=1` + `--features simulator` having to
   be passed together.
   *(Lote 47 — Audit V2 Phase 4)*
+- **`docs/release/` — release pipeline design + runbook** (3 files,
+  ~870 lines total). Three companion documents establishing the
+  GitHub-native release model:
+  - `PIPELINE.md` (~310 lines) — the *why*: three environments
+    (QA = main CI, STG = `vX.Y.Z-rc.N` draft Release, PROD =
+    `vX.Y.Z` public Release), tag conventions, artifact contents
+    (tarball + checksums + optional GPG sig), per-environment
+    workflow behaviour, GPG signing as opt-in via repo secrets,
+    AUR distribution model, immutable-release rollback policy,
+    permissions model, explicit non-goals (no nightlies, no
+    .deb/.rpm in v1.0, no containers, no release bot), and an
+    end-to-end ASCII diagram.
+  - `VERSIONING.md` (~175 lines) — the *bump rules*: strict
+    SemVer-2.0 from v1.0.0 onward, exact definition of "the
+    public surface", a top-to-bottom decision matrix mapping
+    every change category to MAJOR/MINOR/PATCH, the project's
+    deliberate "no deprecation aliases" policy with rationale,
+    pre-release suffix grammar, and four worked examples
+    (including hypotheticals from the project's own surface).
+  - `RELEASE_CHECKLIST.md` (~385 lines) — the maintainer's
+    literal command-by-command runbook: prerequisites + repo
+    secrets, day-of pre-release sanity (all four CI gates +
+    feature matrix + supply-chain), version pick walking
+    VERSIONING.md, bump ritual across `Cargo.toml` +
+    `Cargo.lock` + `CHANGELOG.md`, annotated-tag creation with
+    HEREDOC message template, `release.yml` watch step, AUR
+    manual fallback for both source and binary packages,
+    post-release housekeeping (re-open `[Unreleased]`, announce,
+    48-hour bug watch), recovery recipes for four common
+    failure modes, and a time budget table.
+  Cross-linked from `CONTRIBUTING.md` and the root `README.md`.
+  *(Lote 49 — Audit V2 Phase 5)*
 - **`CONTRIBUTING.md` — contribution guide** (~370 lines, 12
   sections). The contract between contributors and maintainers:
   scope (welcome vs. out-of-scope contributions), prerequisites,

@@ -1,0 +1,386 @@
+# Release checklist
+
+> The literal command-by-command runbook for cutting a release.
+> Companion to [`PIPELINE.md`](PIPELINE.md) (the why) and
+> [`VERSIONING.md`](VERSIONING.md) (the bump rules).
+>
+> Only maintainers should follow this. If you're a contributor,
+> stop here and read [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md).
+
+---
+
+## 0. Prerequisites (one-time)
+
+Confirm once per machine before your first release:
+
+```bash
+# 1. You can push to origin
+git remote -v | grep CiroDev-Git/hpd-handheld-power-daemon
+
+# 2. You have annotated-tag permission (i.e. push to refs/tags/*)
+git ls-remote --tags origin | head -5
+
+# 3. Your git identity is set
+git config user.name && git config user.email
+
+# 4. (Optional but recommended) Your GPG key is imported and
+#    you know its keyid for the SHA256SUMS signing step:
+gpg --list-secret-keys --keyid-format LONG
+```
+
+Recommended repo-level secrets (configure under **Settings → Secrets
+and variables → Actions**):
+
+| Secret              | Purpose                                                              |
+|---------------------|----------------------------------------------------------------------|
+| `GPG_PRIVATE_KEY`   | Used by `release.yml` to GPG-sign `SHA256SUMS`. Optional.            |
+| `GPG_PASSPHRASE`    | Passphrase for the key above.                                        |
+| `AUR_SSH_KEY`       | Private SSH key with push access to the two AUR packages. Optional.  |
+
+If none are configured, the release ships unsigned and AUR is
+updated manually (see [§5](#5-aur-update-manual-fallback)).
+
+---
+
+## 1. Pre-release sanity (the day of the release)
+
+Run **all** of these and confirm green before touching anything else:
+
+```bash
+# Sync with origin and start from a clean main
+git fetch --tags origin
+git checkout main
+git pull --ff-only origin main
+git status                              # must show "nothing to commit, working tree clean"
+
+# All four CI gates
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+
+# Feature matrix
+cargo build -p hpd-daemon
+cargo build -p hpd-daemon --no-default-features
+cargo build -p hpd-daemon --features simulator
+
+# Supply-chain (CI also runs these)
+cargo audit
+cargo deny check
+```
+
+If anything is yellow or red: **stop**. Fix on `main` first, then
+restart from the top of §1.
+
+---
+
+## 2. Pick the new version
+
+Walk [`VERSIONING.md` §3](VERSIONING.md#3-decision-matrix) for every
+entry under `## [Unreleased]` in `CHANGELOG.md`. The highest required
+bump wins.
+
+```
+new_version=1.1.0          # example
+```
+
+(For an RC, use e.g. `new_version=1.1.0-rc.1`.)
+
+---
+
+## 3. Bump version + finalise CHANGELOG
+
+Three edits, one commit.
+
+### 3a. `Cargo.toml`
+
+In the workspace root `Cargo.toml`, update `[workspace.package]`:
+
+```toml
+[workspace.package]
+version = "1.1.0"          # ← bump here
+```
+
+Verify nothing else needs updating:
+
+```bash
+grep -nR 'version = ' crates/*/Cargo.toml | grep -v 'workspace = true'
+# Should print nothing — every crate inherits from workspace.package.
+```
+
+### 3b. `Cargo.lock`
+
+```bash
+cargo update --workspace --offline    # refresh lockfile to match
+git diff Cargo.lock                   # sanity check
+```
+
+### 3c. `CHANGELOG.md`
+
+Rename the floating `## [Unreleased]` section to the new version
+with today's ISO date:
+
+```diff
+- ## [Unreleased]
++ ## [1.1.0] — 2026-05-24
+```
+
+Confirm every entry under the renamed section follows the format:
+
+- Categories in order: `### ⚠ Breaking — <audience>` (if any) →
+  `### Added` → `### Changed` → `### Deprecated` → `### Removed` →
+  `### Fixed` → `### Security`.
+- Each entry: one bold noun, one sentence of *what*, one short
+  paragraph of *why* / migration, audit/lote tag if applicable.
+
+If this is a stable release that has gone through one or more RCs,
+also merge any RC-only sections into the stable section (consumers
+don't want to read three separate sections for the same release).
+
+### 3d. Commit
+
+```bash
+git add Cargo.toml Cargo.lock CHANGELOG.md
+git commit -m "Bump to ${new_version}
+
+Promotes [Unreleased] → [${new_version}] in CHANGELOG.md. See that
+section for the full breaking-change inventory and the audit lote
+references.
+"
+```
+
+Push the commit to `main` first; don't tag yet.
+
+```bash
+git push origin main
+```
+
+Wait for CI to go green on `main`. If anything fails, fix it as a
+follow-up commit on `main` and re-run.
+
+---
+
+## 4. Tag and trigger the release workflow
+
+### 4a. Create the annotated tag
+
+Use a HEREDOC so the tag message ends up multi-line:
+
+```bash
+git tag -a "v${new_version}" -m "$(cat <<EOF
+hpd v${new_version}
+
+<one-paragraph summary of what's in this release — copy/paste the
+top of the CHANGELOG section if useful, but keep the tag annotation
+focused: highlights only, not the full list.>
+
+Public surface — stable under SemVer:
+  * D-Bus  : dev.cirodev.hpd.PowerDaemon1
+  * CLI    : hpdctl
+  * State  : /var/lib/hpd/state.toml
+  * Polkit : dev.cirodev.hpd.{set-tdp,set-charge,set-profile}
+  * Config : /etc/hpd/config.toml
+
+Hardware: ASUS ROG Ally / Ally X / Xbox Ally X
+
+Verification gates at tag time:
+  * cargo fmt --all -- --check                          clean
+  * cargo clippy --workspace --all-targets -- -D warnings clean
+  * cargo test --workspace                              <N> / <N> passing
+  * cargo doc --workspace                               clean under -D warnings
+  * Feature matrix                                      3/3 combos clean
+
+See CHANGELOG.md for the full inventory.
+EOF
+)"
+```
+
+### 4b. Push the tag
+
+```bash
+git push origin "v${new_version}"
+```
+
+### 4c. Watch the workflow
+
+```bash
+gh run watch                          # or open Actions tab in the browser
+```
+
+`release.yml` should run within ~5 seconds of the tag push. Time
+budget: ~10-15 minutes for the full build + artifact upload.
+
+Expected outcome:
+
+- **For a stable tag** (`vX.Y.Z`): a **Published** GitHub Release at
+  `https://github.com/CiroDev-Git/hpd-handheld-power-daemon/releases/tag/vX.Y.Z`,
+  with the tarball + `SHA256SUMS` (+ `.asc` if GPG configured) attached,
+  and the release notes auto-extracted from the CHANGELOG section.
+- **For an RC tag** (`vX.Y.Z-rc.N`): the same, but the Release is
+  **Draft** (visible only to maintainers).
+
+---
+
+## 5. AUR update (manual fallback)
+
+If `AUR_SSH_KEY` is configured, the workflow has already pushed to
+AUR — skip to §6. Otherwise:
+
+### 5a. Source package: `hpd-handheld-power-daemon`
+
+```bash
+cd /tmp
+git clone ssh://aur@aur.archlinux.org/hpd-handheld-power-daemon.git
+cd hpd-handheld-power-daemon
+
+# Render the new PKGBUILD from the template
+cp <hpd-checkout>/package/aur/PKGBUILD.template ./PKGBUILD
+sed -i "s/__VERSION__/${new_version}/g" PKGBUILD
+
+# Compute the source tarball's checksum
+checksum=$(curl -fsSL "https://github.com/CiroDev-Git/hpd-handheld-power-daemon/archive/v${new_version}.tar.gz" \
+    | sha256sum | awk '{print $1}')
+sed -i "s/__SHA256__/${checksum}/" PKGBUILD
+
+# Regenerate .SRCINFO
+makepkg --printsrcinfo > .SRCINFO
+
+# Sanity-build it locally before pushing
+makepkg --syncdeps --noconfirm --check
+
+git add PKGBUILD .SRCINFO
+git commit -m "Update to ${new_version}"
+git push
+```
+
+### 5b. Binary package: `hpd-handheld-power-daemon-bin`
+
+Same dance against `hpd-handheld-power-daemon-bin.git`, but the
+PKGBUILD points at the release's tarball asset URL and the checksum
+is computed over the release tarball (not the GitHub source archive).
+
+```bash
+checksum=$(curl -fsSL \
+    "https://github.com/CiroDev-Git/hpd-handheld-power-daemon/releases/download/v${new_version}/hpd-${new_version}-x86_64-linux.tar.gz" \
+    | sha256sum | awk '{print $1}')
+```
+
+---
+
+## 6. Post-release housekeeping
+
+### 6a. Open a new `[Unreleased]` section
+
+```bash
+git checkout main
+git pull --ff-only origin main          # picks up the bump commit + tag
+```
+
+Add a fresh top section to `CHANGELOG.md` so future contributors
+have a place to land their entries:
+
+```markdown
+## [Unreleased]
+
+(Nothing yet.)
+
+---
+
+## [1.1.0] — 2026-05-24
+…
+```
+
+```bash
+git add CHANGELOG.md
+git commit -m "Open [Unreleased] section for the next release cycle"
+git push origin main
+```
+
+### 6b. Announce
+
+- Pin the GitHub Release in the repo's Discussions tab (if
+  enabled).
+- Tweet / post / Mastodon — link the GitHub Release page, not the
+  raw tarball.
+- If the release contains a breaking change, also drop a note in
+  the project's issue tracker as a "v${new_version} migration
+  notes" pinned issue.
+
+### 6c. Watch for issues for 48 hours
+
+The first 48 hours after publishing are when most install-time
+bugs surface. Keep an eye on:
+
+- `gh issue list --label bug --state open`
+- The release's Discussions thread (if any).
+- Any AUR comments on the two AUR packages.
+
+If a critical bug surfaces, prepare a `vX.Y.Z+1` patch release
+following this same runbook. **Do not delete or republish** the
+broken release — see [`PIPELINE.md` §7](PIPELINE.md#7-rollback-policy).
+
+---
+
+## 7. If something goes wrong mid-release
+
+### Workflow failed before the Release was created
+
+The annotated tag exists on `origin` but no GitHub Release was
+created. Two options:
+
+1. Fix-forward: push a follow-up commit to `main`, delete the tag,
+   re-tag the new HEAD, push:
+
+   ```bash
+   git tag -d "v${new_version}"
+   git push --delete origin "v${new_version}"
+   # fix the issue, commit, push
+   git tag -a "v${new_version}" -m "..."
+   git push origin "v${new_version}"
+   ```
+
+2. Bump to the next patch: skip the broken number entirely.
+   Cleanest if the broken tag was already advertised.
+
+### Workflow succeeded but the Release contents are wrong
+
+If it's a Draft (RC): edit or discard it in the GitHub UI.
+
+If it's Published (stable): leave it. Cut a `vX.Y.Z+1` with the
+fix. Mark the broken release's body with a ⚠ warning.
+
+### GPG signing failed but everything else worked
+
+You can re-run the signing step locally and upload `SHA256SUMS.asc`
+manually as a Release asset:
+
+```bash
+# Reproduce the SHA256SUMS file from the published tarball
+curl -fsSL "https://github.com/CiroDev-Git/.../v${new_version}/hpd-${new_version}-x86_64-linux.tar.gz" \
+    -O
+sha256sum hpd-${new_version}-x86_64-linux.tar.gz > SHA256SUMS
+gpg --detach-sign --armor SHA256SUMS
+gh release upload "v${new_version}" SHA256SUMS.asc
+```
+
+---
+
+## 8. Time budget
+
+| Step                                    | Approx. time        |
+|-----------------------------------------|---------------------|
+| §1 Pre-release sanity                   | 5-10 min            |
+| §2-§3 Bump + CHANGELOG + commit + push  | 10 min              |
+| (Wait for `main` CI to go green)        | 8-12 min            |
+| §4 Tag + push + `release.yml` to finish | 10-15 min           |
+| §5 AUR update (manual)                  | 5 min if scripted   |
+| §6a Re-open [Unreleased] + push         | 2 min               |
+| §6b Announce                            | 5 min               |
+| **Total (happy path, no failures)**     | **45-60 min**       |
+
+Budget a full hour the first few times. Subsequent releases
+average closer to 30 minutes once the muscle memory is in place.
+
+---
+
+*Last updated: 2026-05-24 (Phase 5 — Lote 49).*
