@@ -32,6 +32,20 @@ remediation plan at [`docs/audit/REMEDIATION_PLAN_V1.md`](docs/audit/REMEDIATION
   on-disk filesystem layout. Useful entry-point for contributors who
   want to navigate the workspace without opening every `lib.rs` first.
   *(Lote 44 — Audit V2 Phase 3)*
+- **`docs/ARCHITECTURE.md` — global architecture document** (~550
+  lines, 12 sections). Human-oriented walk-through covering the
+  L-1→L4 workspace layout, the `Transition → reducer → Effect →
+  Executor` pipeline (with ASCII diagrams of the data flow and
+  rollback contract), the multi-runtime concurrency layout
+  including the dedicated `std::thread` for `tokio-udev`'s `!Send`
+  socket, the full lifecycle / signal matrix, the polkit fail-closed
+  contract, the persistence and configuration models, a "where to
+  look for things" lookup table, the recipes for adding a new
+  vendor backend or D-Bus method, and a curated reading order for
+  newcomers. The root README and crate READMEs now link here as the
+  canonical design reference; `CLAUDE.md` remains the
+  assistant-oriented variant.
+  *(Lote 45 — Audit V2 Phase 3)*
 
 ---
 

@@ -189,8 +189,13 @@ Backend` pipeline. The reducer is pure (no I/O, no async). The Executor
 runs effects, persists state, and on hardware-write failure re-injects
 `SyncPowerTarget` to roll the in-memory state back to reality.
 
-For the full design, the dependency direction rules, and the recipes
-for adding a new D-Bus method or vendor backend, see
+For the full design, the dependency direction rules, the lifecycle
+matrix, the rollback contract, and the recipes for adding a new D-Bus
+method or vendor backend, read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Each crate also ships a one-page `README.md` under `crates/<name>/`
+that explains its purpose, dependencies, and a runnable example.
+
+The terse assistant-oriented version of the architecture doc lives at
 [`CLAUDE.md`](CLAUDE.md).
 
 Working audits live under `docs/audit/` (gitignored — internal
