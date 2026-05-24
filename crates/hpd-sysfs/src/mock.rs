@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #[cfg(feature = "mock")]
 pub mod testing {
     // Test fixture: `unwrap` / `expect` are intentional. A poisoned mutex

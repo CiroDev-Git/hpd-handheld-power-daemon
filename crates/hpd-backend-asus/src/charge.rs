@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use hpd_capabilities::charge::{ChargeControl, MAX_CHARGE_THRESHOLD, MIN_CHARGE_THRESHOLD};
 use hpd_capabilities::error::{BackendError, HpdError};
 use hpd_sysfs::SysfsIo;

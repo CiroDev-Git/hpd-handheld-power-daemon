@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DMI snapshot used by L1 backends to recognise the running hardware.
 
 /// Subset of `/sys/class/dmi/id/` fields used for vendor / model

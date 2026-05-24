@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Persistent state of the daemon.
 
 use hpd_capabilities::power::PowerEnvelopeTarget;

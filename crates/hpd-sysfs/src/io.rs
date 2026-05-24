@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `SysfsIo` trait — the minimum surface L1 backends need from sysfs.
 
 use hpd_error::SysfsError;

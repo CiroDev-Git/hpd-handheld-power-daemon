@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use hpd_capabilities::error::{BackendError, HpdError};
 use hpd_capabilities::fan::FanControl;
 use hpd_capabilities::units::Rpm;

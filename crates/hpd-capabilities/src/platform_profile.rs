@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ACPI platform / cooling profile capability.
 
 use crate::error::HpdError;

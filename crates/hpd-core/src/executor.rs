@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, error, info, instrument, warn};
 

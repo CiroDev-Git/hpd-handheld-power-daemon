@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! In-process test fixture implementing every L2 capability trait.
 //!
 //! Gated behind `#[cfg(any(test, feature = "testing"))]` so the production

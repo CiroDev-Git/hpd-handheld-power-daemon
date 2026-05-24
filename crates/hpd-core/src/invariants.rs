@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Cross-field invariants enforced before any [`crate::effect::Effect`]
 //! is dispatched.
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use hpd_capabilities::power::{PowerEnvelopeLimits, PowerEnvelopeTarget};
 use hpd_capabilities::profile::{ProfileName, ProfileThresholds};
 

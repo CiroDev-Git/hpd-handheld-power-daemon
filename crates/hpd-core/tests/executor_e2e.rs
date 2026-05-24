@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! End-to-end pipeline tests for the L3 `Executor`.
 //!
 //! These exercise the full Transition → reducer → Effect → backend loop

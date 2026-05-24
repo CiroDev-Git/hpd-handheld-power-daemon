@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TDP power-envelope capability.
 
 use crate::error::HpdError;

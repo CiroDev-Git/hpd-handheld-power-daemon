@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Fan telemetry capability.
 
 use crate::error::HpdError;

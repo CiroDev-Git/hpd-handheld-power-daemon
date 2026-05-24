@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use std::str::FromStr;
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, error};

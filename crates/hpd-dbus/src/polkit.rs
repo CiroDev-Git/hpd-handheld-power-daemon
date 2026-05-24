@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Polkit authorization helper.
 //!
 //! The interface methods on [`crate::service::PowerDaemonInterface`] call

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Polkit action identifiers used by the D-Bus interface.
 //!
 //! Kept as a typed enum so the strings live in one place — adding a new

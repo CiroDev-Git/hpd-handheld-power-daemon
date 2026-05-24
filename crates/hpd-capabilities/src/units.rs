@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Strongly-typed power and fan units exchanged across capability traits.
 
 use serde::{Deserialize, Serialize};

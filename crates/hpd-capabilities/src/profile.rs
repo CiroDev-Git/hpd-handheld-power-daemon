@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Platform cooling profile + TDP preset value types and the
 //! runtime-tunable [`RuntimeConfig`] that bundles them with the smart-mode
 //! boost factors.

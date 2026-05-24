@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Production implementation of [`SysfsIo`] backed by `std::fs`.
 
 use crate::io::SysfsIo;

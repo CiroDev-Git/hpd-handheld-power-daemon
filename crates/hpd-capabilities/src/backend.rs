@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Aggregate backend trait that an L1 vendor implementation must satisfy.
 
 use crate::charge::ChargeControl;

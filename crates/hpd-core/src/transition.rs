@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Every external event that can mutate the daemon's state goes
 //! through one of these variants.
 

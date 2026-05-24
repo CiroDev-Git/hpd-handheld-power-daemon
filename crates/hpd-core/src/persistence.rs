@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Atomic on-disk persistence for [`ProfileState`].
 
 use crate::state::ProfileState;

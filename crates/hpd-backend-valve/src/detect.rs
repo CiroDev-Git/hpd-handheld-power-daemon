@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use hpd_capabilities::probe::DmiInfo;
 
 #[derive(Debug, Clone, PartialEq)]

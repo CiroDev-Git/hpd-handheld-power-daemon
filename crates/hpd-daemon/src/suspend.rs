@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use futures_util::stream::StreamExt;
 use hpd_core::transition::Transition;
 use tokio::sync::mpsc;
