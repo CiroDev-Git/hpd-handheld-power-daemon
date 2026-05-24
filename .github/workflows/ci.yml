@@ -130,16 +130,17 @@ jobs:
   supply-chain:
     name: Supply chain (audit + deny)
     runs-on: ubuntu-latest
-    env:
-      RUSTUP_TOOLCHAIN: stable
     steps:
       - uses: actions/checkout@v4
 
+      # stable toolchain needed to compile cargo-audit (its own deps require
+      # rustc > 1.85 MSRV). RUSTUP_TOOLCHAIN is set at step level so the
+      # cargo-deny Docker container (next step) doesn't inherit it and waste
+      # time re-installing a toolchain inside the container.
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # Cache the compiled cargo-audit binary across runs. Keyed on the
-      # runner OS + stable toolchain date so it refreshes when stable bumps.
+      # Cache the compiled cargo-audit binary across runs.
       - name: Cache cargo-audit binary
         id: cache-audit
         uses: actions/cache@v4
@@ -149,13 +150,17 @@ jobs:
 
       - name: Install cargo-audit
         if: steps.cache-audit.outputs.cache-hit != 'true'
+        env:
+          RUSTUP_TOOLCHAIN: stable
         run: cargo install cargo-audit
 
-      # Run scoped to Linux targets only: advisories marked `os = ["windows"]`
-      # (e.g. RUSTSEC-2024-0019 / mio named-pipes) are not relevant to this
-      # Linux-only daemon and are filtered out by --target. The deny.toml
-      # [graph] section already excludes Windows for the same reason.
+      # Scoped to linux: advisories with os=["windows"] (e.g.
+      # RUSTSEC-2024-0019 mio named-pipes) are filtered by --target-os.
+      # The deny.toml [advisories].ignore list provides the belt-and-
+      # suspenders ignore for the same advisory via cargo-deny below.
       - name: cargo audit
+        env:
+          RUSTUP_TOOLCHAIN: stable
         run: cargo audit --target-os linux
 
       - name: cargo deny
