@@ -10,7 +10,6 @@ description          = "Domain layer for hpd (L3): pure reducer + Executor + sta
 
 [dependencies]
 hpd-capabilities = { path = "../hpd-capabilities" }
-thiserror = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 serde = { workspace = true }

@@ -31,7 +31,6 @@ hpd-backend-asus   = { path = "../hpd-backend-asus",   optional = true }
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-thiserror = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }
 

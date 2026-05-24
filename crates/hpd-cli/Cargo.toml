@@ -17,4 +17,3 @@ path = "src/main.rs"
 clap = { version = "4.4", features = ["derive"] }
 zbus = "4.1"
 tokio = { workspace = true, features = ["full"] }
-thiserror = { workspace = true }

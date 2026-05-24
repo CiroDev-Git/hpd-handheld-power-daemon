@@ -570,7 +570,6 @@ version = "1.0.0"
 dependencies = [
  "hpd-capabilities",
  "hpd-sysfs",
- "thiserror",
  "tracing",
 ]
 
@@ -587,7 +586,6 @@ name = "hpd-cli"
 version = "1.0.0"
 dependencies = [
  "clap",
- "thiserror",
  "tokio",
  "zbus",
 ]
@@ -598,7 +596,6 @@ version = "1.0.0"
 dependencies = [
  "hpd-capabilities",
  "serde",
- "thiserror",
  "tokio",
  "toml",
  "tracing",
@@ -616,7 +613,6 @@ dependencies = [
  "hpd-netlink",
  "hpd-sysfs",
  "serde",
- "thiserror",
  "tokio",
  "toml",
  "tracing",
@@ -630,7 +626,6 @@ version = "1.0.0"
 dependencies = [
  "hpd-capabilities",
  "hpd-core",
- "thiserror",
  "tokio",
  "tracing",
  "zbus",
@@ -660,7 +655,6 @@ version = "1.0.0"
 dependencies = [
  "hpd-error",
  "tempfile",
- "thiserror",
  "tracing",
 ]
 
