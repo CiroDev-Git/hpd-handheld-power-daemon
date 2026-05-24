@@ -123,9 +123,15 @@ jobs:
   # Uses `stable` (not the pinned MSRV) because cargo-audit and its own
   # transitive deps track the current Rust release. MSRV is enforced by
   # the build-test and feature-matrix jobs above.
+  #
+  # RUSTUP_TOOLCHAIN=stable at the job level overrides rust-toolchain.toml
+  # (which pins 1.85.0 for the project itself) so that cargo install
+  # cargo-audit uses the current stable compiler.
   supply-chain:
     name: Supply chain (audit + deny)
     runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: stable
     steps:
       - uses: actions/checkout@v4
 
