@@ -6,6 +6,7 @@ license.workspace    = true
 authors.workspace    = true
 repository.workspace = true
 homepage.workspace   = true
+rust-version.workspace = true
 description          = "ASUS armoury firmware-attribute backend for hpd (layer L1): TDP, charge, profile, fan."
 
 [dependencies]

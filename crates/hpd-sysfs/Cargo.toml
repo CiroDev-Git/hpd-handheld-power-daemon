@@ -6,6 +6,7 @@ license.workspace    = true
 authors.workspace    = true
 repository.workspace = true
 homepage.workspace   = true
+rust-version.workspace = true
 description          = "Sysfs I/O abstraction for hpd (layer L0): SysfsIo trait + RealSysfs + optional MockSysfs."
 
 [features]

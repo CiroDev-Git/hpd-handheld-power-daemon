@@ -6,6 +6,7 @@ license.workspace    = true
 authors.workspace    = true
 repository.workspace = true
 homepage.workspace   = true
+rust-version.workspace = true
 description          = "hpd-daemon — long-running root service exposing dev.cirodev.hpd.PowerDaemon1 over D-Bus (layer L4)."
 
 [features]

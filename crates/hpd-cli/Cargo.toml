@@ -6,6 +6,7 @@ license.workspace    = true
 authors.workspace    = true
 repository.workspace = true
 homepage.workspace   = true
+rust-version.workspace = true
 description          = "hpdctl — user-facing CLI client for the hpd daemon (layer L4)."
 
 # Force binary name to hpdctl

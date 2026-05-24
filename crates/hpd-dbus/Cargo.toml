@@ -6,6 +6,7 @@ license.workspace    = true
 authors.workspace    = true
 repository.workspace = true
 homepage.workspace   = true
+rust-version.workspace = true
 description          = "zbus interface exposing the hpd daemon over the system bus (layer L4)."
 
 [features]

@@ -33,6 +33,13 @@ license      = "GPL-3.0-or-later"
 authors      = ["Cristian Ciro <cristian_ciro@outlook.es>"]
 repository   = "https://github.com/CiroDev-Git/hpd-handheld-power-daemon"
 homepage     = "https://github.com/CiroDev-Git/hpd-handheld-power-daemon"
+# Minimum supported Rust version. Bumping this requires updating the
+# matching pin in `rust-toolchain.toml` so contributors and CI stay
+# in lockstep. 1.85 was chosen because it covers the
+# [workspace.lints] floor (Rust 1.74), allows modern syntax, and is
+# old enough that every reasonable distro's packaged toolchain
+# meets it.
+rust-version = "1.85"
 
 [workspace.dependencies]
 # Error handling (rule: zero unwrap, explicit errors).

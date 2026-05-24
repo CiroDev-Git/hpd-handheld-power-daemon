@@ -6,6 +6,7 @@ license.workspace    = true
 authors.workspace    = true
 repository.workspace = true
 homepage.workspace   = true
+rust-version.workspace = true
 description          = "Domain layer for hpd (L3): pure reducer + Executor + state machine + persistence."
 
 [dependencies]

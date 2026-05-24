@@ -1,8 +1,11 @@
 [toolchain]
-# Tracked stable channel so CI and local builds stay in lockstep on
-# lints and language features. When a specific minimum version becomes
-# load-bearing (e.g. an MSRV is declared), pin to that version here
-# and document the reason in the commit that moves it.
-channel = "stable"
+# Pinned to the declared MSRV (see workspace.package.rust-version in
+# Cargo.toml). Bumping this and the MSRV must travel together — the
+# moment CI advertises one version while local builds float on
+# another, contributors disagree about what compiles. Reason for the
+# current pin: 1.85 covers the [workspace.lints] floor (Rust 1.74),
+# is recent enough to use modern syntax, and is old enough that
+# every distro's packaged Rust toolchain meets it.
+channel    = "1.85.0"
 components = ["rustfmt", "clippy"]
-profile = "minimal"
+profile    = "minimal"
