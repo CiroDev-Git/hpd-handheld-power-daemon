@@ -1,7 +1,12 @@
 [package]
-name = "hpd-daemon"
-version = "0.1.0"
-edition = "2021"
+name                 = "hpd-daemon"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+authors.workspace    = true
+repository.workspace = true
+homepage.workspace   = true
+description          = "hpd-daemon — long-running root service exposing dev.cirodev.hpd.PowerDaemon1 over D-Bus (layer L4)."
 
 [features]
 default = ["vendor-asus"]

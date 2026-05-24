@@ -25,6 +25,17 @@ members = [
     "crates/hpd-daemon"
 ]
 
+# Shared package metadata. Every crate's `[package]` block opts in via
+# `<key>.workspace = true` so version / license / MSRV / repo links
+# stay in one place. Bumping a release becomes a single edit here.
+[workspace.package]
+version      = "0.1.0"
+edition      = "2021"
+license      = "GPL-3.0-or-later"
+authors      = ["Cristian Ciro <cristian_ciro@outlook.es>"]
+repository   = "https://github.com/CiroDev-Git/hpd-handheld-power-daemon"
+homepage     = "https://github.com/CiroDev-Git/hpd-handheld-power-daemon"
+
 [workspace.dependencies]
 # Error handling (rule: zero unwrap, explicit errors)
 thiserror = "1.0"

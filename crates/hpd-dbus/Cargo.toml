@@ -1,7 +1,12 @@
 [package]
-name = "hpd-dbus"
-version = "0.1.0"
-edition = "2021"
+name                 = "hpd-dbus"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+authors.workspace    = true
+repository.workspace = true
+homepage.workspace   = true
+description          = "zbus interface exposing the hpd daemon over the system bus (layer L4)."
 
 [features]
 default = []

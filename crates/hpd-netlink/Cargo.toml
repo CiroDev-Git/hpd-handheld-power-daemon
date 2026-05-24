@@ -1,7 +1,12 @@
 [package]
-name = "hpd-netlink"
-version = "0.1.0"
-edition = "2021"
+name                 = "hpd-netlink"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+authors.workspace    = true
+repository.workspace = true
+homepage.workspace   = true
+description          = "udev power-supply event monitor for hpd (layer L0; Linux-only, no-op stub on other platforms)."
 
 [dependencies]
 tokio = { version = "1", features = ["rt", "macros", "net"] }

@@ -1,7 +1,12 @@
 [package]
-name = "hpd-capabilities"
-version = "0.1.0"
-edition = "2021"
+name                 = "hpd-capabilities"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+authors.workspace    = true
+repository.workspace = true
+homepage.workspace   = true
+description          = "Hardware-agnostic capability traits and value types for hpd (layer L2)."
 
 [features]
 default = []

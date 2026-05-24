@@ -1,7 +1,12 @@
 [package]
-name = "hpd-backend-valve"
-version = "0.1.0"
-edition = "2021"
+name                 = "hpd-backend-valve"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+authors.workspace    = true
+repository.workspace = true
+homepage.workspace   = true
+description          = "Valve Steam Deck backend placeholder for hpd (layer L1); slated for removal in Lote 27."
 
 [dependencies]
 hpd-capabilities = { path = "../hpd-capabilities" }

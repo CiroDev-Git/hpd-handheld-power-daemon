@@ -1,7 +1,12 @@
 [package]
-name = "hpd-sysfs"
-version = "0.1.0"
-edition = "2021"
+name                 = "hpd-sysfs"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+authors.workspace    = true
+repository.workspace = true
+homepage.workspace   = true
+description          = "Sysfs I/O abstraction for hpd (layer L0): SysfsIo trait + RealSysfs + optional MockSysfs."
 
 [features]
 default = []

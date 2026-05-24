@@ -1,7 +1,12 @@
 [package]
-name = "hpd-core"
-version = "0.1.0"
-edition = "2021"
+name                 = "hpd-core"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+authors.workspace    = true
+repository.workspace = true
+homepage.workspace   = true
+description          = "Domain layer for hpd (L3): pure reducer + Executor + state machine + persistence."
 
 [dependencies]
 hpd-capabilities = { path = "../hpd-capabilities" }
