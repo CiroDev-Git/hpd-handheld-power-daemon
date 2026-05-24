@@ -32,6 +32,24 @@ sudo install -Dm644 package/dev.cirodev.hpd.conf              /etc/dbus-1/system
 sudo install -Dm644 package/hpd-example.toml                  /etc/hpd/config.toml.example
 sudo install -Dm644 package/polkit/dev.cirodev.hpd.policy     /usr/share/polkit-1/actions/dev.cirodev.hpd.policy
 
+# Version sidecar at /usr/share/hpd/VERSION (single line "X.Y.Z").
+# Consumed by external clients that need to know the installed daemon
+# version without parsing journalctl or owning the systemd-journal
+# group. The hpd-decky-plugin reads this file to enforce its
+# `hpdDaemonCompat` range. The version is extracted from the workspace
+# `Cargo.toml` so the file always reflects the binaries that were just
+# built — no separate source of truth to drift.
+HPD_VERSION="$(awk -F\" '
+    /^\[workspace\.package\]/ { in_ws = 1; next }
+    /^\[/                     { in_ws = 0 }
+    in_ws && /^version[[:space:]]*=/ { print $2; exit }
+' Cargo.toml)"
+if [[ -z "${HPD_VERSION:-}" ]]; then
+    echo "❌  Could not extract workspace version from Cargo.toml" >&2
+    exit 1
+fi
+printf '%s\n' "${HPD_VERSION}" | sudo install -Dm644 /dev/stdin /usr/share/hpd/VERSION
+
 echo "🚀 4. Reloading daemons and starting HPD..."
 sudo systemctl daemon-reload
 sudo systemctl try-reload-or-restart dbus.service

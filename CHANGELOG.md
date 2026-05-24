@@ -15,6 +15,14 @@ remediation plan at [`docs/audit/REMEDIATION_PLAN_V1.md`](docs/audit/REMEDIATION
 
 ### Added
 
+- **`/usr/share/hpd/VERSION` sidecar shipped by `install.sh`** —
+  single-line text file (`X.Y.Z`) written at install time by
+  extracting the workspace `Cargo.toml` `version`. Consumed by
+  external clients (e.g. `hpd-decky-plugin`) that need the installed
+  daemon version without parsing `journalctl` or requiring
+  `systemd-journal` group membership. `uninstall.sh` removes it and
+  the empty `/usr/share/hpd` directory. No code path inside the daemon
+  reads this file; it is purely a consumer-facing affordance.
 - **`missing_docs` lint enabled workspace-wide** — every public item
   carries a `///` doc comment and every module file opens with a
   `//!` block. CI runs with `-D warnings` so this is effectively an
