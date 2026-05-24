@@ -46,6 +46,19 @@ remediation plan at [`docs/audit/REMEDIATION_PLAN_V1.md`](docs/audit/REMEDIATION
   canonical design reference; `CLAUDE.md` remains the
   assistant-oriented variant.
   *(Lote 45 — Audit V2 Phase 3)*
+- **`docs/dev/LINUX.md` — Linux development guide** (~300 lines, 11
+  sections). End-to-end loop on a Linux host: toolchain pinning
+  via `rust-toolchain.toml`, per-distro build-dep one-liners,
+  workspace command reference, the full feature matrix CI runs,
+  both running paths (production-shape `install.sh` walkthrough
+  *and* iterative `cargo run` against the system bus with policy
+  files installed), logging via `RUST_LOG`+`journalctl`, D-Bus
+  introspection with `busctl`/`dbus-monitor`, polkit debugging
+  with `pkaction`/`pkcheck`, manual suspend/resume + AC plug
+  testing, filesystem layout reference, and 6 common pitfalls
+  with diagnoses. Entry point for any contributor working on a
+  Linux dev host.
+  *(Lote 46 — Audit V2 Phase 4)*
 
 ---
 
