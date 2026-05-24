@@ -39,3 +39,6 @@ hpd-dbus     = { path = "../hpd-dbus" }
 hpd-netlink  = { path = "../hpd-netlink" }
 zbus         = { workspace = true }
 futures-util = { workspace = true }
+
+[lints]
+workspace = true

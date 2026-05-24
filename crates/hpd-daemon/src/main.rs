@@ -1,10 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#![cfg_attr(
-    not(test),
-    warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
-)]
-
 // Daemon sub-modules are only reachable through `run_daemon`, which is
 // only compiled in when at least one vendor backend is active. Without
 // a vendor feature the binary still builds (CI verifies this) but

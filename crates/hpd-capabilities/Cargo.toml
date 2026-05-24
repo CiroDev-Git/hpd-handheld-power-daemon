@@ -18,3 +18,6 @@ testing = []
 [dependencies]
 hpd-error = { path = "../hpd-error" }
 serde = { workspace = true }
+
+[lints]
+workspace = true

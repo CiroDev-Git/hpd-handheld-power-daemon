@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+// Integration tests; same opt-out as the in-crate `mod tests` blocks.
+// The strict `[workspace.lints.clippy]` bar applies to production code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 //! End-to-end pipeline tests for the L3 `Executor`.
 //!
 //! These exercise the full Transition → reducer → Effect → backend loop

@@ -23,3 +23,6 @@ hpd-capabilities = { path = "../hpd-capabilities" }
 zbus             = { workspace = true }
 tokio            = { workspace = true, features = ["sync"] }
 tracing          = { workspace = true }
+
+[lints]
+workspace = true

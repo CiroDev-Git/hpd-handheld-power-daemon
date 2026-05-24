@@ -97,6 +97,11 @@ impl<S: SysfsIo> PowerEnvelope for AsusPowerBackend<S> {
 
 #[cfg(test)]
 mod tests {
+    // Test code may use `.unwrap()` / `.expect()` / `panic!` freely;
+    // the strict bar in `[workspace.lints.clippy]` applies to
+    // production code only.
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
     use super::*;
     use hpd_capabilities::units::PowerMilliwatts;
     use hpd_sysfs::MockSysfs; // Simulator based on TempDir

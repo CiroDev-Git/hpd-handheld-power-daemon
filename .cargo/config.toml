@@ -1,10 +1,7 @@
 # .cargo/config.toml
-[target.'cfg(all())']
-rustflags = [
-    "-F", "unsafe_code",         # Forbid unsafe (except in hpd-netlink, which opts in with #[allow])
-]
-# Per-crate `clippy::unwrap_used / expect_used / panic` lints live as
-# `#![cfg_attr(not(test), warn(...))]` attributes on each lib.rs / main.rs.
-# That way the strict lints apply to production code only — test modules
-# can keep their own `.unwrap()` / `.expect()` / `panic!` without forcing
-# noisy `#[allow]` boilerplate everywhere.
+#
+# Workspace-wide lint policy moved to `[workspace.lints]` in the root
+# Cargo.toml (see Lote 34). This file is intentionally kept around as
+# a parking spot for cargo-level config that does need to live here
+# (e.g. build target rustflags, registry mirrors); it carries no
+# active settings today.

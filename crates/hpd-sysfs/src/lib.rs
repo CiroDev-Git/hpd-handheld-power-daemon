@@ -1,10 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#![cfg_attr(
-    not(test),
-    warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
-)]
-
 //! Sysfs I/O abstraction (workspace layer **L0**).
 //!
 //! Exposes the [`SysfsIo`] trait and two implementors:

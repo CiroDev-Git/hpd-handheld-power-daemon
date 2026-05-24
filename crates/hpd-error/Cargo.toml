@@ -11,3 +11,6 @@ description          = "Cross-crate error types for the hpd workspace (layer L-1
 
 [dependencies]
 thiserror = { workspace = true }
+
+[lints]
+workspace = true

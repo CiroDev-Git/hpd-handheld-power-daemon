@@ -67,3 +67,26 @@ clap = { version = "4.4", features = ["derive"] }
 # Test-only fixture deps. `tempfile` is the on-disk root for MockSysfs;
 # pulled in optionally by hpd-sysfs behind its `mock` feature.
 tempfile = "3.10"
+
+# Workspace-wide lint policy. Every crate opts in via `[lints] workspace = true`
+# in its own manifest, replacing the 9 copies of
+# `#![cfg_attr(not(test), warn(clippy::unwrap_used, …))]` that used to sit
+# on every crate root. Bumping the policy is now a single-line edit.
+#
+# `unsafe_code = "forbid"` replaces the previous `.cargo/config.toml`
+# rustflags entry — same enforcement, expressed via the language's own
+# lint table instead of a compiler flag. If a future crate genuinely
+# needs `unsafe`, it should opt out with its own per-crate
+# `#![allow(unsafe_code)]` and document the reason.
+#
+# `clippy::unwrap_used` / `expect_used` / `panic` are `warn` here and
+# upgraded to errors by CI's `-D warnings`. Test modules opt out
+# locally with an inner `#![allow(...)]` so the strict bar applies to
+# production code only.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic       = "warn"

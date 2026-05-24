@@ -1,10 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#![cfg_attr(
-    not(test),
-    warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
-)]
-
 //! Domain layer (workspace **L3**) of `hpd`.
 //!
 //! Owns the Transition → reducer → Effect → Executor state machine

@@ -22,3 +22,6 @@ toml = { workspace = true }
 # across normal + dev deps, so production builds remain unaffected.
 hpd-capabilities = { path = "../hpd-capabilities", features = ["testing"] }
 tokio = { workspace = true, features = ["sync", "macros", "rt", "rt-multi-thread", "time", "fs"] }
+
+[lints]
+workspace = true

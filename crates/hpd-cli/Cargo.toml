@@ -18,3 +18,6 @@ path = "src/main.rs"
 clap  = { workspace = true }
 zbus  = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+
+[lints]
+workspace = true

@@ -15,3 +15,6 @@ hpd-sysfs = { path = "../hpd-sysfs" }
 
 [dev-dependencies]
 hpd-sysfs = { path = "../hpd-sysfs", features = ["mock"] }
+
+[lints]
+workspace = true

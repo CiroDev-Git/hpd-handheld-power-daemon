@@ -186,6 +186,11 @@ impl FromStr for TdpPreset {
 
 #[cfg(test)]
 mod tests {
+    // Test code may use `.unwrap()` / `.expect()` / `panic!` freely;
+    // the strict bar in `[workspace.lints.clippy]` applies to
+    // production code only.
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
     use super::*;
 
     #[test]
