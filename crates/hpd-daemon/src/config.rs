@@ -202,4 +202,100 @@ high_frac = 0.80
         };
         assert_eq!(cfg.to_runtime(), cfg.runtime);
     }
+
+    // ---------- file-IO paths through DaemonConfig::load (Lote 41) ----------
+
+    /// Per-process-unique temp path so concurrent tests don't collide.
+    fn fresh_temp_path(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "hpd_daemon_config_{}_{}.toml",
+            label,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        path
+    }
+
+    /// Survival invariant (REMEDIATION_V1 §D): a `load` against a
+    /// path that does not exist returns `Default::default()` rather
+    /// than erroring. The daemon never refuses to start over a
+    /// missing config file.
+    #[test]
+    fn load_missing_file_returns_defaults() {
+        let path = fresh_temp_path("missing");
+        assert!(!path.exists(), "fixture must not pre-exist");
+        let cfg = DaemonConfig::load(&path);
+        assert_eq!(cfg, DaemonConfig::default());
+    }
+
+    /// Survival invariant: a corrupt config file (bad TOML / partial
+    /// write from a crashed editor / operator typo) must not bring
+    /// the daemon down. `load` logs a warning and falls back to
+    /// defaults so the daemon continues with sensible values.
+    #[test]
+    fn load_corrupt_toml_returns_defaults_without_panic() {
+        let path = fresh_temp_path("corrupt");
+        std::fs::write(&path, b"this is not valid TOML !!! [unclosed").expect("temp write");
+        let cfg = DaemonConfig::load(&path);
+        assert_eq!(cfg, DaemonConfig::default());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Partial-config tolerance: setting only one runtime field via
+    /// the flattened schema must keep all the other fields at their
+    /// defaults. Together with the parser-level
+    /// `flatten_keeps_runtime_fields_at_top_level` test (which only
+    /// proves the TOML *string* parses correctly) this nails down
+    /// the same property end-to-end through file IO.
+    #[test]
+    fn load_partial_toml_keeps_defaults_for_missing_fields() {
+        let path = fresh_temp_path("partial");
+        std::fs::write(&path, b"sppt_factor = 1.30\n").expect("temp write");
+        let cfg = DaemonConfig::load(&path);
+        let defaults = DaemonConfig::default();
+        assert_eq!(cfg.runtime.sppt_factor, 1.30);
+        // Everything else stays default.
+        assert_eq!(cfg.runtime.fppt_factor, defaults.runtime.fppt_factor);
+        assert_eq!(
+            cfg.runtime.profile_thresholds,
+            defaults.runtime.profile_thresholds
+        );
+        assert_eq!(cfg.state_path, defaults.state_path);
+        assert_eq!(cfg.channel_capacity, defaults.channel_capacity);
+        assert_eq!(
+            cfg.default_charge_threshold,
+            defaults.default_charge_threshold
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Full positive case: every field set explicitly and every
+    /// field read back exactly. Locks the on-disk schema *as a
+    /// whole* against silent breakage.
+    #[test]
+    fn load_full_valid_toml_reflects_every_field() {
+        let path = fresh_temp_path("full");
+        let body = r#"
+state_path = "/tmp/explicit-state.toml"
+channel_capacity = 64
+default_charge_threshold = 90
+
+sppt_factor = 1.40
+fppt_factor = 1.60
+
+[profile_thresholds]
+low_frac  = 0.25
+high_frac = 0.75
+"#;
+        std::fs::write(&path, body).expect("temp write");
+        let cfg = DaemonConfig::load(&path);
+        assert_eq!(cfg.state_path, PathBuf::from("/tmp/explicit-state.toml"));
+        assert_eq!(cfg.channel_capacity, 64);
+        assert_eq!(cfg.default_charge_threshold, 90);
+        assert_eq!(cfg.runtime.sppt_factor, 1.40);
+        assert_eq!(cfg.runtime.fppt_factor, 1.60);
+        assert_eq!(cfg.runtime.profile_thresholds.low_frac, 0.25);
+        assert_eq!(cfg.runtime.profile_thresholds.high_frac, 0.75);
+        let _ = std::fs::remove_file(&path);
+    }
 }

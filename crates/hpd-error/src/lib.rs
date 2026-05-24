@@ -92,3 +92,90 @@ pub enum BackendError {
     #[error("{0}")]
     Other(String),
 }
+
+#[cfg(test)]
+mod tests {
+    // Test code may use `.unwrap()` / `.expect()` / `panic!` freely;
+    // the strict bar in `[workspace.lints.clippy]` applies to
+    // production code only.
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use std::io;
+
+    #[test]
+    fn from_io_maps_notfound_kind_to_notfound_variant() {
+        // ENOENT on a sysfs path almost always means the kernel does
+        // not expose that attribute (different model, missing driver).
+        // The categorised variant lets callers handle "feature absent"
+        // differently from "permission denied" without inspecting
+        // strings.
+        let err = io::Error::new(io::ErrorKind::NotFound, "no such file");
+        let sysfs = SysfsError::from_io("/sys/class/firmware-attributes/x", err);
+        assert!(matches!(
+            sysfs,
+            SysfsError::NotFound { ref path }
+                if path == &PathBuf::from("/sys/class/firmware-attributes/x")
+        ));
+    }
+
+    #[test]
+    fn from_io_maps_permissiondenied_kind_to_permissiondenied_variant() {
+        // EACCES on a sysfs setter typically means the daemon is
+        // running unprivileged. Same as above: surfaced as its own
+        // variant so polkit-style handling stays structured.
+        let err = io::Error::new(io::ErrorKind::PermissionDenied, "EACCES");
+        let sysfs = SysfsError::from_io("/sys/firmware/acpi/platform_profile", err);
+        assert!(matches!(
+            sysfs,
+            SysfsError::PermissionDenied { ref path }
+                if path == &PathBuf::from("/sys/firmware/acpi/platform_profile")
+        ));
+    }
+
+    #[test]
+    fn from_io_falls_back_to_io_variant_for_other_kinds() {
+        // Anything that is neither NotFound nor PermissionDenied
+        // lands in the catch-all `Io` variant with the original error
+        // preserved via thiserror's `#[source]` so callers can
+        // downcast / inspect if they want.
+        let original = io::Error::new(io::ErrorKind::InvalidData, "bad bytes");
+        let sysfs = SysfsError::from_io("/sys/foo", original);
+        match sysfs {
+            SysfsError::Io { path, source } => {
+                assert_eq!(path, PathBuf::from("/sys/foo"));
+                assert_eq!(source.kind(), io::ErrorKind::InvalidData);
+            }
+            other => panic!("expected SysfsError::Io, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn hpderror_display_renders_sysfs_transparently() {
+        // `HpdError::Sysfs` is annotated `#[error(transparent)]`, so
+        // its Display must be byte-identical to the underlying
+        // SysfsError. Locks the public Display contract for the
+        // many call sites that just `println!("{e}")` an HpdError.
+        let inner = SysfsError::NotFound {
+            path: PathBuf::from("/sys/x"),
+        };
+        let inner_str = inner.to_string();
+        let outer: HpdError = inner.into();
+        assert_eq!(outer.to_string(), inner_str);
+    }
+
+    #[test]
+    fn backenderror_parsefailed_display_includes_field_and_raw() {
+        // The structured ParseFailed variant must surface enough
+        // context in Display form to debug from a log line alone.
+        let err = BackendError::ParseFailed {
+            field: "watts",
+            raw: "0xZZ".to_string(),
+            reason: "expected integer".to_string(),
+        };
+        let s = err.to_string();
+        assert!(s.contains("watts"), "missing field name: {s}");
+        assert!(s.contains("0xZZ"), "missing raw value: {s}");
+        assert!(s.contains("expected integer"), "missing reason: {s}");
+    }
+}
