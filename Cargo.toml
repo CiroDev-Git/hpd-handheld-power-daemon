@@ -84,7 +84,13 @@ tempfile = "3.10"
 # locally with an inner `#![allow(...)]` so the strict bar applies to
 # production code only.
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code  = "forbid"
+# Every public item must carry a `///` doc-comment, and every module
+# file must open with a `//!` block. CI runs with `-D warnings`, so
+# this is effectively an error in CI. Suppressed locally on the few
+# items the zbus `#[interface]` macro synthesises without a span we
+# can attach docs to (see `hpd-dbus/src/service.rs`).
+missing_docs = "warn"
 
 [workspace.lints.clippy]
 unwrap_used = "warn"

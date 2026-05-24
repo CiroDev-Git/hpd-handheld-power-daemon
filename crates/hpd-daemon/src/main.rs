@@ -1,5 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+//! `hpd-daemon` — the long-running root service.
+//!
+//! Composition root for the Handheld Power Daemon: detects the
+//! hardware via DMI, picks an L1 backend, loads `/etc/hpd/config.toml`,
+//! wires the [`hpd_core::executor::Executor`] to the D-Bus
+//! interface and the netlink/suspend monitors, and drives the
+//! lifecycle (SIGHUP reload, SIGINT/SIGTERM graceful drain).
+//!
+//! Publishes `dev.cirodev.hpd.PowerDaemon1` on the system bus in
+//! production and on the session bus when built with
+//! `--features simulator`. See the project's `CLAUDE.md` for the
+//! end-to-end wiring map and the concurrency layout.
+
 // Daemon sub-modules are only reachable through `run_daemon`, which is
 // only compiled in when at least one vendor backend is active. Without
 // a vendor feature the binary still builds (CI verifies this) but

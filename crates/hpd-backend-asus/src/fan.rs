@@ -19,11 +19,17 @@ enum FanIndex {
     Gpu = 2,
 }
 
+/// [`FanControl`] implementation for ASUS handhelds.
+///
+/// Locates `fanN_input` under `/sys/class/hwmon/hwmonN/` by linear
+/// probe — the kernel does not guarantee a stable hwmon registration
+/// order across boots or driver loads.
 pub struct AsusFanBackend<S: SysfsIo> {
     sysfs: S,
 }
 
 impl<S: SysfsIo> AsusFanBackend<S> {
+    /// Wrap a `SysfsIo` handle (see [`AsusBackend::new`](crate::AsusBackend::new)).
     pub fn new(sysfs: S) -> Self {
         Self { sysfs }
     }

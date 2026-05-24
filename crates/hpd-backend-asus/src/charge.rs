@@ -12,11 +12,19 @@ const AC_PATHS: [&str; 4] = [
     "/sys/class/power_supply/ADP1/online",
 ];
 
+/// [`ChargeControl`] implementation for ASUS handhelds.
+///
+/// Reads `BAT0/charge_control_end_threshold` for the limit and probes
+/// the well-known AC sysfs nodes (`AC`, `ACAD`, `ADP0`, `ADP1`) to
+/// decide whether the charger is currently plugged in.
 pub struct AsusChargeBackend<S: SysfsIo> {
     sysfs: S,
 }
 
 impl<S: SysfsIo> AsusChargeBackend<S> {
+    /// Wrap a `SysfsIo` handle. Free in production (`RealSysfs` is
+    /// zero-sized); cheap in tests (`MockSysfs` shares its `TempDir`
+    /// via `Arc`).
     pub fn new(sysfs: S) -> Self {
         Self { sysfs }
     }

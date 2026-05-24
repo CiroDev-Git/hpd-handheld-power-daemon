@@ -35,24 +35,36 @@ pub enum HpdError {
 pub enum SysfsError {
     /// The sysfs path does not exist (kernel doesn't expose this attribute).
     #[error("Sysfs path not found: {path}")]
-    NotFound { path: PathBuf },
+    NotFound {
+        /// Absolute sysfs path that returned `ENOENT`.
+        path: PathBuf,
+    },
 
     /// The process cannot read/write the path (typically not running as root).
     #[error("Permission denied at sysfs path: {path}")]
-    PermissionDenied { path: PathBuf },
+    PermissionDenied {
+        /// Absolute sysfs path that returned `EACCES`.
+        path: PathBuf,
+    },
 
     /// The file existed but its content could not be parsed as expected.
     #[error("Parse error at {path}: expected {expected}, got '{found}'")]
     ParseError {
+        /// Absolute sysfs path whose contents failed to parse.
         path: PathBuf,
+        /// Human-readable description of the expected format
+        /// (e.g. `"integer 0-100"`).
         expected: &'static str,
+        /// Trimmed raw contents the backend read off disk.
         found: String,
     },
 
     /// Any other I/O error (EIO, ENOSPC, etc.) with path context attached.
     #[error("I/O error at {path}: {source}")]
     Io {
+        /// Absolute sysfs path the failing I/O was targeting.
         path: PathBuf,
+        /// Underlying [`std::io::Error`] preserved for downcasting.
         #[source]
         source: std::io::Error,
     },

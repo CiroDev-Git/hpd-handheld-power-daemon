@@ -1,5 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+//! AC/DC power-source monitor (workspace layer **L0**).
+//!
+//! Subscribes to udev `power_supply` events on Linux and emits
+//! [`Transition::AcPowerChanged`] every time the charger is plugged or
+//! unplugged. On non-Linux targets the crate compiles down to a no-op
+//! that simply awaits `pending()` forever — this keeps the daemon
+//! buildable on macOS/dev hosts where there is no netlink socket.
+//!
+//! The Linux path runs `tokio-udev`'s `AsyncMonitorSocket`, which is
+//! `!Send`; the daemon hosts it on a dedicated `std::thread` with its
+//! own current-thread runtime + `LocalSet`. See
+//! [`hpd-daemon`'s `main.rs`](../hpd_daemon/index.html) for the wiring.
+
 use hpd_core::transition::Transition;
 use tokio::sync::mpsc;
 use tracing::info;
@@ -20,6 +33,14 @@ mod linux {
     const IDENTIFIER_AC: &str = "AC";
     const IDENTIFIER_ADP: &str = "ADP";
 
+    /// Block the current task on the udev `power_supply` subsystem and
+    /// forward every AC-plug / AC-unplug edge to `tx` as a
+    /// [`Transition::AcPowerChanged`].
+    ///
+    /// Returns when either (a) the udev socket errors out terminally or
+    /// (b) the executor on the other end of `tx` is dropped (daemon
+    /// shutting down). All other errors are logged and the loop keeps
+    /// running — AC events are recoverable.
     pub async fn spawn_power_monitor(tx: mpsc::Sender<Transition>) {
         info!("Starting Netlink monitor (udev) for energy events...");
 
@@ -93,6 +114,9 @@ mod linux {
 #[cfg(not(target_os = "linux"))]
 mod dummy {
     use super::*;
+    /// No-op stand-in for `spawn_power_monitor` on non-Linux targets.
+    /// Awaits a never-resolving future so the daemon's `select!` loop
+    /// keeps the binary alive without consuming CPU.
     pub async fn spawn_power_monitor(_tx: mpsc::Sender<Transition>) {
         info!("AC Monitor disabled on macOS (Simulator mode).");
         // Sleeping thread without CPU consume

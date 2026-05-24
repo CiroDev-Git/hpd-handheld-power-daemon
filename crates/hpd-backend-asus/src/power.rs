@@ -20,11 +20,22 @@ const ATTR_FPPT: &str = "ppt_pl3_fppt";
 const ASUS_DEFAULT_SPPT_MAX_MW: u32 = 43_000;
 const ASUS_DEFAULT_FPPT_MAX_MW: u32 = 53_000;
 
+/// [`PowerEnvelope`] implementation for ASUS handhelds.
+///
+/// Reads and writes the SPL / SPPT / FPPT rails through the upstream
+/// `asus-armoury` firmware-attributes driver. The kernel exposes those
+/// rails in **watts** (integer); this backend converts to/from the
+/// domain's [`PowerMilliwatts`] at the I/O boundary so the rest of the
+/// reducer never sees raw kernel units.
+///
+/// Falls back to the documented ROG Ally / Ally X / Xbox Ally X
+/// boost-rail maxima when the `max_value` attribute is missing.
 pub struct AsusPowerBackend<S: SysfsIo> {
     sysfs: S,
 }
 
 impl<S: SysfsIo> AsusPowerBackend<S> {
+    /// Wrap a `SysfsIo` handle (see [`AsusBackend::new`](crate::AsusBackend::new)).
     pub fn new(sysfs: S) -> Self {
         Self { sysfs }
     }

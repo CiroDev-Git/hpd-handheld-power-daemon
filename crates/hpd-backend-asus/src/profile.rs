@@ -13,11 +13,19 @@ const ACPI_LOW_POWER: &str = "low-power";
 const ACPI_BALANCED: &str = "balanced";
 const ACPI_PERFORMANCE: &str = "performance";
 
+/// [`PlatformProfile`] implementation for ASUS handhelds.
+///
+/// Reads/writes `/sys/firmware/acpi/platform_profile` and translates
+/// between the kernel's vendor-specific strings (`quiet`,
+/// `low-power`, `balanced`, `performance`, …) and the domain
+/// [`ProfileName`] enum. Honours `platform_profile_choices` when
+/// resolving `PowerSaver` to the option the firmware actually advertises.
 pub struct AsusProfileBackend<S: SysfsIo> {
     sysfs: S,
 }
 
 impl<S: SysfsIo> AsusProfileBackend<S> {
+    /// Wrap a `SysfsIo` handle (see [`AsusBackend::new`](crate::AsusBackend::new)).
     pub fn new(sysfs: S) -> Self {
         Self { sysfs }
     }

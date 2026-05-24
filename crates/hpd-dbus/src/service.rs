@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+// zbus's `#[interface]` macro synthesises items (interface `name()`
+// shim, `*_changed` signal emitters for properties) whose docs we
+// can't attach via `///`. Suppress the lint module-wide; every
+// human-written method in here is documented individually.
+#![allow(missing_docs)]
+
 use std::str::FromStr;
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, error};
@@ -15,6 +21,14 @@ use hpd_capabilities::charge::{MAX_CHARGE_THRESHOLD, MIN_CHARGE_THRESHOLD};
 use crate::actions::PolkitAction;
 use crate::polkit;
 
+/// Backing object for the `dev.cirodev.hpd.PowerDaemon1` D-Bus interface.
+///
+/// Holds the channels that connect the D-Bus layer to the rest of the
+/// daemon — an [`mpsc::Sender`] for emitting [`Transition`]s into the
+/// executor, a [`watch::Receiver`] for reading the current
+/// [`ProfileState`] in property getters without locking, and a frozen
+/// snapshot of the hardware [`PowerEnvelopeLimits`] for the
+/// `get_hardware_limits` reply.
 pub struct PowerDaemonInterface {
     tx: mpsc::Sender<Transition>,
     state_rx: watch::Receiver<ProfileState>,
@@ -22,6 +36,10 @@ pub struct PowerDaemonInterface {
 }
 
 impl PowerDaemonInterface {
+    /// Build the interface from the daemon's wiring. `tx` is the
+    /// command lane into the [`Executor`](hpd_core::executor::Executor);
+    /// `state_rx` is the live state mirror property getters read from;
+    /// `limits` is the immutable hardware envelope detected at startup.
     pub fn new(
         tx: mpsc::Sender<Transition>,
         state_rx: watch::Receiver<ProfileState>,
@@ -45,7 +63,11 @@ fn executor_down() -> zbus::fdo::Error {
 
 #[interface(name = "dev.cirodev.hpd.PowerDaemon1")]
 impl PowerDaemonInterface {
-    /// Change SPL
+    /// Set the Sustained Power Limit (SPL) in watts.
+    ///
+    /// `polkit` action: `dev.cirodev.hpd.set-tdp` (`auth_admin`).
+    /// SPPT and FPPT are derived from SPL via the runtime multipliers
+    /// (`sppt_factor` / `fppt_factor`) in the executor.
     async fn set_spl(
         &self,
         watts: u32,
@@ -63,6 +85,9 @@ impl PowerDaemonInterface {
         Ok(())
     }
 
+    /// Apply a named TDP preset (`eco`, `balanced`, `max`).
+    ///
+    /// `polkit` action: `dev.cirodev.hpd.set-tdp`.
     async fn set_preset(
         &self,
         preset_name: String,
@@ -83,12 +108,16 @@ impl PowerDaemonInterface {
         Ok(())
     }
 
+    /// Current SPL in whole watts (the UI never sees milliwatts).
     #[zbus(property)]
     async fn current_spl(&self) -> u32 {
         // UI shows whole watts; conversion lives on the value type.
         self.state_rx.borrow().power_target.spl.as_watts()
     }
 
+    /// Set the battery charge end threshold (percentage, 20-100).
+    ///
+    /// `polkit` action: `dev.cirodev.hpd.set-charge`.
     async fn set_charge_threshold(
         &self,
         threshold: u8,
@@ -124,6 +153,7 @@ impl PowerDaemonInterface {
         self.state_rx.borrow().active_profile.to_string()
     }
 
+    /// Current battery charge end threshold (percentage).
     #[zbus(property)]
     async fn charge_end_threshold(&self) -> u8 {
         self.state_rx.borrow().charge_end_threshold
@@ -143,6 +173,8 @@ impl PowerDaemonInterface {
         self.state_rx.borrow().fan_follows_tdp
     }
 
+    /// Hardware-imposed envelope limits (all watts):
+    /// `(spl_min, spl_max, sppt_max, fppt_max)`.
     async fn get_hardware_limits(&self) -> zbus::fdo::Result<(u32, u32, u32, u32)> {
         Ok((
             self.limits.spl_min.as_watts(),
@@ -152,10 +184,18 @@ impl PowerDaemonInterface {
         ))
     }
 
+    /// Whether the charger is currently plugged in. Re-queried at boot
+    /// and updated live from the netlink monitor.
     async fn is_ac_connected(&self) -> zbus::fdo::Result<bool> {
         Ok(self.state_rx.borrow().is_ac_connected)
     }
 
+    /// Set the ACPI platform/cooling profile manually
+    /// (`power-saver`, `balanced`, `performance`, or a custom vendor
+    /// string). Flips `auto_cooling` to `false` for the rest of the
+    /// session — re-enable with [`set_fan_auto`](Self::set_fan_auto).
+    ///
+    /// `polkit` action: `dev.cirodev.hpd.set-profile` (`auth_admin_keep`).
     async fn set_profile(
         &self,
         profile: &str,
@@ -177,6 +217,10 @@ impl PowerDaemonInterface {
         Ok(())
     }
 
+    /// Re-enable auto-cooling: the daemon resumes inferring the
+    /// platform profile from the active TDP envelope.
+    ///
+    /// `polkit` action: `dev.cirodev.hpd.set-profile`.
     async fn set_fan_auto(
         &self,
         #[zbus(connection)] conn: &zbus::Connection,

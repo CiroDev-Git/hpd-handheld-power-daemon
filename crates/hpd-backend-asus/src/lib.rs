@@ -14,10 +14,17 @@
 //! with partial hardware support implement fewer accessors — see
 //! [`hpd_capabilities::backend::HwBackend`] for the contract.
 
+/// Battery charge-threshold backend backed by
+/// `/sys/class/power_supply/BAT0/charge_control_end_threshold`.
 pub mod charge;
+/// DMI-based detection of the supported ASUS handheld variants.
 pub mod detect;
+/// CPU/GPU fan-RPM reader (read-only — fan curves stay in firmware).
 pub mod fan;
+/// SPL / SPPT / FPPT envelope backend backed by the upstream
+/// `asus-armoury` firmware-attributes driver.
 pub mod power;
+/// ACPI platform-profile reader/writer (`/sys/firmware/acpi/platform_profile`).
 pub mod profile;
 
 use hpd_capabilities::backend::HwBackend;
@@ -31,9 +38,13 @@ use hpd_sysfs::SysfsIo;
 /// single-responsibility sub-backends and exposes them via the
 /// [`HwBackend`] accessor surface.
 pub struct AsusBackend<S: SysfsIo + Clone> {
+    /// SPL / SPPT / FPPT envelope backend.
     pub power: power::AsusPowerBackend<S>,
+    /// Battery charge-threshold backend.
     pub charge: charge::AsusChargeBackend<S>,
+    /// CPU/GPU fan-RPM backend (read-only).
     pub fan: fan::AsusFanBackend<S>,
+    /// ACPI platform-profile backend.
     pub profile: profile::AsusProfileBackend<S>,
 }
 

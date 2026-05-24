@@ -11,6 +11,22 @@ remediation plan at [`docs/audit/REMEDIATION_PLAN_V1.md`](docs/audit/REMEDIATION
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`missing_docs` lint enabled workspace-wide** — every public item
+  carries a `///` doc comment and every module file opens with a
+  `//!` block. CI runs with `-D warnings` so this is effectively an
+  error in CI. Rustdoc inline documentation now exists across the 6
+  crates that were missing it post-Lote-21: `hpd-error`,
+  `hpd-netlink`, `hpd-backend-asus`, `hpd-dbus`, `hpd-cli`,
+  `hpd-daemon`. Documentation coverage now matches the L-1→L4
+  workspace layout.
+  *(Lote 43 — Audit V2 Phase 3)*
+
+---
+
 ## [1.0.0] — 2026-05-24
 
 This release jumps directly from `0.1.0` to `1.0.0`. The intermediate

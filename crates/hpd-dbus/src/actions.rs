@@ -7,6 +7,13 @@
 //! error at the matching `as_id` arm, and updating the matching
 //! `<action>` block in `package/polkit/dev.cirodev.hpd.policy`.
 
+/// Typed identifier for every polkit action the daemon registers.
+///
+/// One variant per privileged D-Bus setter. The mapping to the
+/// `action_id` strings declared in
+/// `package/polkit/dev.cirodev.hpd.policy` lives in [`Self::as_id`];
+/// adding a new variant triggers a compile error there until the
+/// matching policy block is wired up.
 #[derive(Debug, Clone, Copy)]
 pub enum PolkitAction {
     /// Change the TDP envelope (SPL / SPPT / FPPT or a preset).
@@ -21,6 +28,7 @@ pub enum PolkitAction {
 }
 
 impl PolkitAction {
+    /// Polkit `action_id` string declared in the project's policy file.
     pub const fn as_id(self) -> &'static str {
         match self {
             PolkitAction::SetTdp => "dev.cirodev.hpd.set-tdp",

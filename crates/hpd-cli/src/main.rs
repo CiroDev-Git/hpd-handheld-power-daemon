@@ -1,5 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+//! `hpdctl` — user-facing CLI for the Handheld Power Daemon.
+//!
+//! Thin client that talks to the running `hpd-daemon` over the
+//! `dev.cirodev.hpd.PowerDaemon1` D-Bus interface. Binds to the
+//! **system bus** in production and to the **session bus** when the
+//! `HPD_SIMULATOR` env var is set (matching the daemon's behaviour
+//! under `--features simulator`).
+//!
+//! See `hpdctl --help` for the subcommand surface; the public CLI is
+//! considered stable under SemVer from `1.0.0` onward.
+
 mod dbus;
 
 use clap::{Parser, Subcommand};
