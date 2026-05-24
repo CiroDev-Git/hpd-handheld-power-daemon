@@ -119,6 +119,10 @@ jobs:
   # Supply-chain checks: known-vulnerable deps (cargo-audit against the
   # RustSec advisory DB) + license / banned-crate / duplicate-version
   # policy (cargo-deny against deny.toml at repo root).
+  #
+  # Uses `stable` (not the pinned MSRV) because cargo-audit and its own
+  # transitive deps track the current Rust release. MSRV is enforced by
+  # the build-test and feature-matrix jobs above.
   supply-chain:
     name: Supply chain (audit + deny)
     runs-on: ubuntu-latest
@@ -126,7 +130,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.85.0
+        uses: dtolnay/rust-toolchain@stable
 
       - name: cargo audit
         uses: rustsec/audit-check@v1
