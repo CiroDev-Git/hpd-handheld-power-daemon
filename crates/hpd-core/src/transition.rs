@@ -23,9 +23,15 @@ pub enum Transition {
     SetProfile(ProfileName),
     /// User-requested change of the battery charge end threshold.
     ChargeThresholdChanged(u8),
-    /// Forced rollback to the value the kernel actually reports, used
-    /// by the executor after a backend write fails.
+    /// Forced rollback to the power envelope the kernel actually
+    /// reports, used by the executor after `set_target` fails.
     SyncPowerTarget(PowerEnvelopeTarget),
+    /// Forced rollback to the platform profile the kernel actually
+    /// reports, used by the executor after `set_active_profile` fails.
+    SyncPlatformProfile(ProfileName),
+    /// Forced rollback to the charge end threshold the kernel actually
+    /// reports, used by the executor after `set_end_threshold` fails.
+    SyncChargeThreshold(u8),
     /// AC charger was plugged (`true`) or unplugged (`false`).
     /// Triggers preset swap + `last_dc_target` bookkeeping.
     AcPowerChanged(bool),

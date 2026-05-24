@@ -204,6 +204,96 @@ async fn test_executor_rolls_back_on_hardware_failure() {
 }
 
 #[tokio::test]
+async fn test_executor_rolls_back_on_profile_write_failure() {
+    // Lote 38 / Audit V2 §4.5.1 regression. Before the uniform-rollback
+    // refactor, a failed ApplyPlatformProfile silently left state diverged
+    // from hardware. With the new contract the executor reads the
+    // kernel-reported profile back and re-injects SyncPlatformProfile,
+    // so the watch::Receiver converges on the *hardware reality*, not
+    // the requested-but-rejected value.
+    let backend = MockBackend::new(initial_state().power_target.clone(), limits());
+    // Override the mock's stored profile to `Balanced` (different from
+    // both the test's initial state and the requested Performance, so
+    // we can tell rollback by inspection alone).
+    *backend
+        .profile
+        .lock()
+        .expect("mock mutex never poisoned in tests") = ProfileName::Balanced;
+    backend.fail_writes.store(true, Ordering::SeqCst);
+
+    let path = fresh_temp_path("profile_rollback");
+    let persister = StatePersister::new(&path);
+
+    // Start the executor with a profile different from the kernel's
+    // (Balanced), so the rollback edge is observable.
+    let mut start_state = initial_state();
+    start_state.active_profile = ProfileName::PowerSaver;
+
+    let (tx, rx) = mpsc::channel(32);
+    let (executor, mut state_rx) = Executor::new(
+        backend,
+        start_state,
+        limits(),
+        config(),
+        rx,
+        tx.clone(),
+        persister,
+    );
+    let exec_handle = tokio::spawn(executor.run());
+
+    // User asks for Performance; backend refuses; executor rolls back
+    // to the kernel-reported `Balanced`.
+    tx.send(Transition::SetProfile(ProfileName::Performance))
+        .await
+        .unwrap();
+    let rolled_back =
+        wait_state(&mut state_rx, |s| s.active_profile == ProfileName::Balanced).await;
+    assert_eq!(rolled_back.active_profile, ProfileName::Balanced);
+
+    exec_handle.abort();
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn test_executor_rolls_back_on_charge_threshold_write_failure() {
+    // Mirror of the profile-rollback test for the charge end threshold
+    // (Lote 38 / Audit V2 §4.5.1).
+    let backend = MockBackend::new(initial_state().power_target.clone(), limits());
+    // Override the mock's stored charge threshold to 75 (different from
+    // both the initial state's 80 and the requested 60).
+    *backend
+        .charge
+        .lock()
+        .expect("mock mutex never poisoned in tests") = 75;
+    backend.fail_writes.store(true, Ordering::SeqCst);
+
+    let path = fresh_temp_path("charge_rollback");
+    let persister = StatePersister::new(&path);
+
+    let (tx, rx) = mpsc::channel(32);
+    let (executor, mut state_rx) = Executor::new(
+        backend,
+        initial_state(), // charge_end_threshold = 80
+        limits(),
+        config(),
+        rx,
+        tx.clone(),
+        persister,
+    );
+    let exec_handle = tokio::spawn(executor.run());
+
+    // User requests 60%; backend refuses; executor rolls back to 75.
+    tx.send(Transition::ChargeThresholdChanged(60))
+        .await
+        .unwrap();
+    let rolled_back = wait_state(&mut state_rx, |s| s.charge_end_threshold == 75).await;
+    assert_eq!(rolled_back.charge_end_threshold, 75);
+
+    exec_handle.abort();
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
 async fn test_executor_propagates_state_to_watch_receiver() {
     // The watch::Receiver is the channel hpd-dbus subscribes to for
     // emitting PropertiesChanged. Verify accepted transitions surface there.

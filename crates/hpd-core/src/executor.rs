@@ -6,6 +6,7 @@ use tracing::{debug, error, info, instrument, warn};
 use hpd_capabilities::backend::HwBackend;
 use hpd_capabilities::power::PowerEnvelopeLimits;
 use hpd_capabilities::profile::RuntimeConfig;
+use hpd_error::HpdError;
 
 use crate::effect::Effect;
 use crate::reducer::reduce;
@@ -136,45 +137,44 @@ impl<B: HwBackend> Executor<B> {
         info!("Executor stopped.");
     }
 
-    /// Dispatch a single efect to some backend
+    /// Dispatch a single effect to the backend. Every `Apply*` arm
+    /// shares the same contract via [`Executor::rollback`]: on write
+    /// failure, read the kernel-reported value back and re-inject the
+    /// matching `Sync*` transition so the in-memory `ProfileState`
+    /// stays consistent with hardware reality.
     #[instrument(skip(self), level = "debug")]
     async fn handle_effect(&self, effect: Effect) {
         match effect {
             Effect::ApplyPowerEnvelope(target) => {
                 if let Err(e) = self.backend.set_target(&target) {
-                    error!(error = %e, "Failed to apply Power Envelope to hardware");
-                    match self.backend.get_target() {
-                        Ok(real_target) => {
-                            warn!(
-                                "Rolling back state to match hardware reality: {:?}",
-                                real_target
-                            );
-                            let _ = self
-                                .internal_tx
-                                .send(Transition::SyncPowerTarget(real_target))
-                                .await;
-                        }
-                        Err(read_err) => {
-                            error!(
-                                "CRITICAL: Hardware state unreadable after write failure: {}",
-                                read_err
-                            );
-                        }
-                    }
+                    self.rollback("ApplyPowerEnvelope", e, || {
+                        self.backend.get_target().map(Transition::SyncPowerTarget)
+                    })
+                    .await;
                 } else {
                     debug!("Power Envelope applied successfully");
                 }
             }
             Effect::ApplyPlatformProfile(profile) => {
                 if let Err(e) = self.backend.set_active_profile(&profile) {
-                    error!(error = %e, "Failed to apply Platform Profile via PPD");
+                    self.rollback("ApplyPlatformProfile", e, || {
+                        self.backend
+                            .get_active_profile()
+                            .map(Transition::SyncPlatformProfile)
+                    })
+                    .await;
                 } else {
                     debug!("Platform Profile applied successfully");
                 }
             }
             Effect::ApplyChargeThreshold(threshold) => {
                 if let Err(e) = self.backend.set_end_threshold(threshold) {
-                    error!(error = %e, "Failed to apply charge threshold");
+                    self.rollback("ApplyChargeThreshold", e, || {
+                        self.backend
+                            .get_end_threshold()
+                            .map(Transition::SyncChargeThreshold)
+                    })
+                    .await;
                 } else {
                     debug!("Charge threshold applied successfully");
                 }
@@ -183,6 +183,43 @@ impl<B: HwBackend> Executor<B> {
                 let current_state = self.state_tx.borrow().clone();
                 self.persister.save(&current_state).await;
             }
+        }
+    }
+
+    /// Shared rollback path for every `Effect::Apply*` arm. On a backend
+    /// write failure, attempt to read the current hardware state and
+    /// re-inject the matching `Sync*` transition so `ProfileState`
+    /// converges back to what the kernel actually reports.
+    ///
+    /// `build_sync_transition` is the per-effect adapter: it calls the
+    /// matching `backend.get_*()` and wraps the value in the
+    /// corresponding `Transition::Sync*` variant. Returning `Err` from
+    /// it (hardware fully unreadable) leaves state diverged and logs a
+    /// CRITICAL — by then we have no authoritative value to converge
+    /// on, and refusing to drop pending effects is safer than guessing.
+    async fn rollback<F>(&self, effect_label: &'static str, err: HpdError, build_sync_transition: F)
+    where
+        F: FnOnce() -> Result<Transition, HpdError>,
+    {
+        error!(effect = effect_label, error = %err, "Backend write failed");
+        match build_sync_transition() {
+            Ok(transition) => {
+                warn!(
+                    effect = effect_label,
+                    "Rolling back in-memory state to match hardware"
+                );
+                if self.internal_tx.send(transition).await.is_err() {
+                    error!(
+                        effect = effect_label,
+                        "Rollback transition could not be sent (executor channel closed)"
+                    );
+                }
+            }
+            Err(read_err) => error!(
+                effect = effect_label,
+                error = %read_err,
+                "CRITICAL: hardware state unreadable after write failure"
+            ),
         }
     }
 }

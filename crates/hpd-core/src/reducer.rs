@@ -138,6 +138,19 @@ pub fn reduce(
             new_state.power_target = real_target;
         }
 
+        Transition::SyncPlatformProfile(real_profile) => {
+            // Mirror of SyncPowerTarget for the platform profile rail.
+            // No PersistState here either: the executor reads the
+            // authoritative value back from hardware, so a reboot
+            // would re-read the same value and converge anyway.
+            new_state.active_profile = real_profile;
+        }
+
+        Transition::SyncChargeThreshold(real_threshold) => {
+            // Mirror of SyncPowerTarget for the charge end threshold.
+            new_state.charge_end_threshold = real_threshold;
+        }
+
         Transition::AcPowerChanged(is_plugged) => {
             // Debounce: ignore no-op transitions.
             if state.is_ac_connected == is_plugged {
@@ -690,7 +703,7 @@ mod tests {
         assert!(matches!(result, Err(HpdError::InvariantViolation(_))));
     }
 
-    // ---------- SyncPowerTarget (rollback path) ----------
+    // ---------- Sync* (rollback paths) ----------
 
     #[test]
     fn test_sync_power_target_overwrites_state_without_side_effects() {
@@ -710,6 +723,48 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out.new_state.power_target, real);
+        assert!(
+            out.effects.is_empty(),
+            "rollback must not produce effects, got {:?}",
+            out.effects
+        );
+    }
+
+    #[test]
+    fn test_sync_platform_profile_overwrites_state_without_side_effects() {
+        // Mirror of SyncPowerTarget for the platform profile rail
+        // (Lote 38 / Audit V2 §4.5.1).
+        let mut state = setup_state();
+        state.active_profile = ProfileName::Performance;
+        let out = reduce(
+            &state,
+            Transition::SyncPlatformProfile(ProfileName::PowerSaver),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert_eq!(out.new_state.active_profile, ProfileName::PowerSaver);
+        assert!(
+            out.effects.is_empty(),
+            "rollback must not produce effects, got {:?}",
+            out.effects
+        );
+    }
+
+    #[test]
+    fn test_sync_charge_threshold_overwrites_state_without_side_effects() {
+        // Mirror of SyncPowerTarget for the charge end threshold
+        // (Lote 38 / Audit V2 §4.5.1).
+        let state = setup_state();
+        assert_ne!(state.charge_end_threshold, 65);
+        let out = reduce(
+            &state,
+            Transition::SyncChargeThreshold(65),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert_eq!(out.new_state.charge_end_threshold, 65);
         assert!(
             out.effects.is_empty(),
             "rollback must not produce effects, got {:?}",
