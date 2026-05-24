@@ -1,0 +1,121 @@
+name: AUR sync
+
+# Fires when release.yml has published a GitHub Release. Skips
+# pre-releases (RC/alpha/beta tags create Drafts that go nowhere
+# downstream). Opt-in: does nothing useful without the AUR_SSH_KEY
+# repository secret configured.
+on:
+  release:
+    types: [published]
+
+# We only read the repository contents; the only write is to AUR
+# over SSH, which is gated by the AUR_SSH_KEY secret.
+permissions:
+  contents: read
+
+# If two releases publish back-to-back, queue (don't cancel) — both
+# need to land in AUR in order.
+concurrency:
+  group: aur-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Render PKGBUILDs and push to AUR
+    runs-on: ubuntu-latest
+    # `archlinux:base-devel` gives us makepkg + pacman + bash. We
+    # install only the small extras (openssh, git) on top.
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Install dependencies (git, openssh, nodejs for actions/checkout)
+        run: |
+          pacman -Sy --noconfirm --needed git openssh sudo nodejs
+
+      - uses: actions/checkout@v4
+
+      - name: Skip pre-releases
+        if: github.event.release.prerelease
+        run: |
+          echo "::notice::Pre-release tag (${{ github.event.release.tag_name }}) — AUR sync is for stable releases only. Skipping."
+          # Exit success so the workflow doesn't mark the release run
+          # as failed.
+          exit 0
+
+      - name: Parse version from release tag
+        if: ${{ ! github.event.release.prerelease }}
+        id: ver
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.release.tag_name }}"
+          version="${tag#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag"         >> "$GITHUB_OUTPUT"
+          echo "Resolved tag=$tag → version=$version"
+
+      - name: Configure SSH for AUR (opt-in)
+        if: ${{ ! github.event.release.prerelease }}
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        id: ssh
+        run: |
+          set -euo pipefail
+          if [ -z "${AUR_SSH_KEY:-}" ]; then
+            echo "::notice::AUR sync skipped: no AUR_SSH_KEY repository secret configured. Configure it under Settings → Secrets → Actions to enable automatic AUR pushes."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          # Write the key. The runner masks it in logs.
+          printf '%s\n' "$AUR_SSH_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          # Pin AUR's host key — fetched once, then trusted. If AUR
+          # ever rotates, the workflow will fail loudly and a human
+          # maintainer can refresh the known_hosts pin via PR.
+          ssh-keyscan -t ed25519,rsa aur.archlinux.org > ~/.ssh/known_hosts 2>/dev/null
+          cat > ~/.ssh/config <<'EOF'
+          Host aur.archlinux.org
+              User aur
+              IdentityFile ~/.ssh/aur
+              StrictHostKeyChecking yes
+              IdentitiesOnly yes
+          EOF
+          chmod 600 ~/.ssh/config
+          # makepkg in base-devel refuses to run as root. Set up a
+          # builder user with sudo.
+          useradd --create-home --shell /bin/bash builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
+          # Copy ssh + repo to builder so makepkg's UID has access.
+          cp -r ~/.ssh /home/builder/.ssh
+          chown -R builder:builder /home/builder/.ssh
+          chmod 700 /home/builder/.ssh
+          chmod 600 /home/builder/.ssh/aur
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Push source package to AUR
+        if: ${{ ! github.event.release.prerelease && steps.ssh.outputs.configured == 'true' }}
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          chmod +x scripts/aur-sync.sh
+          # makepkg refuses root; run as builder, but pass the repo
+          # checkout to it explicitly. Copy script + templates to the
+          # builder's home so it can read them.
+          cp -r . /home/builder/repo
+          chown -R builder:builder /home/builder/repo
+          sudo -u builder -H bash -c "cd /home/builder/repo && ./scripts/aur-sync.sh hpd-handheld-power-daemon \"$VERSION\""
+
+      - name: Push binary package to AUR
+        if: ${{ ! github.event.release.prerelease && steps.ssh.outputs.configured == 'true' }}
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          chmod +x scripts/aur-sync.sh
+          # The release tarball must exist in the GitHub Release for
+          # the bin package's sha256 computation to succeed. Releases
+          # publish the tarball as part of release.yml's `gh release
+          # create` step, so by the time we get here the asset is
+          # already up.
+          sudo -u builder -H bash -c "cd /home/builder/repo && ./scripts/aur-sync.sh hpd-handheld-power-daemon-bin \"$VERSION\""

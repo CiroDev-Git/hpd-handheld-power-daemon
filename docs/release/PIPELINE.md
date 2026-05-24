@@ -186,26 +186,44 @@ GPG_PRIVATE_KEY` and continues. The Release still includes
 
 ## 6. AUR distribution
 
-Arch users get `hpd` via two AUR packages (handled in
-[Lote 51 / `package/aur/`](../../package/aur/)):
+Arch users get `hpd` via two AUR packages, rendered from templates
+under [`package/aur/`](../../package/aur/):
 
-| AUR name                          | Source                                              |
-|-----------------------------------|-----------------------------------------------------|
-| `hpd-handheld-power-daemon`       | Builds from source at a specific tag.               |
-| `hpd-handheld-power-daemon-bin`   | Repacks the official tarball — fast install.       |
+| AUR name                          | Template                                | Source                                              |
+|-----------------------------------|-----------------------------------------|-----------------------------------------------------|
+| `hpd-handheld-power-daemon`       | `package/aur/PKGBUILD.template`         | Builds from source at a specific tag.               |
+| `hpd-handheld-power-daemon-bin`   | `package/aur/PKGBUILD-bin.template`     | Repacks the official tarball — fast install.        |
 
-The AUR push is opt-in via an `AUR_SSH_KEY` repo secret containing
-a private SSH key with push access to the AUR repositories. When
-the secret is configured and a stable tag is published, the workflow:
+Both packages share the install hook at `package/aur/hpd.install`,
+which runs `systemctl daemon-reload` post-install/upgrade/remove and
+prints the next-steps message operators see during `pacman -S`.
 
-1. Renders `package/aur/PKGBUILD.template` with the new version
-   and computed `sha256sums`.
-2. Generates `.SRCINFO` via `makepkg --printsrcinfo`.
-3. Commits to both AUR repos via SSH.
+The AUR push is **opt-in** via an `AUR_SSH_KEY` repo secret
+containing a private SSH key with push access to both AUR
+repositories. The implementation:
 
-If `AUR_SSH_KEY` is not configured, the step is skipped silently
-with a log line. The maintainer can still update AUR manually
-following the recipe in [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md).
+- **Workflow:** [`.github/workflows/aur-sync.yml`](../../.github/workflows/aur-sync.yml).
+  Triggers on `release.published`. Runs inside an
+  `archlinux:base-devel` container so `makepkg` is available.
+- **Per-package script:** [`scripts/aur-sync.sh`](../../scripts/aur-sync.sh)
+  (`<pkgname> <version>`). Downloads the matching upstream tarball,
+  computes its `sha256`, renders the chosen `PKGBUILD.template`
+  via `sed`, generates `.SRCINFO` via `makepkg --printsrcinfo`,
+  clones the AUR repo, commits, and pushes.
+
+Behaviour rules:
+
+- **Pre-release tags are skipped.** RCs/alphas/betas (any tag with
+  `-` in it) are not published to AUR — only stable `vX.Y.Z`.
+- **Missing secret is silent.** If `AUR_SSH_KEY` is not configured
+  the workflow emits a `::notice::` and exits 0. The maintainer can
+  still update AUR manually following the recipe in
+  [`RELEASE_CHECKLIST.md` §5](RELEASE_CHECKLIST.md#5-aur-update-manual-fallback).
+- **Sync runs after the GitHub Release exists.** The bin package's
+  `sha256` is computed over the release asset, which must already be
+  published — `release.yml` runs first, this workflow's
+  `release: published` trigger fires only after the Release has its
+  assets attached.
 
 ---
 

@@ -223,47 +223,53 @@ Expected outcome:
 
 ## 5. AUR update (manual fallback)
 
-If `AUR_SSH_KEY` is configured, the workflow has already pushed to
-AUR — skip to §6. Otherwise:
+If `AUR_SSH_KEY` is configured, the [`aur-sync.yml`](../../.github/workflows/aur-sync.yml)
+workflow has already pushed to AUR — skip to §6. Otherwise, the
+manual path is just running [`scripts/aur-sync.sh`](../../scripts/aur-sync.sh)
+locally for each package (Arch host required — needs `makepkg`).
 
-### 5a. Source package: `hpd-handheld-power-daemon`
-
-```bash
-cd /tmp
-git clone ssh://aur@aur.archlinux.org/hpd-handheld-power-daemon.git
-cd hpd-handheld-power-daemon
-
-# Render the new PKGBUILD from the template
-cp <hpd-checkout>/package/aur/PKGBUILD.template ./PKGBUILD
-sed -i "s/__VERSION__/${new_version}/g" PKGBUILD
-
-# Compute the source tarball's checksum
-checksum=$(curl -fsSL "https://github.com/CiroDev-Git/hpd-handheld-power-daemon/archive/v${new_version}.tar.gz" \
-    | sha256sum | awk '{print $1}')
-sed -i "s/__SHA256__/${checksum}/" PKGBUILD
-
-# Regenerate .SRCINFO
-makepkg --printsrcinfo > .SRCINFO
-
-# Sanity-build it locally before pushing
-makepkg --syncdeps --noconfirm --check
-
-git add PKGBUILD .SRCINFO
-git commit -m "Update to ${new_version}"
-git push
-```
-
-### 5b. Binary package: `hpd-handheld-power-daemon-bin`
-
-Same dance against `hpd-handheld-power-daemon-bin.git`, but the
-PKGBUILD points at the release's tarball asset URL and the checksum
-is computed over the release tarball (not the GitHub source archive).
+### 5a. One-time SSH setup
 
 ```bash
-checksum=$(curl -fsSL \
-    "https://github.com/CiroDev-Git/hpd-handheld-power-daemon/releases/download/v${new_version}/hpd-${new_version}-x86_64-linux.tar.gz" \
-    | sha256sum | awk '{print $1}')
+# AUR_KEY is the path to your private key with push access
+mkdir -p ~/.ssh
+cp /path/to/AUR_KEY ~/.ssh/aur
+chmod 600 ~/.ssh/aur
+ssh-keyscan -t ed25519,rsa aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
+cat >> ~/.ssh/config <<'EOF'
+Host aur.archlinux.org
+    User aur
+    IdentityFile ~/.ssh/aur
+    StrictHostKeyChecking yes
+    IdentitiesOnly yes
+EOF
+chmod 600 ~/.ssh/config
+ssh aur@aur.archlinux.org help   # smoke-test
 ```
+
+### 5b. Source package: `hpd-handheld-power-daemon`
+
+```bash
+cd <hpd-repo-checkout>
+./scripts/aur-sync.sh hpd-handheld-power-daemon "${new_version}"
+```
+
+### 5c. Binary package: `hpd-handheld-power-daemon-bin`
+
+The binary package's `sha256` is computed over the release tarball
+attached to the GitHub Release. Confirm the Release is already
+published (check the Releases tab) before running this — otherwise
+the script fails with a 404 from `curl` and you'll need to retry
+after the asset uploads.
+
+```bash
+cd <hpd-repo-checkout>
+./scripts/aur-sync.sh hpd-handheld-power-daemon-bin "${new_version}"
+```
+
+Both invocations print the computed `sha256`, the rendered PKGBUILD
+location, and the AUR push result. Re-running with the same version
+is a no-op (the script detects "no changes to push").
 
 ---
 

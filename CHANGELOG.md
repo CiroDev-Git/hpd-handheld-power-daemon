@@ -73,6 +73,46 @@ remediation plan at [`docs/audit/REMEDIATION_PLAN_V1.md`](docs/audit/REMEDIATION
   trip on `HPD_SIMULATOR=1` + `--features simulator` having to
   be passed together.
   *(Lote 47 — Audit V2 Phase 4)*
+- **AUR packaging — templates + opt-in sync workflow** (Phase 5
+  closeout). Five new files plus targeted updates to PIPELINE.md
+  and RELEASE_CHECKLIST.md to reference the real paths instead of
+  placeholders:
+  - `package/aur/PKGBUILD.template` — source-build package
+    `hpd-handheld-power-daemon` rendered against
+    `$url/archive/v$pkgver.tar.gz` and built with
+    `cargo build --release --frozen --workspace`. Installs
+    binaries to `/usr/bin` (AUR convention) and rewrites the
+    shipped `package/hpd.service` `ExecStart` path to match via
+    `sed` so the unit works against the AUR install layout.
+  - `package/aur/PKGBUILD-bin.template` — prebuilt-repack package
+    `hpd-handheld-power-daemon-bin` (`provides=` + `conflicts=`
+    the source one) that downloads
+    `releases/download/v$pkgver/hpd-$pkgver-x86_64-linux.tar.gz`
+    and skips compilation entirely. Same install layout.
+  - `package/aur/hpd.install` — shared pacman hook for both
+    packages: `daemon-reload` on install/upgrade/remove, sends
+    SIGHUP to a running `hpd.service` on upgrade (matching the
+    project's documented hot-reload contract), prints "next
+    steps" message on first install with the
+    `systemctl enable --now` and `config.toml` copy hints.
+  - `scripts/aur-sync.sh` — standalone-runnable renderer
+    (`<pkgname> <version>`) used by both the workflow and the
+    manual fallback path in RELEASE_CHECKLIST §5. Downloads the
+    matching upstream tarball, computes its sha256, renders the
+    chosen template via sed, regenerates `.SRCINFO` via
+    `makepkg --printsrcinfo`, clones the AUR repo over SSH,
+    commits + pushes. Detects "no changes to push" as a no-op
+    so re-running for the same version is safe.
+  - `.github/workflows/aur-sync.yml` — opt-in CI workflow
+    triggered on `release.published`. Runs inside an
+    `archlinux:base-devel` container so `makepkg` is available
+    without third-party actions. Skips pre-releases (RCs go to
+    Draft, AUR is for stable only); skips silently with a
+    `::notice::` when `AUR_SSH_KEY` repo secret is unset. Sets
+    up a non-root `builder` user (`makepkg` refuses root),
+    pins AUR's host key via `ssh-keyscan`, and pushes both
+    source + bin packages in sequence.
+  *(Lote 51 — Audit V2 Phase 5)*
 - **`.github/workflows/release.yml`** + **`scripts/extract-changelog-section.sh`**.
   Implements the GitHub-native release model designed in
   [`docs/release/PIPELINE.md`](docs/release/PIPELINE.md). Triggers on
