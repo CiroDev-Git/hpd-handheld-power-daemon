@@ -28,7 +28,7 @@ yanked  = "warn"
 ignore  = []
 
 [licenses]
-version    = "2"
+version    = 2
 confidence-threshold = 0.85
 # Compatible licences for a GPL-3.0-or-later codebase. MIT, Apache,
 # BSD-2/3, ISC, Zlib, Unicode-DFS — all standard Rust ecosystem
