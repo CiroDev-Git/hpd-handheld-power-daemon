@@ -16,9 +16,10 @@ Everything sits behind a single D-Bus interface
 (`dev.cirodev.hpd.PowerDaemon1`) on the system bus, and a thin CLI
 (`hpdctl`) drives it.
 
-> ⚠ **Status:** 0.1.x — public surface (D-Bus, CLI flags, state file
-> layout) is intentionally unstable and is being broken on the way to
-> 0.2.0. See [`CHANGELOG.md`](CHANGELOG.md).
+> **Status:** `v1.0.0` — the public surface (D-Bus interface, `hpdctl`
+> CLI, on-disk state at `/var/lib/hpd/state.toml`, polkit action IDs)
+> is stable and follows [SemVer](https://semver.org/). Future
+> breaking changes require a major bump. See [`CHANGELOG.md`](CHANGELOG.md).
 
 ---
 
@@ -192,9 +193,9 @@ For the full design, the dependency direction rules, and the recipes
 for adding a new D-Bus method or vendor backend, see
 [`CLAUDE.md`](CLAUDE.md).
 
-The audit that drives the current 0.2.0 cleanup work lives at
-`docs/audit/AUDIT_V1.md` (gitignored — internal working notes); the
-shipped result is tracked in [`CHANGELOG.md`](CHANGELOG.md).
+Working audits live under `docs/audit/` (gitignored — internal
+notes); the shipped behaviour and per-release breaking-change log
+live in [`CHANGELOG.md`](CHANGELOG.md).
 
 ---
 

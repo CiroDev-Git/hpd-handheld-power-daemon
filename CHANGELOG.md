@@ -11,12 +11,18 @@ remediation plan at [`docs/audit/REMEDIATION_PLAN_V1.md`](docs/audit/REMEDIATION
 
 ---
 
-## [Unreleased] — 0.2.0 target
+## [Unreleased] — 1.0.0 target
 
-This release groups every change from the AUDIT_V1 remediation work. The
-public surface (D-Bus interface, state file location, CLI flags) is
-considered **unstable** during 0.1.x and is being intentionally broken
-in 0.2.0 to consolidate. Subsequent minor releases will respect SemVer.
+This release jumps directly from `0.1.0` to `1.0.0`. The intermediate
+`0.2.0` trajectory the project briefly advertised was abandoned: the
+cumulative breaking changes accumulated through the V1 remediation
+lotes (7, 8, 9, 10, 11, 16, 18, 20) constitute a SemVer-major bump by
+themselves, and the post-Lote-22 base is the right place to commit to
+backwards compatibility. From `1.0.0` onward the public surface
+(D-Bus interface `dev.cirodev.hpd.PowerDaemon1`, `hpdctl` subcommands,
+on-disk state at `/var/lib/hpd/state.toml`, polkit action IDs in
+`dev.cirodev.hpd.{set-tdp,set-charge,set-profile}`) follows SemVer
+strictly.
 
 ### ⚠ Breaking — operators / packagers
 
