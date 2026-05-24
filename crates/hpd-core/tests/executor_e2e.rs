@@ -10,16 +10,23 @@
 //! against an in-memory `MockBackend`, including:
 //!
 //! * the happy path (apply + persist),
-//! * the rollback path on hardware-write failure,
+//! * the rollback path on hardware-write failure (power / profile / charge),
 //! * the `watch::Receiver` propagation that hpd-dbus relies on for
-//!   `PropertiesChanged`.
+//!   `PropertiesChanged`,
+//! * the executor-level interception of `Transition::ConfigReload`
+//!   (the reducer treats it as a no-op; only the Executor swaps its
+//!   runtime config),
+//! * the `Transition::Shutdown` drain path that breaks the `run()`
+//!   loop so the spawned task joins on its own.
 //!
-//! Shutdown note: the Executor holds an internal clone of the transition
-//! `mpsc::Sender` for self-injecting rollback events, so the channel can
-//! never close while the executor is alive — `run()` is designed to live
-//! for the lifetime of the process. Tests therefore drive the executor on
-//! a `tokio::spawn`'d task and `abort()` it once the observable side effects
-//! are in place; they never await `run()` to completion.
+//! Lifetime note: the Executor holds an internal clone of the transition
+//! `mpsc::Sender` for self-injecting rollback events, so the channel
+//! never closes naturally while the executor is alive — `run()` only
+//! returns when it processes a `Transition::Shutdown`. Most tests here
+//! drive the executor on a `tokio::spawn`'d task and `abort()` it once
+//! the observable side effects are in place; the shutdown test (added
+//! in Lote 40) is the one exception and awaits the join handle so it
+//! can pin down the "executor exits cleanly without abort" contract.
 
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -29,7 +36,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::timeout;
 
 use hpd_capabilities::power::{PowerEnvelopeLimits, PowerEnvelopeTarget};
-use hpd_capabilities::profile::{ProfileName, RuntimeConfig};
+use hpd_capabilities::profile::{ProfileName, ProfileThresholds, RuntimeConfig};
 use hpd_capabilities::testing::{MockBackend, RecordedCall};
 use hpd_capabilities::units::PowerMilliwatts;
 
@@ -321,5 +328,149 @@ async fn test_executor_propagates_state_to_watch_receiver() {
     assert_eq!(updated.charge_end_threshold, 70);
 
     exec_handle.abort();
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn test_executor_config_reload_swaps_runtime_config() {
+    // Lote 40 / Audit V2 §4.5.2. The Executor intercepts
+    // `Transition::ConfigReload(new_config)` BEFORE reduce() is
+    // called and atomically swaps its own RuntimeConfig. The next
+    // transition through the reducer must use the new values.
+    // Coverage gap before Lote 40: the reducer-level test only
+    // covers the no-op contract; nothing verified the executor
+    // actually performs the swap.
+    let backend = MockBackend::new(initial_state().power_target.clone(), limits());
+    let path = fresh_temp_path("config_reload");
+    let persister = StatePersister::new(&path);
+
+    let (tx, rx) = mpsc::channel(32);
+    let (executor, mut state_rx) = Executor::new(
+        backend,
+        initial_state(),
+        limits(),
+        config(), // RuntimeConfig::DEFAULT (sppt_factor = 1.15, fppt_factor = 1.25)
+        rx,
+        tx.clone(),
+        persister,
+    );
+    let exec_handle = tokio::spawn(executor.run());
+
+    // Park the state at a known SPL so the post-reload SetSpl is a
+    // real envelope change (apply_target_and_profile no-ops when the
+    // target is unchanged).
+    tx.send(Transition::SetSpl(15)).await.unwrap();
+    wait_state(&mut state_rx, |s| {
+        s.power_target.spl == PowerMilliwatts(15_000)
+    })
+    .await;
+
+    // Hot-swap the runtime config: both factors flipped to a clean
+    // power-of-two value so the post-reload arithmetic is exact in
+    // f32 (15 * 1.15 has f32 rounding noise; 20 * 2.0 doesn't).
+    let new_runtime = RuntimeConfig {
+        profile_thresholds: ProfileThresholds::DEFAULT,
+        sppt_factor: 2.0,
+        fppt_factor: 2.0,
+    };
+    tx.send(Transition::ConfigReload(new_runtime))
+        .await
+        .unwrap();
+
+    // Next SetSpl must use the NEW factors. 20W * 2.0 = 40W = 40000mW
+    // — well under sppt_max (43000) and fppt_max (55000), so no clamp.
+    // Under the OLD sppt_factor (1.15) the post-reload sppt would be
+    // 20000 * 1.15 ≈ 23000, which would fail the assertion below.
+    tx.send(Transition::SetSpl(20)).await.unwrap();
+    let reloaded = wait_state(&mut state_rx, |s| {
+        s.power_target.spl == PowerMilliwatts(20_000)
+    })
+    .await;
+    assert_eq!(
+        reloaded.power_target.sppt,
+        PowerMilliwatts(40_000),
+        "ConfigReload should have swapped sppt_factor to 2.0; expected 20W * 2.0 = 40000mW"
+    );
+    assert_eq!(
+        reloaded.power_target.fppt,
+        Some(PowerMilliwatts(40_000)),
+        "ConfigReload should have swapped fppt_factor to 2.0; expected 20W * 2.0 = 40000mW"
+    );
+
+    exec_handle.abort();
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn test_executor_shutdown_persists_state_and_exits_cleanly() {
+    // Lote 40 / Audit V2 §4.5.2. The Executor processes
+    // `Transition::Shutdown` through the reducer (which emits
+    // PersistState), then breaks its `run()` loop. Two contracts
+    // the reducer-level test cannot pin down:
+    //
+    //   1. The spawned `run()` task joins on its own — the test does
+    //      NOT call `abort()`.
+    //   2. The on-disk state file matches the last successful
+    //      mutation written *before* Shutdown was sent (the post-
+    //      shutdown PersistState writes the same `ProfileState` that
+    //      `state_tx` already held).
+    let backend = MockBackend::new(initial_state().power_target.clone(), limits());
+    let path = fresh_temp_path("shutdown");
+    let persister = StatePersister::new(&path);
+
+    let (tx, rx) = mpsc::channel(32);
+    let (executor, mut state_rx) = Executor::new(
+        backend,
+        initial_state(),
+        limits(),
+        config(),
+        rx,
+        tx.clone(),
+        persister,
+    );
+    let exec_handle = tokio::spawn(executor.run());
+
+    // Seed the state with something distinct from initial_state()'s
+    // 15W so the post-shutdown TOML round-trip is observably
+    // different from "the persister just dumped its boot state".
+    tx.send(Transition::SetSpl(22)).await.unwrap();
+    wait_state(&mut state_rx, |s| {
+        s.power_target.spl == PowerMilliwatts(22_000)
+    })
+    .await;
+    wait_until(
+        || path.exists(),
+        1_000,
+        "first PersistState writes the file",
+    )
+    .await;
+
+    // Drop our own sender so the executor's transition_rx can fully
+    // close after Shutdown is processed — keeps the test honest
+    // about "the task exits without external abort". The Executor's
+    // internal_tx clone still keeps the channel half-alive, but
+    // Shutdown's explicit `break` in run() is what actually breaks
+    // the loop. Demonstrating that contract is the whole point.
+    tx.send(Transition::Shutdown).await.unwrap();
+    drop(tx);
+
+    // The task must drain and exit on its own. 5s mirrors the
+    // hpd-daemon main.rs ceiling (well below systemd's 90s
+    // TimeoutStopSec).
+    let join = timeout(Duration::from_secs(5), exec_handle)
+        .await
+        .expect("Executor should drain within 5s of Shutdown");
+    join.expect("Executor task must not panic during shutdown drain");
+
+    // The on-disk state matches the last accepted mutation. Reading
+    // it back through a fresh StatePersister proves the bytes hit
+    // disk before run() returned, not just that the in-memory
+    // ProfileState was right.
+    let persisted = StatePersister::new(&path)
+        .load()
+        .await
+        .expect("Shutdown must persist state to disk before the run() loop breaks");
+    assert_eq!(persisted.power_target.spl, PowerMilliwatts(22_000));
+
     let _ = std::fs::remove_file(&path);
 }
