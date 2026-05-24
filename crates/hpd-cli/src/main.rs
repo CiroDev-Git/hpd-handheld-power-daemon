@@ -196,6 +196,7 @@ async fn print_dashboard(proxy: &PowerDaemonProxy<'_>) -> zbus::Result<()> {
     let spl_watts = proxy.current_spl().await?;
     let profile = proxy.active_profile().await?;
     let charge_limit = proxy.charge_end_threshold().await?;
+    let auto_cooling = proxy.auto_cooling().await?;
 
     let is_ac = proxy.is_ac_connected().await?;
     let power_icon = if is_ac {
@@ -203,12 +204,18 @@ async fn print_dashboard(proxy: &PowerDaemonProxy<'_>) -> zbus::Result<()> {
     } else {
         "🔋 Battery (DC)"
     };
+    let cooling_mode = if auto_cooling {
+        "auto (follows TDP)"
+    } else {
+        "manual"
+    };
 
     println!("=======================================");
     println!("  🎮 Handheld Power Daemon Status 🎮  ");
     println!("=======================================");
     println!("   ⚡ TDP (SPL):        {}W", spl_watts);
     println!("  ❄️ Cooling Profile:  {}", profile);
+    println!("  🔁 Cooling Mode:     {}", cooling_mode);
     println!("  🔌 Power adapter:    {}", power_icon);
     println!("  🔋 Battery Limit:    {}%", charge_limit);
     println!("=======================================");

@@ -445,6 +445,15 @@ async fn spawn_properties_changed_emitter(
                 error!(error = %e, "Failed to emit charge_end_threshold PropertiesChanged");
             }
         }
+        if new.fan_follows_tdp != last.fan_follows_tdp {
+            // The D-Bus property name is `auto_cooling`; the internal
+            // state field is `fan_follows_tdp`. Lote 42 introduces the
+            // property so status widgets can observe the mode without
+            // inferring it from observed behaviour.
+            if let Err(e) = iface.auto_cooling_changed(ctx).await {
+                error!(error = %e, "Failed to emit auto_cooling PropertiesChanged");
+            }
+        }
 
         last = new;
     }

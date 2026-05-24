@@ -23,6 +23,12 @@ trait PowerDaemon {
     #[zbus(property)]
     fn charge_end_threshold(&self) -> zbus::Result<u8>;
 
+    /// Whether the daemon is currently in auto-cooling mode (the
+    /// platform profile follows the TDP envelope). Mirror of the
+    /// `auto_cooling` property added in Lote 42 of the daemon.
+    #[zbus(property)]
+    fn auto_cooling(&self) -> zbus::Result<bool>;
+
     fn set_profile(&self, profile: &str) -> zbus::Result<()>;
     fn set_fan_auto(&self) -> zbus::Result<()>;
 }

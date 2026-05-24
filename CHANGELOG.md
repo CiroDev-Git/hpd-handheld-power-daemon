@@ -123,6 +123,18 @@ strictly.
 
 ### Added
 
+- **`auto_cooling` D-Bus property** on
+  `dev.cirodev.hpd.PowerDaemon1`. Read-only `bool` backed by
+  `ProfileState::fan_follows_tdp` — `true` when the daemon is
+  inferring the cooling profile from the TDP envelope, `false`
+  after an operator has called `set_profile` (until they call
+  `set_fan_auto` to re-enable inference). Closes the audit
+  finding that the mode was silently flipped by `set_profile`
+  with no way for clients to observe it. `hpdctl status` now
+  surfaces it as "Cooling Mode: auto (follows TDP) | manual".
+  PropertiesChanged is emitted by the daemon's
+  `spawn_properties_changed_emitter` task on every flip.
+  *(Lote 42 — Audit V1 §3.8 / V2 §4.7.1)*
 - **`spawn_properties_changed_emitter` task** in `hpd-daemon/main.rs`
   watches the executor's state channel and calls zbus's generated
   `<prop>_changed` notifiers for each property whose underlying field

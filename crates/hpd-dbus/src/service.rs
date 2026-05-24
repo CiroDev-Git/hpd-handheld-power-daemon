@@ -129,6 +129,20 @@ impl PowerDaemonInterface {
         self.state_rx.borrow().charge_end_threshold
     }
 
+    /// Whether the daemon is currently inferring the cooling profile
+    /// from the TDP envelope (auto mode) or honouring the operator's
+    /// last explicit `set_profile` (manual mode).
+    ///
+    /// Backed by `ProfileState::fan_follows_tdp`. Exposed on D-Bus so
+    /// status widgets (KDE / GNOME power applets, overlay HUDs) can
+    /// surface the mode without inferring it from observed behaviour.
+    /// Re-enabling auto mode is `set_fan_auto`; setting any profile
+    /// manually with `set_profile` flips this back to `false`.
+    #[zbus(property)]
+    async fn auto_cooling(&self) -> bool {
+        self.state_rx.borrow().fan_follows_tdp
+    }
+
     async fn get_hardware_limits(&self) -> zbus::fdo::Result<(u32, u32, u32, u32)> {
         Ok((
             self.limits.spl_min.as_watts(),
