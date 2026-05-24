@@ -192,4 +192,17 @@ impl FanControl for MockBackend {
     }
 }
 
-impl HwBackend for MockBackend {}
+impl HwBackend for MockBackend {
+    fn power(&self) -> &dyn PowerEnvelope {
+        self
+    }
+    fn charge(&self) -> Option<&dyn ChargeControl> {
+        Some(self)
+    }
+    fn profile(&self) -> Option<&dyn PlatformProfile> {
+        Some(self)
+    }
+    fn fan(&self) -> Option<&dyn FanControl> {
+        Some(self)
+    }
+}

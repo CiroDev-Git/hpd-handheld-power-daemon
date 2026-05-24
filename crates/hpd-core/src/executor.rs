@@ -142,23 +142,39 @@ impl<B: HwBackend> Executor<B> {
     /// failure, read the kernel-reported value back and re-inject the
     /// matching `Sync*` transition so the in-memory `ProfileState`
     /// stays consistent with hardware reality.
+    ///
+    /// `ApplyPlatformProfile` and `ApplyChargeThreshold` are no-ops
+    /// when the underlying backend does not expose the matching
+    /// capability ([`HwBackend::profile`] / [`HwBackend::charge`]
+    /// returns `None`); the effect is logged at `debug` level and
+    /// dropped. The reducer keeps emitting these effects regardless
+    /// of capability presence — only the executor knows what the
+    /// backend can do.
     #[instrument(skip(self), level = "debug")]
     async fn handle_effect(&self, effect: Effect) {
         match effect {
             Effect::ApplyPowerEnvelope(target) => {
-                if let Err(e) = self.backend.set_target(&target) {
+                let power = self.backend.power();
+                if let Err(e) = power.set_target(&target) {
                     self.rollback("ApplyPowerEnvelope", e, || {
-                        self.backend.get_target().map(Transition::SyncPowerTarget)
+                        power.get_target().map(Transition::SyncPowerTarget)
                     })
                     .await;
                 } else {
                     debug!("Power Envelope applied successfully");
                 }
             }
-            Effect::ApplyPlatformProfile(profile) => {
-                if let Err(e) = self.backend.set_active_profile(&profile) {
+            Effect::ApplyPlatformProfile(new_profile) => {
+                let Some(profile_cap) = self.backend.profile() else {
+                    debug!(
+                        effect = "ApplyPlatformProfile",
+                        "Backend does not expose PlatformProfile; ignoring"
+                    );
+                    return;
+                };
+                if let Err(e) = profile_cap.set_active_profile(&new_profile) {
                     self.rollback("ApplyPlatformProfile", e, || {
-                        self.backend
+                        profile_cap
                             .get_active_profile()
                             .map(Transition::SyncPlatformProfile)
                     })
@@ -168,9 +184,16 @@ impl<B: HwBackend> Executor<B> {
                 }
             }
             Effect::ApplyChargeThreshold(threshold) => {
-                if let Err(e) = self.backend.set_end_threshold(threshold) {
+                let Some(charge_cap) = self.backend.charge() else {
+                    debug!(
+                        effect = "ApplyChargeThreshold",
+                        "Backend does not expose ChargeControl; ignoring"
+                    );
+                    return;
+                };
+                if let Err(e) = charge_cap.set_end_threshold(threshold) {
                     self.rollback("ApplyChargeThreshold", e, || {
-                        self.backend
+                        charge_cap
                             .get_end_threshold()
                             .map(Transition::SyncChargeThreshold)
                     })

@@ -81,6 +81,22 @@ strictly.
   `BackendError` (`HpdError::Backend(BackendError)`). External Rust
   consumers (none today) would need to migrate `match` arms.
   *(Lote 8 — Audit §4.1)*
+- **`HwBackend` trait surface — optional capability accessors.**
+  Pre-1.0 `HwBackend` was a supertrait of `PowerEnvelope +
+  ChargeControl + PlatformProfile + FanControl`, forcing every
+  vendor to implement all four. It is now a standalone trait with
+  one mandatory accessor (`fn power(&self) -> &dyn PowerEnvelope`)
+  and three optional ones (`fn charge / profile / fan(&self) ->
+  Option<&dyn …>`) defaulting to `None`. Vendors with partial
+  hardware support (e.g. a future Steam Deck backend with no ACPI
+  `platform_profile`) now implement only the accessors they can
+  honour. ASUS continues to expose all four (`Some(...)` for each).
+  External Rust consumers (none today) implementing `HwBackend`
+  must migrate from "blanket impl over the four sub-traits" to
+  "explicit accessors". The D-Bus / CLI / on-disk surfaces are
+  unchanged. Side effect: the 11-method blanket-delegation block on
+  `AsusBackend` (V1 §12.1 smell) disappears entirely.
+  *(Lote 39 — Audit V1 §16.2 / V2 §4.18.2)*
 
 ### ⚠ Breaking — packagers / developers
 

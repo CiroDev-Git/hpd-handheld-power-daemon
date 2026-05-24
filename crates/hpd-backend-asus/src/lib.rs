@@ -1,5 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+//! ASUS armoury firmware-attribute backend (workspace layer **L1**).
+//!
+//! [`AsusBackend`] is a thin composition of four single-responsibility
+//! sub-backends (`power`, `charge`, `fan`, `profile`), each
+//! implementing its respective L2 capability trait against
+//! [`hpd_sysfs::SysfsIo`]. The aggregate exposes them to the rest of
+//! the workspace through [`hpd_capabilities::backend::HwBackend`]'s
+//! accessor methods.
+//!
+//! Every ASUS handheld this crate targets implements all four
+//! capabilities, so every accessor here returns `Some(...)`. Vendors
+//! with partial hardware support implement fewer accessors — see
+//! [`hpd_capabilities::backend::HwBackend`] for the contract.
+
 pub mod charge;
 pub mod detect;
 pub mod fan;
@@ -10,12 +24,12 @@ use hpd_capabilities::backend::HwBackend;
 use hpd_capabilities::charge::ChargeControl;
 use hpd_capabilities::fan::FanControl;
 use hpd_capabilities::platform_profile::PlatformProfile;
-use hpd_capabilities::power::{PowerEnvelope, PowerEnvelopeLimits, PowerEnvelopeTarget};
-use hpd_capabilities::profile::ProfileName;
-use hpd_capabilities::units::Rpm;
-use hpd_error::HpdError;
+use hpd_capabilities::power::PowerEnvelope;
 use hpd_sysfs::SysfsIo;
 
+/// Composition root for the ASUS backend. Owns the four
+/// single-responsibility sub-backends and exposes them via the
+/// [`HwBackend`] accessor surface.
 pub struct AsusBackend<S: SysfsIo + Clone> {
     pub power: power::AsusPowerBackend<S>,
     pub charge: charge::AsusChargeBackend<S>,
@@ -24,6 +38,11 @@ pub struct AsusBackend<S: SysfsIo + Clone> {
 }
 
 impl<S: SysfsIo + Clone> AsusBackend<S> {
+    /// Build a fresh `AsusBackend` from a single `SysfsIo`. The handle
+    /// is cloned once per sub-backend; `RealSysfs` is zero-sized so
+    /// this is free in production, and `MockSysfs` shares its
+    /// `TempDir` via `Arc` so all four sub-backends see the same
+    /// in-memory tree.
     pub fn new(sysfs: S) -> Self {
         Self {
             power: power::AsusPowerBackend::new(sysfs.clone()),
@@ -34,46 +53,20 @@ impl<S: SysfsIo + Clone> AsusBackend<S> {
     }
 }
 
-impl<S: SysfsIo + Clone> PowerEnvelope for AsusBackend<S> {
-    fn get_limits(&self) -> Result<PowerEnvelopeLimits, HpdError> {
-        self.power.get_limits()
+impl<S: SysfsIo + Clone + 'static> HwBackend for AsusBackend<S> {
+    fn power(&self) -> &dyn PowerEnvelope {
+        &self.power
     }
-    fn get_target(&self) -> Result<PowerEnvelopeTarget, HpdError> {
-        self.power.get_target()
+
+    fn charge(&self) -> Option<&dyn ChargeControl> {
+        Some(&self.charge)
     }
-    fn set_target(&self, target: &PowerEnvelopeTarget) -> Result<(), HpdError> {
-        self.power.set_target(target)
+
+    fn profile(&self) -> Option<&dyn PlatformProfile> {
+        Some(&self.profile)
+    }
+
+    fn fan(&self) -> Option<&dyn FanControl> {
+        Some(&self.fan)
     }
 }
-
-impl<S: SysfsIo + Clone> ChargeControl for AsusBackend<S> {
-    fn is_ac_connected(&self) -> Result<bool, HpdError> {
-        self.charge.is_ac_connected()
-    }
-    fn set_end_threshold(&self, threshold: u8) -> Result<(), HpdError> {
-        self.charge.set_end_threshold(threshold)
-    }
-    fn get_end_threshold(&self) -> Result<u8, HpdError> {
-        self.charge.get_end_threshold()
-    }
-}
-
-impl<S: SysfsIo + Clone> FanControl for AsusBackend<S> {
-    fn get_cpu_fan_rpm(&self) -> Result<Rpm, HpdError> {
-        self.fan.get_cpu_fan_rpm()
-    }
-    fn get_gpu_fan_rpm(&self) -> Result<Option<Rpm>, HpdError> {
-        self.fan.get_gpu_fan_rpm()
-    }
-}
-
-impl<S: SysfsIo + Clone> PlatformProfile for AsusBackend<S> {
-    fn get_active_profile(&self) -> Result<ProfileName, HpdError> {
-        self.profile.get_active_profile()
-    }
-    fn set_active_profile(&self, profile: &ProfileName) -> Result<(), HpdError> {
-        self.profile.set_active_profile(profile)
-    }
-}
-
-impl<S: SysfsIo + Clone> HwBackend for AsusBackend<S> {}

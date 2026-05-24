@@ -160,7 +160,7 @@ where
         .unwrap_or_else(|_| PathBuf::from("/etc/hpd/config.toml"));
     let daemon_config = DaemonConfig::load(&config_path);
 
-    let limits = match backend.get_limits() {
+    let limits = match backend.power().get_limits() {
         Ok(l) => {
             info!(
                 spl_min_w = l.spl_min.as_watts(),
@@ -185,7 +185,13 @@ where
     info!(path = %state_path.display(), "Using state file");
     let persister = StatePersister::new(state_path);
 
-    let is_physically_plugged = backend.is_ac_connected().unwrap_or(false);
+    // Backends without ChargeControl have no battery view of the world;
+    // a missing capability is treated as "AC unknown → assume DC" so
+    // the daemon falls back to the conservative power envelope.
+    let is_physically_plugged = backend
+        .charge()
+        .and_then(|c| c.is_ac_connected().ok())
+        .unwrap_or(false);
 
     let initial_state = match persister.load().await {
         Some(mut state) => {
@@ -195,17 +201,22 @@ where
         }
         None => {
             info!("No previous state found (or failed to read). Defaulting to hardware values...");
-            // First time after installation, read currentconfig of device
-            let current_target = backend.get_target().unwrap_or(PowerEnvelopeTarget {
+            // First time after installation: read the kernel's current
+            // view through the capability accessors. Each fallback maps
+            // to a sensible default when the backend (a) does not expose
+            // the capability or (b) the read itself fails.
+            let current_target = backend.power().get_target().unwrap_or(PowerEnvelopeTarget {
                 spl: limits.spl_min,
                 sppt: limits.spl_min,
                 fppt: Some(limits.spl_min),
             });
             let current_profile = backend
-                .get_active_profile()
+                .profile()
+                .and_then(|p| p.get_active_profile().ok())
                 .unwrap_or(ProfileName::Balanced);
             let current_charge_limit = backend
-                .get_end_threshold()
+                .charge()
+                .and_then(|c| c.get_end_threshold().ok())
                 .unwrap_or(daemon_config.default_charge_threshold);
 
             ProfileState {
