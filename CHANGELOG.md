@@ -59,6 +59,20 @@ remediation plan at [`docs/audit/REMEDIATION_PLAN_V1.md`](docs/audit/REMEDIATION
   with diagnoses. Entry point for any contributor working on a
   Linux dev host.
   *(Lote 46 — Audit V2 Phase 4)*
+- **`docs/dev/MACOS.md` — macOS development guide** (~250 lines, 9
+  sections). Simulator-first workflow for Mac dev hosts. Includes
+  an explicit "what works / what doesn't" matrix (no real sysfs,
+  no udev, no logind, no polkit), Homebrew + Xcode CLT
+  prerequisites, two recipes for starting the session D-Bus
+  (`brew services start dbus` and `dbus-launch`), an end-to-end
+  two-terminal walkthrough of the simulator including the exact
+  `MockSysfs` seed values the daemon pre-populates, manual D-Bus
+  calls with `dbus-send --session`, the limits of what the
+  simulator can model (rollback, polkit denial, AC events), and
+  6 common pitfalls. Catches the macOS contributor before they
+  trip on `HPD_SIMULATOR=1` + `--features simulator` having to
+  be passed together.
+  *(Lote 47 — Audit V2 Phase 4)*
 
 ---
 
