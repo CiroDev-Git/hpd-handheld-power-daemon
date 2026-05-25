@@ -13,189 +13,7 @@ remediation plan at [`docs/audit/REMEDIATION_PLAN_V1.md`](docs/audit/REMEDIATION
 
 ## [Unreleased]
 
-### Added
-
-- **`/usr/share/hpd/VERSION` sidecar shipped by `install.sh`** —
-  single-line text file (`X.Y.Z`) written at install time by
-  extracting the workspace `Cargo.toml` `version`. Consumed by
-  external clients (e.g. `hpd-decky-plugin`) that need the installed
-  daemon version without parsing `journalctl` or requiring
-  `systemd-journal` group membership. `uninstall.sh` removes it and
-  the empty `/usr/share/hpd` directory. No code path inside the daemon
-  reads this file; it is purely a consumer-facing affordance.
-- **`missing_docs` lint enabled workspace-wide** — every public item
-  carries a `///` doc comment and every module file opens with a
-  `//!` block. CI runs with `-D warnings` so this is effectively an
-  error in CI. Rustdoc inline documentation now exists across the 6
-  crates that were missing it post-Lote-21: `hpd-error`,
-  `hpd-netlink`, `hpd-backend-asus`, `hpd-dbus`, `hpd-cli`,
-  `hpd-daemon`. Documentation coverage now matches the L-1→L4
-  workspace layout.
-  *(Lote 43 — Audit V2 Phase 3)*
-- **Per-crate `README.md` for all 9 crates.** Each crate now ships a
-  one-page README covering purpose, workspace layer, dependencies,
-  a runnable example, and the `cargo doc` invocation that opens the
-  generated rustdoc. The daemon README additionally documents the
-  composition root's architecture diagram, signal handling, and the
-  on-disk filesystem layout. Useful entry-point for contributors who
-  want to navigate the workspace without opening every `lib.rs` first.
-  *(Lote 44 — Audit V2 Phase 3)*
-- **`docs/ARCHITECTURE.md` — global architecture document** (~550
-  lines, 12 sections). Human-oriented walk-through covering the
-  L-1→L4 workspace layout, the `Transition → reducer → Effect →
-  Executor` pipeline (with ASCII diagrams of the data flow and
-  rollback contract), the multi-runtime concurrency layout
-  including the dedicated `std::thread` for `tokio-udev`'s `!Send`
-  socket, the full lifecycle / signal matrix, the polkit fail-closed
-  contract, the persistence and configuration models, a "where to
-  look for things" lookup table, the recipes for adding a new
-  vendor backend or D-Bus method, and a curated reading order for
-  newcomers. The root README and crate READMEs now link here as the
-  canonical design reference; `CLAUDE.md` remains the
-  assistant-oriented variant.
-  *(Lote 45 — Audit V2 Phase 3)*
-- **`docs/dev/LINUX.md` — Linux development guide** (~300 lines, 11
-  sections). End-to-end loop on a Linux host: toolchain pinning
-  via `rust-toolchain.toml`, per-distro build-dep one-liners,
-  workspace command reference, the full feature matrix CI runs,
-  both running paths (production-shape `install.sh` walkthrough
-  *and* iterative `cargo run` against the system bus with policy
-  files installed), logging via `RUST_LOG`+`journalctl`, D-Bus
-  introspection with `busctl`/`dbus-monitor`, polkit debugging
-  with `pkaction`/`pkcheck`, manual suspend/resume + AC plug
-  testing, filesystem layout reference, and 6 common pitfalls
-  with diagnoses. Entry point for any contributor working on a
-  Linux dev host.
-  *(Lote 46 — Audit V2 Phase 4)*
-- **`docs/dev/MACOS.md` — macOS development guide** (~250 lines, 9
-  sections). Simulator-first workflow for Mac dev hosts. Includes
-  an explicit "what works / what doesn't" matrix (no real sysfs,
-  no udev, no logind, no polkit), Homebrew + Xcode CLT
-  prerequisites, two recipes for starting the session D-Bus
-  (`brew services start dbus` and `dbus-launch`), an end-to-end
-  two-terminal walkthrough of the simulator including the exact
-  `MockSysfs` seed values the daemon pre-populates, manual D-Bus
-  calls with `dbus-send --session`, the limits of what the
-  simulator can model (rollback, polkit denial, AC events), and
-  6 common pitfalls. Catches the macOS contributor before they
-  trip on `HPD_SIMULATOR=1` + `--features simulator` having to
-  be passed together.
-  *(Lote 47 — Audit V2 Phase 4)*
-- **AUR packaging — templates + opt-in sync workflow** (Phase 5
-  closeout). Five new files plus targeted updates to PIPELINE.md
-  and RELEASE_CHECKLIST.md to reference the real paths instead of
-  placeholders:
-  - `package/aur/PKGBUILD.template` — source-build package
-    `hpd-handheld-power-daemon` rendered against
-    `$url/archive/v$pkgver.tar.gz` and built with
-    `cargo build --release --frozen --workspace`. Installs
-    binaries to `/usr/bin` (AUR convention) and rewrites the
-    shipped `package/hpd.service` `ExecStart` path to match via
-    `sed` so the unit works against the AUR install layout.
-  - `package/aur/PKGBUILD-bin.template` — prebuilt-repack package
-    `hpd-handheld-power-daemon-bin` (`provides=` + `conflicts=`
-    the source one) that downloads
-    `releases/download/v$pkgver/hpd-$pkgver-x86_64-linux.tar.gz`
-    and skips compilation entirely. Same install layout.
-  - `package/aur/hpd.install` — shared pacman hook for both
-    packages: `daemon-reload` on install/upgrade/remove, sends
-    SIGHUP to a running `hpd.service` on upgrade (matching the
-    project's documented hot-reload contract), prints "next
-    steps" message on first install with the
-    `systemctl enable --now` and `config.toml` copy hints.
-  - `scripts/aur-sync.sh` — standalone-runnable renderer
-    (`<pkgname> <version>`) used by both the workflow and the
-    manual fallback path in RELEASE_CHECKLIST §5. Downloads the
-    matching upstream tarball, computes its sha256, renders the
-    chosen template via sed, regenerates `.SRCINFO` via
-    `makepkg --printsrcinfo`, clones the AUR repo over SSH,
-    commits + pushes. Detects "no changes to push" as a no-op
-    so re-running for the same version is safe.
-  - `.github/workflows/aur-sync.yml` — opt-in CI workflow
-    triggered on `release.published`. Runs inside an
-    `archlinux:base-devel` container so `makepkg` is available
-    without third-party actions. Skips pre-releases (RCs go to
-    Draft, AUR is for stable only); skips silently with a
-    `::notice::` when `AUR_SSH_KEY` repo secret is unset. Sets
-    up a non-root `builder` user (`makepkg` refuses root),
-    pins AUR's host key via `ssh-keyscan`, and pushes both
-    source + bin packages in sequence.
-  *(Lote 51 — Audit V2 Phase 5)*
-- **`.github/workflows/release.yml`** + **`scripts/extract-changelog-section.sh`**.
-  Implements the GitHub-native release model designed in
-  [`docs/release/PIPELINE.md`](docs/release/PIPELINE.md). Triggers on
-  annotated tags matching `v<X>.<Y>.<Z>` (stable → Public Release) and
-  `v<X>.<Y>.<Z>-*` (RC/alpha/beta → Draft Release).
-  Two jobs: `verify` re-runs the four CI gates (fmt/clippy/test/doc) on
-  the exact tagged commit; `release` (a) guards that
-  `workspace.package.version` in `Cargo.toml` matches the tag, (b)
-  builds the stripped `x86_64-linux` binaries, (c) assembles
-  `hpd-X.Y.Z-x86_64-linux.tar.gz` with the layout locked in
-  PIPELINE.md §3 (binaries + install/uninstall scripts + LICENSE +
-  README + CHANGELOG + full `package/` tree), (d) computes
-  `SHA256SUMS`, (e) optionally GPG-signs it when
-  `GPG_PRIVATE_KEY` + `GPG_PASSPHRASE` repo secrets are configured
-  (skipped with a `::notice::` otherwise), (f) extracts the matching
-  CHANGELOG section as release notes (falls back to the
-  annotated-tag message if absent), and (g) calls
-  `gh release create` with `--draft --prerelease` for RCs or a plain
-  publish for stable. All artifacts are also uploaded as a 90-day
-  workflow artifact for safekeeping.
-  The helper script is standalone-runnable (`./scripts/extract-changelog-section.sh 1.0.0`),
-  exits 1 with a clear error and a list of available headers when
-  the version isn't found.
-  *(Lote 50 — Audit V2 Phase 5)*
-- **`docs/release/` — release pipeline design + runbook** (3 files,
-  ~870 lines total). Three companion documents establishing the
-  GitHub-native release model:
-  - `PIPELINE.md` (~310 lines) — the *why*: three environments
-    (QA = main CI, STG = `vX.Y.Z-rc.N` draft Release, PROD =
-    `vX.Y.Z` public Release), tag conventions, artifact contents
-    (tarball + checksums + optional GPG sig), per-environment
-    workflow behaviour, GPG signing as opt-in via repo secrets,
-    AUR distribution model, immutable-release rollback policy,
-    permissions model, explicit non-goals (no nightlies, no
-    .deb/.rpm in v1.0, no containers, no release bot), and an
-    end-to-end ASCII diagram.
-  - `VERSIONING.md` (~175 lines) — the *bump rules*: strict
-    SemVer-2.0 from v1.0.0 onward, exact definition of "the
-    public surface", a top-to-bottom decision matrix mapping
-    every change category to MAJOR/MINOR/PATCH, the project's
-    deliberate "no deprecation aliases" policy with rationale,
-    pre-release suffix grammar, and four worked examples
-    (including hypotheticals from the project's own surface).
-  - `RELEASE_CHECKLIST.md` (~385 lines) — the maintainer's
-    literal command-by-command runbook: prerequisites + repo
-    secrets, day-of pre-release sanity (all four CI gates +
-    feature matrix + supply-chain), version pick walking
-    VERSIONING.md, bump ritual across `Cargo.toml` +
-    `Cargo.lock` + `CHANGELOG.md`, annotated-tag creation with
-    HEREDOC message template, `release.yml` watch step, AUR
-    manual fallback for both source and binary packages,
-    post-release housekeeping (re-open `[Unreleased]`, announce,
-    48-hour bug watch), recovery recipes for four common
-    failure modes, and a time budget table.
-  Cross-linked from `CONTRIBUTING.md` and the root `README.md`.
-  *(Lote 49 — Audit V2 Phase 5)*
-- **`CONTRIBUTING.md` — contribution guide** (~370 lines, 12
-  sections). The contract between contributors and maintainers:
-  scope (welcome vs. out-of-scope contributions), prerequisites,
-  the four local gates CI enforces (`fmt`/`clippy`/`test`/`doc`)
-  with the workspace.lints rules they translate into, hard rules
-  (no `unsafe_code`, no `.unwrap()`/`.expect()`/`panic!` in
-  production code, pure reducer, polkit-before-enqueue, SPDX
-  headers, `missing_docs`), commit conventions (imperative
-  subject ≤70 chars, body wrapped at 72, audit-lote tag,
-  co-author trailer, atomic commits), CHANGELOG hygiene
-  (Keep-a-Changelog format, breaking-by-audience subsection,
-  release rename ritual), the SemVer policy on the public
-  surface (D-Bus interface, CLI, on-disk state, polkit actions,
-  config), short-form recipes for adding a D-Bus method or
-  vendor backend cross-linking the full version in
-  `docs/ARCHITECTURE.md`, a copy-pasteable PR checklist, review
-  process, security disclosure channel, and code of conduct. The
-  root README now points contributors here as the entry-point.
-  *(Lote 48 — Audit V2 Phase 4)*
+(Nothing yet.)
 
 ---
 
@@ -489,160 +307,186 @@ strictly.
   in lockstep with CI.
   *(Lote 22)*
 
+- **`/usr/share/hpd/VERSION` sidecar shipped by `install.sh`** —
+  single-line text file (`X.Y.Z`) written at install time by
+  extracting the workspace `Cargo.toml` `version`. Consumed by
+  external clients (e.g. `hpd-decky-plugin`) that need the installed
+  daemon version without parsing `journalctl` or requiring
+  `systemd-journal` group membership. `uninstall.sh` removes it and
+  the empty `/usr/share/hpd` directory. No code path inside the daemon
+  reads this file; it is purely a consumer-facing affordance.
+- **`missing_docs` lint enabled workspace-wide** — every public item
+  carries a `///` doc comment and every module file opens with a
+  `//!` block. CI runs with `-D warnings` so this is effectively an
+  error in CI. Rustdoc inline documentation now exists across the 6
+  crates that were missing it post-Lote-21: `hpd-error`,
+  `hpd-netlink`, `hpd-backend-asus`, `hpd-dbus`, `hpd-cli`,
+  `hpd-daemon`. Documentation coverage now matches the L-1→L4
+  workspace layout.
+  *(Lote 43 — Audit V2 Phase 3)*
+- **Per-crate `README.md` for all 9 crates.** Each crate now ships a
+  one-page README covering purpose, workspace layer, dependencies,
+  a runnable example, and the `cargo doc` invocation that opens the
+  generated rustdoc. The daemon README additionally documents the
+  composition root's architecture diagram, signal handling, and the
+  on-disk filesystem layout. Useful entry-point for contributors who
+  want to navigate the workspace without opening every `lib.rs` first.
+  *(Lote 44 — Audit V2 Phase 3)*
+- **`docs/ARCHITECTURE.md` — global architecture document** (~550
+  lines, 12 sections). Human-oriented walk-through covering the
+  L-1→L4 workspace layout, the `Transition → reducer → Effect →
+  Executor` pipeline (with ASCII diagrams of the data flow and
+  rollback contract), the multi-runtime concurrency layout
+  including the dedicated `std::thread` for `tokio-udev`'s `!Send`
+  socket, the full lifecycle / signal matrix, the polkit fail-closed
+  contract, the persistence and configuration models, a "where to
+  look for things" lookup table, the recipes for adding a new
+  vendor backend or D-Bus method, and a curated reading order for
+  newcomers. The root README and crate READMEs now link here as the
+  canonical design reference; `CLAUDE.md` remains the
+  assistant-oriented variant.
+  *(Lote 45 — Audit V2 Phase 3)*
+- **`docs/dev/LINUX.md` — Linux development guide** (~300 lines, 11
+  sections). End-to-end loop on a Linux host: toolchain pinning
+  via `rust-toolchain.toml`, per-distro build-dep one-liners,
+  workspace command reference, the full feature matrix CI runs,
+  both running paths (production-shape `install.sh` walkthrough
+  *and* iterative `cargo run` against the system bus with policy
+  files installed), logging via `RUST_LOG`+`journalctl`, D-Bus
+  introspection with `busctl`/`dbus-monitor`, polkit debugging
+  with `pkaction`/`pkcheck`, manual suspend/resume + AC plug
+  testing, filesystem layout reference, and 6 common pitfalls
+  with diagnoses. Entry point for any contributor working on a
+  Linux dev host.
+  *(Lote 46 — Audit V2 Phase 4)*
+- **`docs/dev/MACOS.md` — macOS development guide** (~250 lines, 9
+  sections). Simulator-first workflow for Mac dev hosts. Includes
+  an explicit "what works / what doesn't" matrix (no real sysfs,
+  no udev, no logind, no polkit), Homebrew + Xcode CLT
+  prerequisites, two recipes for starting the session D-Bus
+  (`brew services start dbus` and `dbus-launch`), an end-to-end
+  two-terminal walkthrough of the simulator including the exact
+  `MockSysfs` seed values the daemon pre-populates, manual D-Bus
+  calls with `dbus-send --session`, the limits of what the
+  simulator can model (rollback, polkit denial, AC events), and
+  6 common pitfalls. Catches the macOS contributor before they
+  trip on `HPD_SIMULATOR=1` + `--features simulator` having to
+  be passed together.
+  *(Lote 47 — Audit V2 Phase 4)*
+- **`CONTRIBUTING.md` — contribution guide** (~370 lines, 12
+  sections). The contract between contributors and maintainers:
+  scope (welcome vs. out-of-scope contributions), prerequisites,
+  the four local gates CI enforces (`fmt`/`clippy`/`test`/`doc`)
+  with the workspace.lints rules they translate into, hard rules
+  (no `unsafe_code`, no `.unwrap()`/`.expect()`/`panic!` in
+  production code, pure reducer, polkit-before-enqueue, SPDX
+  headers, `missing_docs`), commit conventions (imperative
+  subject ≤70 chars, body wrapped at 72, audit-lote tag,
+  co-author trailer, atomic commits), CHANGELOG hygiene
+  (Keep-a-Changelog format, breaking-by-audience subsection,
+  release rename ritual), the SemVer policy on the public
+  surface (D-Bus interface, CLI, on-disk state, polkit actions,
+  config), short-form recipes for adding a D-Bus method or
+  vendor backend cross-linking the full version in
+  `docs/ARCHITECTURE.md`, a copy-pasteable PR checklist, review
+  process, security disclosure channel, and code of conduct. The
+  root README now points contributors here as the entry-point.
+  *(Lote 48 — Audit V2 Phase 4)*
+- **`docs/release/` — release pipeline design + runbook** (3 files,
+  ~870 lines total). Three companion documents establishing the
+  GitHub-native release model:
+  - `PIPELINE.md` (~310 lines) — the *why*: three environments
+    (QA = main CI, STG = `vX.Y.Z-rc.N` draft Release, PROD =
+    `vX.Y.Z` public Release), tag conventions, artifact contents
+    (tarball + checksums + optional GPG sig), per-environment
+    workflow behaviour, GPG signing as opt-in via repo secrets,
+    AUR distribution model, immutable-release rollback policy,
+    permissions model, explicit non-goals (no nightlies, no
+    .deb/.rpm in v1.0, no containers, no release bot), and an
+    end-to-end ASCII diagram.
+  - `VERSIONING.md` (~175 lines) — the *bump rules*: strict
+    SemVer-2.0 from v1.0.0 onward, exact definition of "the
+    public surface", a top-to-bottom decision matrix mapping
+    every change category to MAJOR/MINOR/PATCH, the project's
+    deliberate "no deprecation aliases" policy with rationale,
+    pre-release suffix grammar, and four worked examples
+    (including hypotheticals from the project's own surface).
+  - `RELEASE_CHECKLIST.md` (~385 lines) — the maintainer's
+    literal command-by-command runbook: prerequisites + repo
+    secrets, day-of pre-release sanity (all four CI gates +
+    feature matrix + supply-chain), version pick walking
+    VERSIONING.md, bump ritual across `Cargo.toml` +
+    `Cargo.lock` + `CHANGELOG.md`, annotated-tag creation with
+    HEREDOC message template, `release.yml` watch step, AUR
+    manual fallback for both source and binary packages,
+    post-release housekeeping (re-open `[Unreleased]`, announce,
+    48-hour bug watch), recovery recipes for four common
+    failure modes, and a time budget table.
+  Cross-linked from `CONTRIBUTING.md` and the root `README.md`.
+  *(Lote 49 — Audit V2 Phase 5)*
+- **`.github/workflows/release.yml`** + **`scripts/extract-changelog-section.sh`**.
+  Implements the GitHub-native release model designed in
+  [`docs/release/PIPELINE.md`](docs/release/PIPELINE.md). Triggers on
+  annotated tags matching `v<X>.<Y>.<Z>` (stable → Public Release) and
+  `v<X>.<Y>.<Z>-*` (RC/alpha/beta → Draft Release).
+  Two jobs: `verify` re-runs the four CI gates (fmt/clippy/test/doc) on
+  the exact tagged commit; `release` (a) guards that
+  `workspace.package.version` in `Cargo.toml` matches the tag, (b)
+  builds the stripped `x86_64-linux` binaries, (c) assembles
+  `hpd-X.Y.Z-x86_64-linux.tar.gz` with the layout locked in
+  PIPELINE.md §3 (binaries + install/uninstall scripts + LICENSE +
+  README + CHANGELOG + full `package/` tree), (d) computes
+  `SHA256SUMS`, (e) optionally GPG-signs it when
+  `GPG_PRIVATE_KEY` + `GPG_PASSPHRASE` repo secrets are configured
+  (skipped with a `::notice::` otherwise), (f) extracts the matching
+  CHANGELOG section as release notes (falls back to the
+  annotated-tag message if absent), and (g) calls
+  `gh release create` with `--draft --prerelease` for RCs or a plain
+  publish for stable. All artifacts are also uploaded as a 90-day
+  workflow artifact for safekeeping.
+  The helper script is standalone-runnable (`./scripts/extract-changelog-section.sh 1.0.0`),
+  exits 1 with a clear error and a list of available headers when
+  the version isn't found.
+  *(Lote 50 — Audit V2 Phase 5)*
+- **AUR packaging — templates + opt-in sync workflow** (Phase 5
+  closeout). Five new files plus targeted updates to PIPELINE.md
+  and RELEASE_CHECKLIST.md to reference the real paths instead of
+  placeholders:
+  - `package/aur/PKGBUILD.template` — source-build package
+    `hpd-handheld-power-daemon` rendered against
+    `$url/archive/v$pkgver.tar.gz` and built with
+    `cargo build --release --frozen --workspace`. Installs
+    binaries to `/usr/bin` (AUR convention) and rewrites the
+    shipped `package/hpd.service` `ExecStart` path to match via
+    `sed` so the unit works against the AUR install layout.
+  - `package/aur/PKGBUILD-bin.template` — prebuilt-repack package
+    `hpd-handheld-power-daemon-bin` (`provides=` + `conflicts=`
+    the source one) that downloads
+    `releases/download/v$pkgver/hpd-$pkgver-x86_64-linux.tar.gz`
+    and skips compilation entirely. Same install layout.
+  - `package/aur/hpd.install` — shared pacman hook for both
+    packages: `daemon-reload` on install/upgrade/remove, sends
+    SIGHUP to a running `hpd.service` on upgrade (matching the
+    project's documented hot-reload contract), prints "next
+    steps" message on first install with the
+    `systemctl enable --now` and `config.toml` copy hints.
+  - `scripts/aur-sync.sh` — standalone-runnable renderer
+    (`<pkgname> <version>`) used by both the workflow and the
+    manual fallback path in RELEASE_CHECKLIST §5. Downloads the
+    matching upstream tarball, computes its sha256, renders the
+    chosen template via sed, regenerates `.SRCINFO` via
+    `makepkg --printsrcinfo`, clones the AUR repo over SSH,
+    commits + pushes. Detects "no changes to push" as a no-op
+    so re-running for the same version is safe.
+  - `.github/workflows/aur-sync.yml` — opt-in CI workflow
+    triggered on `release.published`. Runs inside an
+    `archlinux:base-devel` container so `makepkg` is available
+    without third-party actions. Skips pre-releases (RCs go to
+    Draft, AUR is for stable only); skips silently with a
+    `::notice::` when `AUR_SSH_KEY` repo secret is unset. Sets
+    up a non-root `builder` user (`makepkg` refuses root),
+    pins AUR's host key via `ssh-keyscan`, and pushes both
+    source + bin packages in sequence.
+  *(Lote 51 — Audit V2 Phase 5)*
+
 ### Changed (Lote 22 follow-on)
-
-- **Lint policy refactored**: `clippy::unwrap_used`,
-  `clippy::expect_used`, and `clippy::panic` are no longer applied
-  globally via `RUSTFLAGS` in `.cargo/config.toml`. They now live as
-  `#![cfg_attr(not(test), warn(...))]` attributes on each crate's
-  `lib.rs` / `main.rs`, so production code is held to the strict
-  bar while test modules can keep their idiomatic `.unwrap()` /
-  `.expect()` / `panic!` without per-site `#[allow]` boilerplate.
-  This is what unblocks the `-D warnings` invocation in CI.
-- **`Transition::SystemResumed` reducer arm** rewritten to build its
-  `Vec<Effect>` with the `vec![]` macro instead of `push`-after-`new`
-  (clippy::vec_init_then_push).
-- **`hpd-daemon` netlink thread** now logs and exits the worker
-  thread on `tokio::runtime::Builder::build()` failure instead of
-  `.expect("Failed to build local tokio runtime for netlink")`. The
-  main daemon stays up; AC plug events are simply missed.
-- **`hpd-sysfs::mock::testing`** module gets an inner
-  `#![allow(clippy::unwrap_used, clippy::expect_used)]` matching the
-  pattern already in `hpd-capabilities::testing`, plus a `Default`
-  impl on `MockSysfs` to satisfy `clippy::new_without_default`.
-- **`hpd-netlink`** unused `error` / `debug` imports moved inside
-  the Linux-only submodule so the macOS build no longer warns.
-
-### Changed
-
-- **Profile inference is now done in a single place.** The reducer
-  (via `apply_target_and_profile` -> `infer_profile_from_spl`) is the
-  sole authority; the post-reduce inference block in the executor was
-  redundant (and worse, used a slightly different rule for the
-  degenerate `range == 0` case). The `Executor::infer_profile_for_tdp`
-  method and its caller were removed; `inference::infer_profile_from_spl`
-  now documents the `range == 0` -> `Balanced` fallback.
-  *(Lote 12 — Audit §3.4)*
-- **Daemon logging** — Migrated from `FmtSubscriber::with_max_level`
-  to `tracing-subscriber` with `EnvFilter`. Now honours `RUST_LOG`;
-  default is `hpd=info,warn`. systemd unit now sets
-  `Environment="RUST_LOG=hpd=info,warn"`.
-  *(Lote 3 — Audit §13.6)*
-- **Reducer logging** — All `println!` statements in
-  `hpd-core/reducer.rs` replaced by `tracing::info!` with structured
-  key-value fields (`preset=...`, `action=...`).
-  *(Lote 3 — Audit §5.1)*
-- **`info!` calls in daemon** restructured with `key=value` fields
-  (`vendor=...`, `board=...`, `spl_min_w=...`).
-  *(Lote 3 — Audit §17.7)*
-- **All comments and error messages** translated to English. No
-  remaining Spanish characters or Spanish-derived typos
-  (`Convertion`, `pluged`, `Smaal`, `kenel`, `Avisamos`, `Debería`,
-  …) anywhere under `crates/`, `install.sh`, `Cargo.toml` or
-  `.cargo/`. `rg "[áéíóúñ¿¡]"` returns empty.
-  *(Lote 2 — Audit §10)*
-- **`install.sh`** switched to `set -euo pipefail`, uses
-  `install -D` with explicit modes, pre-creates `/var/lib/hpd` 0700,
-  uses `try-reload-or-restart` for D-Bus, and prints the canonical
-  paths at the end.
-  *(Lote 7 — Audit §17.3, §17.4)*
-- **ASUS backend** code paths cleaned of repeated
-  `map_err(|e| HpdError::Backend { reason: format!(...) })`. `?`
-  is now used directly for sysfs failures (via `#[from]`) and
-  `BackendError::ParseFailed` for typed parse errors. ~30 LOC of
-  ceremony removed.
-  *(Lote 8 — Audit §12.2)*
-- **ASUS attribute names** factored into constants `ATTR_SPL`,
-  `ATTR_SPPT`, `ATTR_FPPT` with a comment pointing at the upstream
-  kernel driver and the verified board (`RC73XA`).
-  *(Lote 4)*
-
-### Fixed
-
-- **ASUS `ppt_fppt` vs `ppt_pl3_fppt` mismatch** — `get_limits()`
-  was reading the non-existent attribute `ppt_fppt/max_value` and
-  silently falling back to a hard-coded `53000` mW. The daemon
-  therefore capped FPPT 2 W below the real hardware limit. Now reads
-  the canonical `ppt_pl3_fppt/max_value` (verified `55` W on ROG
-  Xbox Ally X / board `RC73XA`).
-  *(Lote 4 — Audit §3.2)* — **CRITICAL**
-- **`SetSpl` overflow** — `watts * 1000` could wrap around in release
-  builds for huge `u32` inputs (e.g. `u32::MAX` from a malformed
-  D-Bus call), producing a small wrapped value that spuriously
-  passed the subsequent range check. Now uses `checked_mul` and
-  returns `HpdError::InvariantViolation` on overflow.
-  *(Lote 5 — Audit §3.3)*
-- **`AcPowerChanged` persistence hole** — When the system was
-  already at the Turbo target (e.g. stale boot state or repeated AC
-  events), `apply_target_and_profile` skipped `Effect::PersistState`
-  and the mutated `last_dc_target` / `is_ac_connected` would be
-  lost on the next reboot. Now always emits `PersistState` if the
-  inner reduce did not.
-  *(Lote 6 — Audit §3.5)*
-- **`SetPreset::Performance` overflow defense** — midpoint
-  `(min_w + max_w) / 2` now uses `saturating_add` for resilience
-  against pathological `device_limits`.
-  *(Lote 5)*
-
-### Removed
-
-- **`hpd-backend-lenovo` placeholder crate.** It only implemented
-  `PowerEnvelope` (returning `FeatureUnsupported`), never implemented
-  `HwBackend`, and was never wired into the daemon's vendor cascade —
-  enabling `vendor-lenovo` produced a daemon that would refuse to
-  detect any hardware. Shipping it as a public `1.0.0` crate would
-  lock the project to honour a contract it never delivered. The
-  matching `vendor-lenovo` Cargo feature on `hpd-daemon` is also
-  removed. Reintroduce as a real backend in a 1.x minor when an
-  implementation lands.
-  *(Lote 26 — Audit V2 §4.16.1)*
-- **`hpd-backend-valve` placeholder crate.** Same shape as the
-  Lenovo crate above: stub implementation, unwired in `main.rs`,
-  shipping as `1.0.0` would have committed the project to an
-  interface contract it never delivered. The matching `vendor-valve`
-  Cargo feature on `hpd-daemon` is also removed. Reintroduce as a
-  real Steam Deck backend in a 1.x minor.
-  *(Lote 27 — Audit V2 §4.16.2)*
-- **`SystemPreset` enum** and the `silent` / `performance` / `turbo`
-  string aliases that mapped to it. Replaced by `TdpPreset` (see
-  Added). No backwards-compat aliases kept.
-  *(Lote 11 — Audit §3.7)*
-- **`Effect::EmitDbusPropertiesChanged`** variant and all its push
-  sites in the reducer + the no-op match arm in the executor. The
-  daemon now emits PropertiesChanged via a dedicated watcher task,
-  so the synthetic effect is dead weight. The manual deduplication
-  block in `AcPowerChanged` (`if !output.effects.contains(...)`)
-  also disappears.
-  *(Lote 10 — Audit §3.10)*
-- **Dead types and methods**
-  - `BatteryPercent` unit (unused). *(Lote 1)*
-  - `HpdError::DbusClient(String)` variant (unused). *(Lote 1)*
-  - `SysfsIo::is_writable` method and its `Real`/`Mock` impls
-    (defined but never called). *(Lote 1)*
-  - `Transition::ConfigReload` variant and its reducer arm. Reintroduced
-    in Lote 18 with a real `RuntimeConfig` payload and a SIGHUP-driven
-    hot-reload pathway.
-    *(Lote 1)*
-- **Empty `/src/` directory** at the repository root (leftover from
-  an earlier `cargo init`). *(Lote 1)*
-- **Duplicate broken systemd unit** `dist/systemd/hpd.service` —
-  pointed to a non-existent binary path and had incomplete
-  `ReadWritePaths`. *(Lote 7)*
-- **Duplicate `SysfsError` type** — both `hpd-sysfs/src/error.rs`
-  and the inner `SysfsError` of `hpd-capabilities/src/error.rs`
-  removed in favour of a single source in `hpd-error`.
-  *(Lote 8)*
-- **`thiserror` dependency** from `hpd-capabilities` (no longer used
-  there after the error types moved out). *(Lote 8)*
-
----
-
-## [0.1.0] — 2026-05-19
-
-Initial working set. Functional ASUS backend (TDP / charge / fan /
-profile), D-Bus interface, CLI (`hpdctl`), realtime monitor,
-suspend/resume handling, AC plug/unplug detection via udev. Lenovo
-and Valve backends are placeholders.
-
-See `git log --before=2026-05-22` for commit-level history of this
-release.

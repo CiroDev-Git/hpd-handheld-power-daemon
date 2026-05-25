@@ -72,7 +72,13 @@ jobs:
           # Pin AUR's host key — fetched once, then trusted. If AUR
           # ever rotates, the workflow will fail loudly and a human
           # maintainer can refresh the known_hosts pin via PR.
-          ssh-keyscan -t ed25519,rsa aur.archlinux.org > ~/.ssh/known_hosts 2>/dev/null
+          # stderr is the info/comment lines (# aur.archlinux.org...);
+          # stdout is the actual key. Suppress info but keep errors visible.
+          if ! ssh-keyscan -t ed25519,rsa aur.archlinux.org > ~/.ssh/known_hosts 2>/dev/null \
+              || [ ! -s ~/.ssh/known_hosts ]; then
+            echo "::error::ssh-keyscan aur.archlinux.org failed or returned empty output. Check network access from the runner."
+            exit 1
+          fi
           cat > ~/.ssh/config <<'EOF'
           Host aur.archlinux.org
               User aur
@@ -91,6 +97,20 @@ jobs:
           chmod 700 /home/builder/.ssh
           chmod 600 /home/builder/.ssh/aur
           echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke-test SSH connection to AUR
+        if: ${{ ! github.event.release.prerelease && steps.ssh.outputs.configured == 'true' }}
+        run: |
+          set -euo pipefail
+          # `ssh aur@aur.archlinux.org help` prints available commands and
+          # exits 0 when the key is accepted. Exits 255 on auth failure.
+          # Run as root here (pre-builder-copy) since SSH config points to /root/.ssh.
+          if ! ssh -o BatchMode=yes -o ConnectTimeout=15 aur@aur.archlinux.org help > /dev/null 2>&1; then
+            echo "::error::SSH authentication to aur@aur.archlinux.org failed."
+            echo "::error::Ensure the public key matching AUR_SSH_KEY is registered at https://aur.archlinux.org/account/ → SSH Keys."
+            exit 1
+          fi
+          echo "SSH connection to AUR: OK"
 
       - name: Push source package to AUR
         if: ${{ ! github.event.release.prerelease && steps.ssh.outputs.configured == 'true' }}

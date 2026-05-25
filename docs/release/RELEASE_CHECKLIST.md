@@ -42,6 +42,79 @@ updated manually (see [§5](#5-aur-update-manual-fallback)).
 
 ---
 
+## 0b. AUR account + SSH setup (one-time, before first AUR-enabled release)
+
+Skip this section if `AUR_SSH_KEY` is already set and working.
+
+**This must be done before pushing `v1.0.0`.** The `aur-sync.yml`
+workflow will skip silently if `AUR_SSH_KEY` is absent, so a missing
+setup does not break the release — it just means AUR is not updated
+automatically. You can always set it up later and push manually
+via §5.
+
+### 0b-1. Create an AUR account
+
+Register at <https://aur.archlinux.org/register/>. Use the same
+maintainer email that appears in `package/aur/PKGBUILD.template`
+(`# Maintainer: Cristian Ciro <cristian_ciro@icloud.com>`).
+
+### 0b-2. Generate a dedicated SSH key pair
+
+Generate a key specifically for AUR (do not reuse your GitHub deploy
+key or your personal SSH key):
+
+```bash
+ssh-keygen -t ed25519 -C "hpd-aur-deploy" -f ~/.ssh/hpd-aur
+# Leave the passphrase empty so CI can use it unattended.
+```
+
+This produces:
+- `~/.ssh/hpd-aur`     — private key (goes to GitHub secret)
+- `~/.ssh/hpd-aur.pub` — public key  (goes to AUR account)
+
+### 0b-3. Register the public key on AUR
+
+1. Copy the public key: `cat ~/.ssh/hpd-aur.pub`
+2. Go to <https://aur.archlinux.org/account/> → **My Account** → **SSH Keys**.
+3. Paste the public key and save.
+
+Verify authentication (should print a list of AUR shell commands):
+
+```bash
+ssh-keyscan -t ed25519,rsa aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
+ssh -i ~/.ssh/hpd-aur aur@aur.archlinux.org help
+```
+
+Expected output: `Commands available: ...`. If you see
+`Permission denied (publickey)`, the public key is not yet saved on AUR.
+
+### 0b-4. Add the private key as a GitHub repository secret
+
+1. Copy the private key contents: `cat ~/.ssh/hpd-aur`
+2. In the GitHub repo: **Settings → Secrets and variables → Actions →
+   New repository secret**.
+3. Name: `AUR_SSH_KEY`. Value: paste the full private key (including
+   `-----BEGIN OPENSSH PRIVATE KEY-----` and `-----END ...-----` lines).
+4. Save.
+
+Verify by navigating to **Settings → Secrets** and confirming
+`AUR_SSH_KEY` appears in the list.
+
+### 0b-5. First-release note: package auto-creation
+
+AUR packages do **not** need to be pre-registered in a web UI. On
+the first `git push` from `scripts/aur-sync.sh`, AUR's git server
+creates the package automatically under your account. The package
+becomes visible in the AUR web interface as soon as it has a valid
+`PKGBUILD` and `.SRCINFO` — both of which `aur-sync.sh` generates.
+
+If the package name is already taken by another AUR user,
+`git push` will fail with "permission denied". In that case, choose
+a different package name and update the `case` block in
+`scripts/aur-sync.sh` and the templates in `package/aur/`.
+
+---
+
 ## 1. Pre-release sanity (the day of the release)
 
 Run **all** of these and confirm green before touching anything else:

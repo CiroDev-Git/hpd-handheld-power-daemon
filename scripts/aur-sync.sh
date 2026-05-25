@@ -76,9 +76,24 @@ workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
 
 echo "==> Cloning ssh://aur@aur.archlinux.org/${pkgname}.git"
+# --depth 1 is intentionally absent: it fails on empty repos (new packages),
+# which is the normal state the first time a package is registered on AUR.
 git clone "ssh://aur@aur.archlinux.org/${pkgname}.git" "$workdir/aur" \
-    --quiet --depth 1 || {
-    echo "Error: AUR clone failed. Check that AUR_SSH_KEY has push access to $pkgname." >&2
+    --quiet 2>&1 || {
+    cat >&2 <<EOF
+Error: failed to clone ssh://aur@aur.archlinux.org/${pkgname}.git
+
+Likely causes:
+  1. SSH key not registered on your AUR account.
+     Add your public key at: https://aur.archlinux.org/account/ → SSH Keys
+     Then test with: ssh aur@aur.archlinux.org help
+  2. Wrong private key loaded (check AUR_SSH_KEY / ~/.ssh/aur).
+  3. Package name taken by another AUR user who has not granted access.
+     Search at: https://aur.archlinux.org/packages/?K=${pkgname}
+
+First-time note: new packages are auto-created on AUR on first push
+— you do NOT need to pre-register the package name separately.
+EOF
     exit 1
 }
 
@@ -106,7 +121,10 @@ fi
 git config user.name  "hpd release bot"
 git config user.email "noreply@github.com"
 
-if git diff --quiet --exit-code; then
+# Check for both modified tracked files AND untracked new files.
+# `git diff --exit-code` alone misses untracked files, which is exactly
+# the case on a brand-new (empty) AUR package repo.
+if [ -z "$(git status --short)" ]; then
     echo "==> No changes to push (already at v$version). Done."
     exit 0
 fi
@@ -114,6 +132,8 @@ fi
 git add PKGBUILD .SRCINFO hpd.install
 git commit -m "Update to v${version}"
 echo "==> Pushing to AUR"
-git push origin master
+# HEAD:master is explicit and works for both new packages (first push
+# creates the master branch) and existing ones.
+git push origin HEAD:master
 
 echo "==> Done. AUR package $pkgname is now at v$version."
