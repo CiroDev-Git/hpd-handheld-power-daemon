@@ -36,6 +36,17 @@ remediation plan at [`docs/audit/REMEDIATION_PLAN_V1.md`](docs/audit/REMEDIATION
   (previously `100644`), so users no longer need to `chmod +x` them
   after cloning the repo.
 
+### CI
+
+- **`aur-sync.yml` gains `workflow_dispatch`.** Maintainers can now
+  trigger the AUR sync workflow manually from the Actions tab — with
+  an empty `version` input it only smoke-tests `AUR_SSH_KEY` against
+  `aur@aur.archlinux.org` (no PKGBUILD push, no AUR side-effects);
+  with a `version` + `packages` choice (`both` / `source` / `bin` /
+  `none`) it re-runs the full push for that version. Useful for
+  validating SSH credentials before cutting a release and for
+  recovering from a partial release-driven failure.
+
 ---
 
 ## [1.0.0] — 2026-05-24

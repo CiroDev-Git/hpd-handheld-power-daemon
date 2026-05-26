@@ -4,9 +4,32 @@ name: AUR sync
 # pre-releases (RC/alpha/beta tags create Drafts that go nowhere
 # downstream). Opt-in: does nothing useful without the AUR_SSH_KEY
 # repository secret configured.
+#
+# Also exposes workflow_dispatch so a maintainer can:
+#   • Smoke-test the AUR_SSH_KEY secret without publishing anything
+#     (leave the `version` input empty).
+#   • Re-push a specific version to AUR if a previous release-driven
+#     run failed and was fixed (fill in `version` + pick which
+#     package(s)).
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to push (e.g. 1.0.0). Leave empty to only smoke-test the SSH credentials.'
+        required: false
+        type: string
+      packages:
+        description: 'Which AUR packages to push (ignored when version is empty)'
+        required: false
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - source
+          - bin
+          - none
 
 # We only read the repository contents; the only write is to AUR
 # over SSH, which is gated by the AUR_SSH_KEY secret.
@@ -35,26 +58,34 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Skip pre-releases
-        if: github.event.release.prerelease
+        if: github.event_name == 'release' && github.event.release.prerelease
         run: |
           echo "::notice::Pre-release tag (${{ github.event.release.tag_name }}) — AUR sync is for stable releases only. Skipping."
           # Exit success so the workflow doesn't mark the release run
           # as failed.
           exit 0
 
-      - name: Parse version from release tag
-        if: ${{ ! github.event.release.prerelease }}
+      - name: Resolve version
         id: ver
+        if: ${{ !(github.event_name == 'release' && github.event.release.prerelease) }}
         run: |
           set -euo pipefail
-          tag="${{ github.event.release.tag_name }}"
-          version="${tag#v}"
+          if [ "${{ github.event_name }}" = "release" ]; then
+            tag="${{ github.event.release.tag_name }}"
+            version="${tag#v}"
+            echo "Resolved tag=$tag → version=$version"
+          else
+            version="${{ inputs.version }}"
+            if [ -z "$version" ]; then
+              echo "::notice::Manual dispatch with empty version — pushes will be skipped, only the SSH smoke-test will run."
+            else
+              echo "Manual dispatch: version=$version"
+            fi
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag"         >> "$GITHUB_OUTPUT"
-          echo "Resolved tag=$tag → version=$version"
 
       - name: Configure SSH for AUR (opt-in)
-        if: ${{ ! github.event.release.prerelease }}
+        if: ${{ !(github.event_name == 'release' && github.event.release.prerelease) }}
         env:
           AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
         id: ssh
@@ -99,7 +130,7 @@ jobs:
           echo "configured=true" >> "$GITHUB_OUTPUT"
 
       - name: Smoke-test SSH connection to AUR
-        if: ${{ ! github.event.release.prerelease && steps.ssh.outputs.configured == 'true' }}
+        if: steps.ssh.outputs.configured == 'true'
         run: |
           set -euo pipefail
           # `ssh aur@aur.archlinux.org help` prints available commands and
@@ -113,7 +144,10 @@ jobs:
           echo "SSH connection to AUR: OK"
 
       - name: Push source package to AUR
-        if: ${{ ! github.event.release.prerelease && steps.ssh.outputs.configured == 'true' }}
+        if: |
+          steps.ssh.outputs.configured == 'true'
+          && steps.ver.outputs.version != ''
+          && (github.event_name == 'release' || inputs.packages == 'both' || inputs.packages == 'source')
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
@@ -127,7 +161,10 @@ jobs:
           sudo -u builder -H bash -c "cd /home/builder/repo && ./scripts/aur-sync.sh hpd-handheld-power-daemon \"$VERSION\""
 
       - name: Push binary package to AUR
-        if: ${{ ! github.event.release.prerelease && steps.ssh.outputs.configured == 'true' }}
+        if: |
+          steps.ssh.outputs.configured == 'true'
+          && steps.ver.outputs.version != ''
+          && (github.event_name == 'release' || inputs.packages == 'both' || inputs.packages == 'bin')
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
@@ -137,5 +174,7 @@ jobs:
           # the bin package's sha256 computation to succeed. Releases
           # publish the tarball as part of release.yml's `gh release
           # create` step, so by the time we get here the asset is
-          # already up.
+          # already up. (On manual dispatch the tarball must already
+          # exist at releases/download/v$VERSION/ — otherwise the
+          # script's curl|sha256sum step fails fast.)
           sudo -u builder -H bash -c "cd /home/builder/repo && ./scripts/aur-sync.sh hpd-handheld-power-daemon-bin \"$VERSION\""
