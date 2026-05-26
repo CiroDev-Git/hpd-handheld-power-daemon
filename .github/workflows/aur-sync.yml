@@ -131,17 +131,50 @@ jobs:
 
       - name: Smoke-test SSH connection to AUR
         if: steps.ssh.outputs.configured == 'true'
+        shell: bash
         run: |
-          set -euo pipefail
-          # `ssh aur@aur.archlinux.org help` prints available commands and
-          # exits 0 when the key is accepted. Exits 255 on auth failure.
-          # Run as root here (pre-builder-copy) since SSH config points to /root/.ssh.
-          if ! ssh -o BatchMode=yes -o ConnectTimeout=15 aur@aur.archlinux.org help > /dev/null 2>&1; then
-            echo "::error::SSH authentication to aur@aur.archlinux.org failed."
-            echo "::error::Ensure the public key matching AUR_SSH_KEY is registered at https://aur.archlinux.org/account/ → SSH Keys."
+          set -uo pipefail
+
+          # Print the fingerprint of the key the runner is about to
+          # offer. Fingerprints are safe to log (they don't expose
+          # private material) and let the operator compare against
+          # what's registered at https://aur.archlinux.org/account/ →
+          # SSH Keys. A mismatch means either:
+          #   - the AUR_SSH_KEY secret holds a different key than
+          #     the .pub the operator registered, or
+          #   - the .pub registered on AUR is stale / belongs to a
+          #     different account.
+          echo "Offering key fingerprint:"
+          if ! ssh-keygen -lf ~/.ssh/aur; then
+            echo "::error::Cannot parse ~/.ssh/aur as a valid OpenSSH private key."
+            echo "::error::The AUR_SSH_KEY secret is most likely corrupted (missing newlines, partial paste, or wrong format)."
+            echo "::error::Re-set it with: gh secret set AUR_SSH_KEY < ~/.ssh/aur_hpd --repo <owner>/<repo>"
             exit 1
           fi
-          echo "SSH connection to AUR: OK"
+          echo ""
+
+          # Run ssh with verbose output but capture stderr so the log
+          # only appears if auth fails. -v shows key offerings, server
+          # banner, and auth attempts — no private material.
+          # `ssh aur@aur.archlinux.org help` exits 0 on success and 255
+          # on publickey rejection.
+          log="$(mktemp)"
+          if ssh -v \
+                 -o BatchMode=yes \
+                 -o ConnectTimeout=15 \
+                 aur@aur.archlinux.org help > /dev/null 2>"$log"; then
+              echo "SSH connection to AUR: OK"
+              exit 0
+          fi
+
+          echo "::error::SSH authentication to aur@aur.archlinux.org failed."
+          echo "::error::Compare the fingerprint above to https://aur.archlinux.org/account/ → SSH Keys."
+          echo "::error::If they don't match, re-register the .pub matching the AUR_SSH_KEY secret."
+          echo "::error::If they DO match, the secret may be corrupted — re-upload with: gh secret set AUR_SSH_KEY < ~/.ssh/aur_hpd"
+          echo ""
+          echo "--- ssh -v output ---"
+          cat "$log"
+          exit 1
 
       - name: Push source package to AUR
         if: |

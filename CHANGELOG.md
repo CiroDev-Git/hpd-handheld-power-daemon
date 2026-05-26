@@ -46,6 +46,15 @@ remediation plan at [`docs/audit/REMEDIATION_PLAN_V1.md`](docs/audit/REMEDIATION
   `none`) it re-runs the full push for that version. Useful for
   validating SSH credentials before cutting a release and for
   recovering from a partial release-driven failure.
+- **`aur-sync.yml` smoke-test now surfaces actionable diagnostics on
+  failure.** Previously the step swallowed all `ssh` output and
+  exited with a generic "authentication failed" message, leaving no
+  way to tell whether the secret was corrupted or the public key
+  wasn't registered on AUR. The step now prints the offered private
+  key's fingerprint (safe to log), runs `ssh -v` with the verbose
+  log captured to a tempfile, and dumps that log only when auth
+  fails — alongside copy-paste recovery commands (including
+  `gh secret set AUR_SSH_KEY` to rule out paste-corruption).
 
 ---
 
