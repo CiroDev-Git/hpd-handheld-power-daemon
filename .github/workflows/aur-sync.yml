@@ -135,15 +135,33 @@ jobs:
         run: |
           set -uo pipefail
 
+          # Pre-flight: confirm the SSH state the previous step left
+          # behind. None of this leaks secrets — the private key is
+          # never read, only listed; config and known_hosts contain
+          # only the AUR host alias and AUR's public host key.
+          echo "--- ssh setup state ---"
+          echo "user:  $(whoami) ($(id))"
+          echo "HOME:  ${HOME:-<unset>}"
+          echo "ls -la ~/.ssh/:"
+          ls -la ~/.ssh/ 2>&1 | sed 's/^/  /' || echo "  (cannot list — directory missing or unreadable)"
+          if [ -r ~/.ssh/config ]; then
+            echo "~/.ssh/config:"
+            sed 's/^/  /' ~/.ssh/config
+          else
+            echo "::warning::~/.ssh/config is missing or unreadable — the previous Configure SSH step did not leave it behind."
+          fi
+          if [ -s ~/.ssh/known_hosts ]; then
+            echo "~/.ssh/known_hosts: $(wc -l < ~/.ssh/known_hosts) entr(y/ies)"
+          else
+            echo "::warning::~/.ssh/known_hosts is missing or empty — ssh-keyscan output did not land where expected."
+          fi
+          echo ""
+
           # Print the fingerprint of the key the runner is about to
           # offer. Fingerprints are safe to log (they don't expose
           # private material) and let the operator compare against
           # what's registered at https://aur.archlinux.org/account/ →
-          # SSH Keys. A mismatch means either:
-          #   - the AUR_SSH_KEY secret holds a different key than
-          #     the .pub the operator registered, or
-          #   - the .pub registered on AUR is stale / belongs to a
-          #     different account.
+          # SSH Keys.
           echo "Offering key fingerprint:"
           if ! ssh-keygen -lf ~/.ssh/aur; then
             echo "::error::Cannot parse ~/.ssh/aur as a valid OpenSSH private key."
@@ -155,11 +173,16 @@ jobs:
 
           # Run ssh with verbose output but capture stderr so the log
           # only appears if auth fails. -v shows key offerings, server
-          # banner, and auth attempts — no private material.
+          # banner, and auth attempts — no private material. Pass -F
+          # and -i explicitly: relying on ssh's auto-discovery of
+          # ~/.ssh/config has bitten us once already (the file was
+          # silently being skipped despite existing on disk).
           # `ssh aur@aur.archlinux.org help` exits 0 on success and 255
           # on publickey rejection.
           log="$(mktemp)"
           if ssh -v \
+                 -F ~/.ssh/config \
+                 -i ~/.ssh/aur \
                  -o BatchMode=yes \
                  -o ConnectTimeout=15 \
                  aur@aur.archlinux.org help > /dev/null 2>"$log"; then
