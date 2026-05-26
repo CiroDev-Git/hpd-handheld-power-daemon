@@ -13,7 +13,28 @@ remediation plan at [`docs/audit/REMEDIATION_PLAN_V1.md`](docs/audit/REMEDIATION
 
 ## [Unreleased]
 
-(Nothing yet.)
+### Added
+
+- **`scripts/doctor.sh`** — standalone preflight that diagnoses every
+  prerequisite `install.sh` assumes: Linux + x86_64, sudo, the Rust
+  toolchain at MSRV (1.85), systemd as pid 1, D-Bus, polkit, a C
+  linker, and DMI-probes the board against the supported ASUS list
+  (RC71L / RC72L / RC72LA / RC73XA). Reports pass/warn/fail with
+  copy-paste remediation hints; supports `--quiet` and `--strict`.
+
+### Changed
+
+- **`install.sh`** now runs `scripts/doctor.sh` as a preflight and
+  aborts with exit 1 if any prerequisite is missing. Bypass with
+  `./install.sh --skip-doctor`. This stops the "`cargo: command not
+  found` halfway through the install" failure mode that hit fresh
+  CachyOS / minimal distro installs.
+
+### Fixed
+
+- `install.sh` and `uninstall.sh` are now tracked as `100755` in git
+  (previously `100644`), so users no longer need to `chmod +x` them
+  after cloning the repo.
 
 ---
 

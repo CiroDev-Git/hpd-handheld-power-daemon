@@ -41,17 +41,58 @@ means creating a sibling crate that implements the four L2 traits from
 
 ## Install
 
-Requires Rust ≥ 1.75, a Linux host with `systemd` and `dbus`. Tested on
-recent Arch / Fedora / Debian families.
+### Arch / CachyOS / EndeavourOS — recommended
+
+Install the prebuilt AUR package. No Rust toolchain needed on the
+handheld; the binaries come straight from the official GitHub
+release tarball:
 
 ```bash
+paru -S hpd-handheld-power-daemon-bin   # or: yay -S …
+sudo systemctl enable --now hpd.service
+```
+
+There are two AUR packages:
+
+- **`hpd-handheld-power-daemon-bin`** — prebuilt x86_64 repack of the
+  official release tarball. Fast install, no compilation, no
+  toolchain. The right default for end users.
+- **`hpd-handheld-power-daemon`** — builds from source on your
+  machine. Pulls in `rust`, `cargo`, `pkgconf`, `systemd-libs` as
+  `makedepends`. Useful if you want to audit the build, run on a
+  non-x86_64 arch in the future, or test pre-release commits.
+
+### Other distros / building from source
+
+Requires Rust ≥ 1.85 (the workspace MSRV), a Linux host with
+`systemd`, `dbus`, and `polkit`. Tested on recent Fedora and Debian
+families.
+
+```bash
+git clone https://github.com/CiroDev-Git/hpd-handheld-power-daemon.git
+cd hpd-handheld-power-daemon
 ./install.sh
 ```
 
-The script `cargo build --release`s with the default feature set
-(`vendor-asus`), copies `hpd-daemon` and `hpdctl` into
-`/usr/local/bin/`, installs the systemd unit and D-Bus policy from
-`package/`, then enables and starts `hpd.service`. Live logs:
+`install.sh` runs `scripts/doctor.sh` as a preflight: it verifies
+cargo + rustc at MSRV, systemd, D-Bus, polkit, a C linker, and
+DMI-probes the board against the supported ASUS list. If anything
+is missing, install.sh aborts with copy-paste remediation hints
+(including the exact rustup / pacman / dnf / apt command for your
+distro). Re-run the doctor standalone anytime:
+
+```bash
+./scripts/doctor.sh           # full report
+./scripts/doctor.sh --quiet   # only warnings + failures
+```
+
+Skip the preflight (advanced): `./install.sh --skip-doctor`.
+
+Once the doctor passes, `install.sh` builds release binaries with
+the default feature set (`vendor-asus`), copies `hpd-daemon` and
+`hpdctl` into `/usr/local/bin/`, installs the systemd unit, D-Bus
+policy, and polkit policy from `package/`, then enables and starts
+`hpd.service`. Live logs:
 
 ```bash
 journalctl -fu hpd

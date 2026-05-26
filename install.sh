@@ -1,8 +1,67 @@
 #!/bin/bash
 # Install hpd-daemon and hpdctl system-wide.
 # Requires root (uses sudo). Tested on Arch / Fedora / Debian families.
+#
+# Runs scripts/doctor.sh first to abort cleanly when prerequisites
+# are missing (cargo, rustc MSRV, systemd, D-Bus, polkit). Pass
+# --skip-doctor to bypass the preflight if you know what you're doing.
 
 set -euo pipefail
+
+SKIP_DOCTOR="no"
+for arg in "$@"; do
+    case "$arg" in
+        --skip-doctor) SKIP_DOCTOR="yes" ;;
+        -h|--help)
+            cat <<EOF
+Usage: $0 [--skip-doctor]
+
+  --skip-doctor   Don't run scripts/doctor.sh as preflight (advanced).
+
+Builds hpd-daemon + hpdctl in release mode and installs them system-wide.
+See scripts/doctor.sh for the prerequisite checks.
+EOF
+            exit 0
+            ;;
+        *) echo "Unknown flag: $arg" >&2; exit 2 ;;
+    esac
+done
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DOCTOR="$SCRIPT_DIR/scripts/doctor.sh"
+
+if [[ "$SKIP_DOCTOR" == "no" ]]; then
+    if [[ -x "$DOCTOR" ]]; then
+        echo "🩺 0. Running preflight (scripts/doctor.sh)..."
+        if ! "$DOCTOR"; then
+            cat >&2 <<EOF
+
+❌  Preflight failed. Fix the errors reported above and re-run.
+
+    Faster alternative for end users on Arch / CachyOS / EndeavourOS —
+    install the prebuilt AUR package (no Rust toolchain required):
+        paru -S hpd-handheld-power-daemon-bin
+        # or: yay -S hpd-handheld-power-daemon-bin
+
+    Re-run the doctor anytime:  ./scripts/doctor.sh
+    Skip the preflight:         ./install.sh --skip-doctor
+EOF
+            exit 1
+        fi
+        echo ""
+    elif [[ -r "$DOCTOR" ]]; then
+        # File present but not executable (rare — git mode lost). Run
+        # under bash explicitly so the install still gets the safety net.
+        echo "🩺 0. Running preflight (bash scripts/doctor.sh)..."
+        if ! bash "$DOCTOR"; then
+            echo "❌  Preflight failed; see errors above." >&2
+            exit 1
+        fi
+        echo ""
+    else
+        echo "⚠️  scripts/doctor.sh not found; proceeding without preflight." >&2
+    fi
+fi
 
 echo "🔨 1. Compiling HPD Release..."
 # Production build uses the default feature set: `vendor-asus` only.
