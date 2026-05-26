@@ -13,6 +13,13 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Opt every JS-based action (actions/checkout, actions/cache,
+  # actions/upload-artifact, …) into the Node 24 runtime ahead of
+  # GitHub's 2026-06-02 default flip. Silences the "Node.js 20 is
+  # deprecated" warning emitted on every run and becomes a no-op
+  # once Node 24 is the default. Remove this line after Sept 2026
+  # when Node 20 is gone from the runner anyway.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
   # Primary job: fmt + clippy + tests + doc + release build on Linux,
