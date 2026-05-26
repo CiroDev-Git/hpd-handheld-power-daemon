@@ -173,16 +173,29 @@ jobs:
 
           # Run ssh with verbose output but capture stderr so the log
           # only appears if auth fails. -v shows key offerings, server
-          # banner, and auth attempts — no private material. Pass -F
-          # and -i explicitly: relying on ssh's auto-discovery of
-          # ~/.ssh/config has bitten us once already (the file was
-          # silently being skipped despite existing on disk).
+          # banner, and auth attempts — no private material.
           # `ssh aur@aur.archlinux.org help` exits 0 on success and 255
           # on publickey rejection.
+          #
+          # Why every path uses "$HOME/..." instead of relative ~/...:
+          # GitHub Actions container runners set $HOME=/github/home for
+          # the github user, but root's /etc/passwd entry still points
+          # at /root. bash's ~ uses $HOME (= /github/home, what we want);
+          # ssh's *internal* ~ expansion (for defaults like
+          # UserKnownHostsFile=~/.ssh/known_hosts) uses passwd
+          # (= /root, where nothing exists). The result: config and
+          # key load fine via -F/-i (bash expands them), but known_hosts
+          # silently misses, ssh reports "Host key verification failed",
+          # and the operator chases a non-existent publickey-rejection
+          # bug. Forcing absolute paths everywhere sidesteps the whole
+          # mismatch. The Push steps below don't need this trick
+          # because `sudo -u builder -H` aligns $HOME with the builder
+          # user's passwd entry.
           log="$(mktemp)"
           if ssh -v \
-                 -F ~/.ssh/config \
-                 -i ~/.ssh/aur \
+                 -F "$HOME/.ssh/config" \
+                 -i "$HOME/.ssh/aur" \
+                 -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
                  -o BatchMode=yes \
                  -o ConnectTimeout=15 \
                  aur@aur.archlinux.org help > /dev/null 2>"$log"; then
