@@ -239,7 +239,7 @@ public surface is:
 | D-Bus interface `dev.cirodev.hpd.PowerDaemon1` (methods, properties, signals) | MAJOR — breaks every client |
 | `hpdctl` subcommand syntax and option flags                          | MAJOR for removals/renames; MINOR for additions |
 | On-disk state at `/var/lib/hpd/state.toml` (schema, not values)      | MAJOR if non-backwards-compatible; MINOR if additive with `#[serde(default)]` |
-| Polkit action IDs in `dev.cirodev.hpd.{set-tdp, set-charge, set-profile}` | MAJOR — renaming breaks operator policies |
+| Polkit action IDs in `dev.cirodev.hpd.{set-tdp, set-charge, set-profile}` + the `wheel` grant in `49-hpd.rules` | MAJOR — renaming an action or dropping the `wheel` grant breaks operator policies |
 | `/etc/hpd/config.toml` schema                                        | MAJOR if a previously-valid file is now rejected; MINOR if purely additive |
 
 Internal Rust API (every `pub` item in `hpd-error`, `hpd-sysfs`,
@@ -270,7 +270,9 @@ The short form (each step is mandatory):
    `hpd-daemon/src/main.rs` if it changes a D-Bus property.
 5. New `PolkitAction` variant in `hpd-dbus/src/actions.rs` + matching
    `<action>` in `package/polkit/dev.cirodev.hpd.policy` (if
-   privileged).
+   privileged). The `wheel` grant in `package/polkit/49-hpd.rules`
+   matches `dev.cirodev.hpd.*` by prefix, so it already covers the new
+   action — no edit needed there.
 6. Method on `PowerDaemonInterface` (`hpd-dbus/src/service.rs`) with
    `polkit::check(...)` before enqueuing.
 7. Proxy method in `hpd-cli/src/dbus.rs` + subcommand in

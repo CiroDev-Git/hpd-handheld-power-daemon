@@ -20,6 +20,7 @@ echo "🗑️  3. Removing system config files..."
 sudo rm -f /etc/systemd/system/hpd.service
 sudo rm -f /etc/dbus-1/system.d/dev.cirodev.hpd.conf
 sudo rm -f /usr/share/polkit-1/actions/dev.cirodev.hpd.policy
+sudo rm -f /usr/share/polkit-1/rules.d/49-hpd.rules
 sudo rm -f /usr/share/hpd/VERSION
 sudo rmdir --ignore-fail-on-non-empty /usr/share/hpd 2>/dev/null || true
 # Drop the example template; the operator's own config.toml (if any)

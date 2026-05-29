@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Polkit authorization rule for the Handheld Power Daemon.
+//
+// Members of the "wheel" group (the handheld's administrators / owner)
+// may change hpd's power envelope, cooling profile, and battery charge
+// threshold without re-authenticating — including over SSH.
+//
+// Why a rule and not just the policy defaults: polkit's allow_active /
+// allow_inactive / allow_any tiers key on the *session* being local and
+// active. On handheld desktop sessions that classification is
+// unreliable — a terminal the owner is physically using can register as
+// Remote=yes (e.g. when driven over SSH, or by a display manager that
+// does not attach the session to the seat), which drops the caller into
+// allow_any and forces an admin prompt. Keying on group membership is
+// stable regardless of how the session is registered.
+//
+// Non-wheel callers fall through to the defaults declared in
+// dev.cirodev.hpd.policy (auth_admin / auth_admin_keep), so the daemon
+// still prompts unprivileged users. The polkit helper remains
+// fail-closed: any error talking to polkit denies the request.
+//
+// Requires a polkit build with the JavaScript rules engine (polkit
+// >= 0.106), which is standard on modern distributions.
+
+polkit.addRule(function (action, subject) {
+    if (action.id.indexOf("dev.cirodev.hpd.") === 0 &&
+        subject.isInGroup("wheel")) {
+        return polkit.Result.YES;
+    }
+});

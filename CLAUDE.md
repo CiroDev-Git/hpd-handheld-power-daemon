@@ -34,7 +34,8 @@ Generate docs: `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`
 Production install (Linux, ASUS handheld): `./install.sh` — builds
 release, copies binaries to `/usr/local/bin`, installs the systemd unit
 (`package/hpd.service`), the D-Bus policy (`package/dev.cirodev.hpd.conf`),
-the polkit policy (`package/polkit/dev.cirodev.hpd.policy`), and the
+the polkit policy (`package/polkit/dev.cirodev.hpd.policy`) and rule
+(`package/polkit/49-hpd.rules`), and the
 example config (`/etc/hpd/config.toml.example`); then enables and starts
 `hpd.service`. Live logs: `journalctl -fu hpd`. Uninstall:
 `./uninstall.sh` (pass `--purge` to also wipe `/var/lib/hpd` and `/etc/hpd`).
@@ -178,10 +179,25 @@ The check talks to `org.freedesktop.PolicyKit1.Authority` directly
 - `dev.cirodev.hpd.set-profile` — platform profile + fan-auto
   (`auth_admin_keep` — 5-minute cache).
 
+These `<defaults>` in `package/polkit/dev.cirodev.hpd.policy` are the
+baseline for **non-administrator** callers. **`wheel`-group members
+(the device owner) are granted every `dev.cirodev.hpd.*` action without
+a prompt** by the companion JS rule
+`package/polkit/49-hpd.rules` (`polkit.Result.YES` for
+`subject.isInGroup("wheel")`). The rule keys on **group membership, not
+the `allow_active`/`allow_inactive`/`allow_any` session tiers**, on
+purpose: on handheld desktop sessions a physically-local terminal can
+register as `Remote=yes` (e.g. driven over SSH, or a DM that doesn't
+attach the session to the seat), which would otherwise drop the owner
+into `allow_any` and force a password prompt. Non-`wheel` callers fall
+through to the `auth_admin` defaults. The rule needs a polkit build with
+the JS engine (>= 0.106), standard on modern distros.
+
 Action IDs live in one place: the `PolkitAction` enum in
 `hpd-dbus/src/actions.rs`. Adding a new privileged setter means
 adding a variant there + matching `<action>` block in
-`package/polkit/dev.cirodev.hpd.policy`.
+`package/polkit/dev.cirodev.hpd.policy` (the `49-hpd.rules` grant
+already covers any `dev.cirodev.hpd.*` action by prefix).
 
 **Fail-closed:** any error talking to polkit (proxy creation
 failure, method-call timeout, malformed reply, missing sender header)
@@ -360,6 +376,7 @@ and exits cleanly rather than letting systemd `SIGKILL` it mid-write.
 | Atomic state persistence                          | `hpd-core/src/persistence.rs`                        |
 | Per-property D-Bus signal emission                | `hpd-daemon/src/main.rs::spawn_properties_changed_emitter` |
 | systemd unit + sandboxing                         | `package/hpd.service`                                |
-| polkit policy file                                | `package/polkit/dev.cirodev.hpd.policy`              |
+| polkit policy file (non-admin `auth_admin` defaults) | `package/polkit/dev.cirodev.hpd.policy`           |
+| polkit rule (`wheel` passwordless grant)          | `package/polkit/49-hpd.rules`                        |
 | D-Bus bus-level policy                            | `package/dev.cirodev.hpd.conf`                       |
 | Example config                                    | `package/hpd-example.toml`                           |

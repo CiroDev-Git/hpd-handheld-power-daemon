@@ -34,8 +34,8 @@ use std::process;
         • Battery charge limit  — cap charging to extend battery lifespan\n\
         \n\
         Reading status (status, monitor, limits, *-get) never needs root.\n\
-        Changing settings from the local session also works without sudo;\n\
-        only remote/SSH sessions are asked to authenticate.",
+        Changing settings needs no sudo if you are in the 'wheel' (admin)\n\
+        group — including over SSH; other users are prompted to authenticate.",
     after_help = "EXAMPLES:\n  \
         hpdctl status                 Show a one-shot status dashboard\n  \
         hpdctl monitor                Live dashboard, refreshes every second\n  \

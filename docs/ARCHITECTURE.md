@@ -332,22 +332,52 @@ Every privileged D-Bus setter calls `hpd_dbus::polkit::check(...)`
 `org.freedesktop.PolicyKit1.Authority` over D-Bus — no extra crate
 dependency.
 
-| Action ID                          | Used by                                         | Default rule       |
-|------------------------------------|-------------------------------------------------|--------------------|
-| `dev.cirodev.hpd.set-tdp`          | `set_spl`, `set_preset`                         | `auth_admin`       |
-| `dev.cirodev.hpd.set-charge`       | `set_charge_threshold`                          | `auth_admin`       |
-| `dev.cirodev.hpd.set-profile`      | `set_profile`, `set_fan_auto`                   | `auth_admin_keep`  |
+| Action ID                          | Used by                                         | Default rule (non-admin) |
+|------------------------------------|-------------------------------------------------|--------------------------|
+| `dev.cirodev.hpd.set-tdp`          | `set_spl`, `set_preset`                         | `auth_admin`             |
+| `dev.cirodev.hpd.set-charge`       | `set_charge_threshold`                          | `auth_admin`             |
+| `dev.cirodev.hpd.set-profile`      | `set_profile`, `set_fan_auto`                   | `auth_admin_keep`        |
 
 `auth_admin_keep` caches the affirmative answer for 5 minutes, so
 flipping between profiles in quick succession does not pile up
 prompts. TDP and charge changes use plain `auth_admin` — they need
 re-authorization on every call.
 
+### `wheel` passwordless grant
+
+The `<defaults>` above are the baseline for **non-administrator**
+callers. The device owner (a member of the `wheel` group) is granted
+every `dev.cirodev.hpd.*` action **without a prompt** by the companion
+JavaScript rule `package/polkit/49-hpd.rules`:
+
+```js
+polkit.addRule(function (action, subject) {
+    if (action.id.indexOf("dev.cirodev.hpd.") === 0 &&
+        subject.isInGroup("wheel")) {
+        return polkit.Result.YES;
+    }
+});
+```
+
+The rule keys on **group membership rather than the `allow_active` /
+`allow_inactive` / `allow_any` session tiers**, on purpose: on handheld
+desktop sessions a physically-local terminal frequently registers as
+`Remote=yes` (when driven over SSH, or by a display manager that does
+not attach the session to the seat), which would drop the owner into
+`allow_any` and force a password prompt. A group check is stable
+regardless of how the session is registered, and it covers SSH access
+from the owner's own machine. It needs a polkit build with the JS rules
+engine (>= 0.106, standard on modern distributions); where that engine
+is absent the rule is simply ignored and the `auth_admin` defaults
+apply to everyone.
+
 Action IDs are declared once in `hpd-dbus/src/actions.rs` as the
 `PolkitAction` enum. Adding a new privileged setter is a single
 edit there + a matching `<action>` block in
-`package/polkit/dev.cirodev.hpd.policy`. The Rust enum's `as_id`
-match arm gives you a compile error if the wiring drifts.
+`package/polkit/dev.cirodev.hpd.policy` (the `49-hpd.rules` grant
+already matches any `dev.cirodev.hpd.*` action by prefix). The Rust
+enum's `as_id` match arm gives you a compile error if the wiring
+drifts.
 
 ### Fail-closed contract
 

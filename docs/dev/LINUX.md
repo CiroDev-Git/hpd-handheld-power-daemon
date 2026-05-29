@@ -96,6 +96,7 @@ What `install.sh` actually places:
 | `/etc/systemd/system/hpd.service`                             | `package/hpd.service`                     |
 | `/etc/dbus-1/system.d/dev.cirodev.hpd.conf`                   | `package/dev.cirodev.hpd.conf`            |
 | `/usr/share/polkit-1/actions/dev.cirodev.hpd.policy`          | `package/polkit/dev.cirodev.hpd.policy`   |
+| `/usr/share/polkit-1/rules.d/49-hpd.rules`                    | `package/polkit/49-hpd.rules`             |
 | `/etc/hpd/config.toml.example`                                | `package/hpd-example.toml`                |
 | `/var/lib/hpd/` *(empty directory created at install time)*   | — (state file appears on first run)       |
 
@@ -116,6 +117,8 @@ sudo install -Dm644 package/dev.cirodev.hpd.conf \
     /etc/dbus-1/system.d/dev.cirodev.hpd.conf
 sudo install -Dm644 package/polkit/dev.cirodev.hpd.policy \
     /usr/share/polkit-1/actions/dev.cirodev.hpd.policy
+sudo install -Dm644 package/polkit/49-hpd.rules \
+    /usr/share/polkit-1/rules.d/49-hpd.rules
 sudo systemctl try-reload-or-restart dbus.service
 
 # dev loop:
@@ -187,7 +190,7 @@ what you reach for when something looks off in the wire format.
 
 ## 6. Polkit interactions
 
-The three action IDs:
+The three action IDs and their **non-administrator** defaults:
 
 | Action                          | Used by                              | Default rule       |
 |---------------------------------|--------------------------------------|--------------------|
@@ -195,11 +198,24 @@ The three action IDs:
 | `dev.cirodev.hpd.set-charge`    | `set_charge_threshold`               | `auth_admin`       |
 | `dev.cirodev.hpd.set-profile`   | `set_profile`, `set_fan_auto`        | `auth_admin_keep`  |
 
+`wheel`-group members (the device owner) bypass the table above:
+`package/polkit/49-hpd.rules` grants every `dev.cirodev.hpd.*` action
+to `wheel` without a prompt, keyed on group membership rather than the
+session's local/active classification. That classification is the usual
+gotcha on dev hosts — a physically-local terminal often reports
+`Remote=yes` (e.g. when you're SSH'd in, or your DM doesn't attach the
+session to the seat), so the policy's `allow_active` tier never fires
+and only the `wheel` rule lets you in without a password. Check your
+session with `loginctl show-session "$XDG_SESSION_ID" -p Remote -p Active`.
+
 Useful invocations:
 
 ```bash
 # inspect the registered policy
 pkaction --action-id dev.cirodev.hpd.set-tdp --verbose
+
+# confirm you are in wheel (the passwordless grant keys on this)
+id -nG | tr ' ' '\n' | grep -qx wheel && echo "in wheel" || echo "NOT in wheel"
 
 # clear cached admin credentials (e.g. set-profile keeps them 5 min)
 sudo systemctl restart polkit.service
@@ -208,11 +224,12 @@ sudo systemctl restart polkit.service
 pkcheck --action-id dev.cirodev.hpd.set-tdp --process $$ --allow-user-interaction
 ```
 
-If polkit isn't prompting at all in a desktop session: confirm a
-polkit agent is running (`pgrep polkit-` should show one). KDE,
-GNOME, sway, Hyprland all ship one by default; tiling-WM users
+If a **non-`wheel`** user gets no prompt at all in a desktop session:
+confirm a polkit agent is running (`pgrep polkit-` should show one).
+KDE, GNOME, sway, Hyprland all ship one by default; tiling-WM users
 sometimes need to start one manually
-(e.g. `/usr/lib/polkit-kde-authentication-agent-1`).
+(e.g. `/usr/lib/polkit-kde-authentication-agent-1`). `wheel` members
+need no agent — the rule authorizes them directly.
 
 ---
 
@@ -260,7 +277,8 @@ udevadm monitor --subsystem-match=power_supply --property
 | `/var/lib/hpd/state.toml`                   | daemon      | Persisted in-memory state (atomic write).|
 | `/etc/systemd/system/hpd.service`           | install.sh  | Sandboxed unit.                          |
 | `/etc/dbus-1/system.d/dev.cirodev.hpd.conf` | install.sh  | Bus-level send/receive policy.           |
-| `/usr/share/polkit-1/actions/dev.cirodev.hpd.policy` | install.sh | Polkit action definitions.       |
+| `/usr/share/polkit-1/actions/dev.cirodev.hpd.policy` | install.sh | Polkit action definitions (non-admin defaults). |
+| `/usr/share/polkit-1/rules.d/49-hpd.rules`  | install.sh  | Polkit rule: `wheel` passwordless grant. |
 | `/usr/local/bin/{hpd-daemon,hpdctl}`        | install.sh  | Shipped binaries.                        |
 
 The systemd unit injects `STATE_DIRECTORY=/var/lib/hpd` and
@@ -280,8 +298,16 @@ those over the configured `state_path` when running under systemd.
   root) or `sudo cargo run` during development.
 - **`tokio-udev` link error during build** — missing `libudev-dev`.
   See the distro hints in §1.
-- **Polkit prompt never appears** in a custom WM — no authentication
-  agent is running. Start one explicitly (see §6).
+- **Polkit prompt never appears** in a custom WM — for a non-`wheel`
+  user this means no authentication agent is running; start one
+  explicitly (see §6). For a `wheel` user no prompt is expected — the
+  `49-hpd.rules` grant authorizes them directly.
+- **`hpdctl` write fails with `AuthFailed` even though you are the
+  owner** — your session is likely `Remote=yes` (common over SSH), so
+  the policy's `allow_active` tier never applies. Make sure you are in
+  the `wheel` group (`id -nG | grep -qw wheel`) and that
+  `/usr/share/polkit-1/rules.d/49-hpd.rules` is installed; the rule
+  grants `wheel` regardless of session locality. See §6.
 - **State file appears to disappear after reboot** — you ran the
   daemon outside systemd, persistence went to the configured
   `state_path` instead of `STATE_DIRECTORY`. Check which path was

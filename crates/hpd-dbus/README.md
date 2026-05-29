@@ -40,6 +40,12 @@ that flipped.
 - **Action IDs live in `actions.rs`** as the `PolkitAction` enum.
   Adding a privileged operation = add a variant, get a compile error
   at the `as_id` arm, update `package/polkit/dev.cirodev.hpd.policy`.
+- **`wheel` passwordless grant:** the `auth_admin` defaults in the
+  policy apply to non-administrators only. `package/polkit/49-hpd.rules`
+  grants every `dev.cirodev.hpd.*` action to `wheel`-group members
+  without a prompt (matched by action-ID prefix, so new actions are
+  covered automatically), keyed on group membership rather than the
+  session's local/active classification.
 - **Fail-closed:** every error path in `polkit::check` (proxy
   failure, method-call timeout, malformed reply, missing sender
   header) returns `false`. Refusing a legitimate request beats

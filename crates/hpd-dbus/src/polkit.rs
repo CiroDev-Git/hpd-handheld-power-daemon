@@ -8,6 +8,14 @@
 //! pulling in a dedicated crate — the call is small enough that the
 //! extra dependency is not worth it.
 //!
+//! The decision itself lives in polkit, not here: the `auth_admin`
+//! defaults in `package/polkit/dev.cirodev.hpd.policy` gate
+//! non-administrator callers, while `package/polkit/49-hpd.rules` grants
+//! `wheel`-group members every `dev.cirodev.hpd.*` action without a
+//! prompt (keyed on group membership, so it holds even when a
+//! physically-local session registers as `Remote=yes`). This module only
+//! asks the question and enforces the answer fail-closed.
+//!
 //! ## Failure mode: fail-closed
 //!
 //! Any error from polkit (proxy creation failure, method call timeout,

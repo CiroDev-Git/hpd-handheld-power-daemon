@@ -239,6 +239,18 @@ else
          "hpd installs a polkit policy and gates every privileged setter on it. Without polkit, all hpdctl writes will be refused."
 fi
 
+# The shipped polkit rule (49-hpd.rules) grants passwordless access to
+# wheel-group members. Flag it if the operator who will own the device
+# isn't in wheel — they would be prompted for an admin password (or hit
+# AuthFailed without an auth agent) on every hpdctl write.
+doctor_user="${SUDO_USER:-$USER}"
+if id -nG "$doctor_user" 2>/dev/null | tr ' ' '\n' | grep -qx wheel; then
+    ok "user '$doctor_user' is in the wheel group (passwordless hpdctl writes)"
+else
+    warn "user '$doctor_user' is not in the wheel group" \
+         "hpd grants passwordless writes to wheel members via 49-hpd.rules. Add the user (sudo usermod -aG wheel $doctor_user; re-login) or expect a polkit admin prompt on every hpdctl write."
+fi
+
 # ----------------------------------------------------------------------
 # 6. Build tooling — pkg-config + a C linker for transitive deps
 # ----------------------------------------------------------------------

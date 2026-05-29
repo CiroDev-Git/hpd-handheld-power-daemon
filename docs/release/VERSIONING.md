@@ -41,7 +41,7 @@ gates the version bump.
 | **D-Bus interface** `dev.cirodev.hpd.PowerDaemon1`                                            | Removing or renaming a method/property/signal; changing a method's signature; changing a property's type.              |
 | **`hpdctl` CLI subcommands and flags**                                                        | Removing or renaming a subcommand/flag; changing the meaning of an existing arg.                                       |
 | **On-disk state at `/var/lib/hpd/state.toml`**                                                | Rejecting a previously-valid state file at load; changing the meaning of an existing field.                            |
-| **Polkit action IDs `dev.cirodev.hpd.{set-tdp, set-charge, set-profile}`**                    | Renaming an action ID; changing its default policy (`auth_admin` → `no` etc.).                                         |
+| **Polkit action IDs `dev.cirodev.hpd.{set-tdp, set-charge, set-profile}`** and the `wheel` grant in `49-hpd.rules` | Renaming an action ID; changing its default policy (`auth_admin` → `no` etc.); removing the `wheel` passwordless grant. |
 | **`/etc/hpd/config.toml` schema**                                                             | Rejecting a previously-valid config file at load; changing the meaning of an existing field.                           |
 | **systemd unit name `hpd.service` and its `StateDirectory` / `ConfigurationDirectory` names** | Renaming the unit, the state dir, or the config dir.                                                                   |
 

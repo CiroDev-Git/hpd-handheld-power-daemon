@@ -10,6 +10,13 @@
   defers to polkit for per-action authorization using the action IDs
   declared below. Translations are intentionally omitted — add them in
   a follow-up if/when an LL10N pass happens.
+
+  These <defaults> are the baseline for NON-administrator callers and
+  intentionally require admin authentication. Members of the "wheel"
+  group (the device owner) are granted these actions without a prompt
+  by the companion rule package/polkit/49-hpd.rules — see the rationale
+  there for why authorization keys on group membership rather than the
+  allow_active / allow_inactive / allow_any session tiers.
 -->
 <policyconfig>
 
@@ -19,38 +26,30 @@
   <action id="dev.cirodev.hpd.set-tdp">
     <description>Change the TDP envelope (SPL / SPPT / FPPT)</description>
     <message>Authentication is required to change the system's power envelope.</message>
-    <!--
-      allow_active = yes: the user physically present in the local seat
-      session owns this handheld and may change its power envelope without
-      a password. Remote / inactive callers (e.g. SSH) still need admin
-      authentication.
-    -->
     <defaults>
       <allow_any>auth_admin</allow_any>
       <allow_inactive>auth_admin</allow_inactive>
-      <allow_active>yes</allow_active>
+      <allow_active>auth_admin</allow_active>
     </defaults>
   </action>
 
   <action id="dev.cirodev.hpd.set-charge">
     <description>Change the battery charge end threshold</description>
     <message>Authentication is required to change the battery charge limit.</message>
-    <!-- allow_active = yes: see the rationale on set-tdp above. -->
     <defaults>
       <allow_any>auth_admin</allow_any>
       <allow_inactive>auth_admin</allow_inactive>
-      <allow_active>yes</allow_active>
+      <allow_active>auth_admin</allow_active>
     </defaults>
   </action>
 
   <action id="dev.cirodev.hpd.set-profile">
     <description>Change the platform cooling profile</description>
     <message>Authentication is required to change the cooling profile.</message>
-    <!-- allow_active = yes: see the rationale on set-tdp above. -->
     <defaults>
       <allow_any>auth_admin_keep</allow_any>
       <allow_inactive>auth_admin_keep</allow_inactive>
-      <allow_active>yes</allow_active>
+      <allow_active>auth_admin_keep</allow_active>
     </defaults>
   </action>
 

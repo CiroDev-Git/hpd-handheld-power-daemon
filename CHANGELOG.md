@@ -120,11 +120,14 @@ strictly.
   of the `wheel` group to send to the daemon. It now lets any user
   send method calls; per-action authorization is enforced by polkit
   via the new `dev.cirodev.hpd.{set-tdp,set-charge,set-profile}`
-  action IDs. Operators must ensure polkit is installed and that an
-  auth agent (polkit-gnome, kde-polkit, `pkttyagent` for terminal
-  use) is available, otherwise privileged calls will fail with
+  action IDs. `wheel`-group members (the device owner) are granted
+  these actions without a prompt by `package/polkit/49-hpd.rules` (see
+  *Fixed* below); non-`wheel` callers hit the `auth_admin` defaults and
+  need a polkit auth agent (polkit-gnome, kde-polkit, or `pkttyagent`
+  for terminal use), otherwise their privileged calls fail with
   `AuthFailed`. `install.sh` deploys the policy file to
-  `/usr/share/polkit-1/actions/`.
+  `/usr/share/polkit-1/actions/` and the rule to
+  `/usr/share/polkit-1/rules.d/`.
   *(Lote 20)*
 
 ### Added
@@ -490,13 +493,15 @@ strictly.
   *(Lote 51 — Audit V2 Phase 5)*
 - **`scripts/doctor.sh` standalone preflight.** Diagnoses every
   prerequisite `install.sh` assumes — Linux + x86_64, sudo, the Rust
-  toolchain at MSRV (1.85), systemd as pid 1, D-Bus, polkit, a C
-  linker — and DMI-probes the board against the supported ASUS list
+  toolchain at MSRV (1.85), systemd as pid 1, D-Bus, polkit, `wheel`
+  group membership (for passwordless `hpdctl` writes), a C linker — and
+  DMI-probes the board against the supported ASUS list
   (RC71L / RC72L / RC72LA / RC73XA). Reports pass/warn/fail with
   copy-paste remediation hints; supports `--quiet` and `--strict`.
 - **Richer `--help` for `hpdctl` and `hpd-daemon`.** `hpdctl --help`
-  now explains what the daemon manages, notes that local changes need
-  no `sudo`, lists worked examples, and gives every subcommand and
+  now explains what the daemon manages, notes that `wheel`-group users
+  change settings without `sudo`, lists worked examples, and gives
+  every subcommand and
   argument an explanatory paragraph (`hpdctl <cmd> --help`).
   `hpd-daemon` gains a dependency-free `--help` / `-V` handler: run by
   hand it prints a one-screen orientation (systemctl/journalctl usage,
@@ -513,16 +518,24 @@ strictly.
 
 ### Fixed
 
-- **Local users no longer hit `AuthFailed` on every privileged call.**
-  The polkit policy declared `allow_active=auth_admin` for all three
-  actions, so even the user physically logged into the handheld's seat
-  session was challenged for an admin password on every TDP / charge /
-  profile change — and on a minimal handheld session with no polkit
-  auth agent the call failed outright with
-  `org.freedesktop.DBus.Error.AuthFailed`. The three actions now use
-  `allow_active=yes`: the owner present in the local seat session
-  manages the device without a password. Remote / inactive callers
-  (e.g. SSH) still require admin authentication.
+- **`wheel`-group members no longer hit `AuthFailed` on every
+  privileged call.** The polkit `<defaults>` required admin
+  authentication for all three actions, so the device owner was
+  challenged for a password on every TDP / charge / profile change —
+  and where no polkit auth agent was running (a minimal handheld
+  session, or a terminal driven over SSH) the call failed outright with
+  `org.freedesktop.DBus.Error.AuthFailed`. A new companion rule,
+  `package/polkit/49-hpd.rules`, grants every `dev.cirodev.hpd.*`
+  action to members of the `wheel` group without a prompt. It keys on
+  **group membership rather than the `allow_active`/`allow_inactive`/
+  `allow_any` session tiers**, because on handheld desktop sessions a
+  physically-local terminal can register as `Remote=yes` (driven over
+  SSH, or a display manager that doesn't attach the session to the
+  seat), which would otherwise drop the owner into `allow_any` and
+  force a prompt. Non-`wheel` callers still fall through to the
+  `auth_admin` defaults, and the polkit helper remains fail-closed.
+  Requires a polkit build with the JS rules engine (>= 0.106, standard
+  on modern distros).
 - `install.sh` and `uninstall.sh` are now tracked as `100755` in git
   (previously `100644`), so users no longer need to `chmod +x` them
   after cloning the repo.

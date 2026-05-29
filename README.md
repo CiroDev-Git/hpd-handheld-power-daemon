@@ -113,7 +113,12 @@ cargo build --release --features vendor-lenovo,vendor-valve
 ## Using `hpdctl`
 
 `hpdctl` talks to the running daemon over D-Bus. No root needed for
-read commands; writes go through the system bus policy installed by
+read commands. Write commands (TDP, cooling profile, charge limit) are
+authorized by polkit: members of the **`wheel`** group — the device
+owner — run them without a password, including over SSH, via the rule
+in `package/polkit/49-hpd.rules`. Any other user is prompted to
+authenticate as an administrator (the `auth_admin` defaults in
+`package/polkit/dev.cirodev.hpd.policy`). Both files are installed by
 `install.sh`.
 
 ```bash

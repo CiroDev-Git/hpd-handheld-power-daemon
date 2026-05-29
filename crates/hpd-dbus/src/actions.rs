@@ -6,6 +6,12 @@
 //! privileged operation now means adding a variant, getting a compile
 //! error at the matching `as_id` arm, and updating the matching
 //! `<action>` block in `package/polkit/dev.cirodev.hpd.policy`.
+//!
+//! The `auth_admin` / `auth_admin_keep` defaults noted below apply to
+//! **non-administrator** callers. `wheel`-group members are granted
+//! every `dev.cirodev.hpd.*` action without a prompt by
+//! `package/polkit/49-hpd.rules`, which matches by action-ID prefix —
+//! so a new variant is covered by that grant automatically.
 
 /// Typed identifier for every polkit action the daemon registers.
 ///

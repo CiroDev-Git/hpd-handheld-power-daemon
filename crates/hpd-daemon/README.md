@@ -69,7 +69,8 @@ systemd's default 90s `TimeoutStopSec`.
 | `/usr/local/bin/hpdctl`           | CLI binary.                                        |
 | `/etc/systemd/system/hpd.service` | systemd unit (sandboxed, `StateDirectory=hpd`).    |
 | `/etc/dbus-1/system.d/dev.cirodev.hpd.conf` | D-Bus bus-level policy.                  |
-| `/usr/share/polkit-1/actions/dev.cirodev.hpd.policy` | polkit action policy.           |
+| `/usr/share/polkit-1/actions/dev.cirodev.hpd.policy` | polkit action policy (non-admin defaults). |
+| `/usr/share/polkit-1/rules.d/49-hpd.rules` | polkit rule: `wheel` passwordless grant. |
 | `/etc/hpd/config.toml`            | Operator configuration (optional, all fields default). |
 | `/etc/hpd/config.toml.example`    | Reference config shipped by `install.sh`.          |
 | `/var/lib/hpd/state.toml`         | Persistent state (atomic `tempfile + rename`).     |

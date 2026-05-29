@@ -42,6 +42,8 @@ package() {
         "$pkgdir/usr/share/dbus-1/system.d/dev.cirodev.hpd.conf"
     install -Dm644 package/polkit/dev.cirodev.hpd.policy \
         "$pkgdir/usr/share/polkit-1/actions/dev.cirodev.hpd.policy"
+    install -Dm644 package/polkit/49-hpd.rules \
+        "$pkgdir/usr/share/polkit-1/rules.d/49-hpd.rules"
     install -Dm644 package/hpd-example.toml \
         "$pkgdir/etc/hpd/config.toml.example"
 

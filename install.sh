@@ -90,6 +90,7 @@ sudo install -Dm644 package/hpd.service                       /etc/systemd/syste
 sudo install -Dm644 package/dev.cirodev.hpd.conf              /etc/dbus-1/system.d/dev.cirodev.hpd.conf
 sudo install -Dm644 package/hpd-example.toml                  /etc/hpd/config.toml.example
 sudo install -Dm644 package/polkit/dev.cirodev.hpd.policy     /usr/share/polkit-1/actions/dev.cirodev.hpd.policy
+sudo install -Dm644 package/polkit/49-hpd.rules               /usr/share/polkit-1/rules.d/49-hpd.rules
 
 # Version sidecar at /usr/share/hpd/VERSION (single line "X.Y.Z").
 # Consumed by external clients that need to know the installed daemon

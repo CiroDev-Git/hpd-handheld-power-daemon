@@ -86,7 +86,8 @@ hpd-1.0.0-x86_64-linux.tar.gz
     ├── dev.cirodev.hpd.conf
     ├── hpd-example.toml
     └── polkit/
-        └── dev.cirodev.hpd.policy
+        ├── dev.cirodev.hpd.policy
+        └── 49-hpd.rules
 
 SHA256SUMS                       (sha256 over all *.tar.gz files attached to this release)
 SHA256SUMS.asc                   (optional GPG-detached signature of SHA256SUMS)

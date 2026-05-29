@@ -34,8 +34,11 @@ The CLI surface is stable under SemVer from `1.0.0` forward.
 | `hpdctl fan auto`             | Re-enable auto-cooling (follows TDP).       |
 
 Privileged subcommands (`tdp set`, `charge set`, `preset`, `fan set`,
-`fan auto`) trigger a polkit prompt on the daemon side — answer it
-once per session (or per call for `set-tdp` / `set-charge`).
+`fan auto`) are authorized by polkit. Members of the `wheel` group (the
+device owner) run them without any prompt — including over SSH — via
+`package/polkit/49-hpd.rules`. Any other user gets a polkit prompt
+(answered once per 5-minute window for `set-profile`, per call for
+`set-tdp` / `set-charge`).
 
 ## Dependencies
 

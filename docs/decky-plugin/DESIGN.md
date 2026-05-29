@@ -222,8 +222,20 @@ Column order matches the XML layout in
 window is a polkit default for the `_keep` suffix, not a daemon
 configuration value.
 
-The plugin's UX must reflect this: profile and fan-auto changes
-prompt once per 5-minute window; TDP and charge prompt every time.
+> **`wheel` passwordless grant.** The table above is the baseline for
+> **non-administrator** callers. `package/polkit/49-hpd.rules` grants
+> every `dev.cirodev.hpd.*` action to `wheel`-group members with **no
+> prompt at all**, keyed on group membership rather than the
+> `allow_*` session tiers. On a Steam Deck / handheld the gamescope
+> user is normally the device owner and in `wheel`, so in practice the
+> plugin will see **no polkit dialog**. Design the UX to treat the
+> prompt as a non-`wheel` fallback, not the common path: act
+> optimistically, and surface an authentication/`AuthFailed` state only
+> if the call is actually challenged or denied.
+
+The prompt-frequency note below therefore applies only to non-`wheel`
+users: profile and fan-auto changes prompt once per 5-minute window;
+TDP and charge prompt every time.
 
 ### 4.5 Stability promise
 
