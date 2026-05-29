@@ -563,3 +563,17 @@ strictly.
   where the SSH state lives.
 - **All workflows opt into Node.js 24** ahead of the 2026-06-02
   deprecation of the Node 20 action runtime.
+
+### Packaging
+
+- **AUR packages auto-migrate from a manual `install.sh` deployment and
+  self-enable** (shipped in `1.0.0-2`). The shared `package/aur/hpd.install`
+  hook now: (a) in `pre_install`/`pre_upgrade` removes the files a prior
+  `install.sh` left at non-package paths (`/usr/local/bin/{hpd-daemon,hpdctl}`,
+  `/etc/systemd/system/hpd.service`, `/etc/dbus-1/system.d/...`,
+  `/usr/share/hpd/VERSION`, and the polkit policy + rule) — fixing the
+  `error: failed to commit transaction (conflicting files)` and the old
+  `/usr/local/bin` binaries shadowing the packaged ones; (b) enables and
+  starts `hpd.service` in `post_install` so there is no manual `systemctl`
+  step; (c) `try-restart`s the daemon on upgrade so a new binary actually
+  takes effect (superseding the SIGHUP-only reload).

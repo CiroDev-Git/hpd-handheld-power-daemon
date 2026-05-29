@@ -49,8 +49,17 @@ release tarball:
 
 ```bash
 paru -S hpd-handheld-power-daemon-bin   # or: yay -S …
-sudo systemctl enable --now hpd.service
 ```
+
+The package enables and starts `hpd.service` automatically on install,
+so there is no manual `systemctl` step. Check it with
+`systemctl status hpd` / `hpdctl status`.
+
+> **Migrating from a previous `./install.sh` deployment?** Just install
+> the AUR package — its install hook automatically removes the files
+> `install.sh` placed at `/usr/local/bin`, `/etc` and `/usr/share`
+> (which would otherwise shadow the packaged binaries or cause pacman
+> file conflicts). No manual cleanup needed.
 
 There are two AUR packages:
 
@@ -91,7 +100,7 @@ Skip the preflight (advanced): `./install.sh --skip-doctor`.
 Once the doctor passes, `install.sh` builds release binaries with
 the default feature set (`vendor-asus`), copies `hpd-daemon` and
 `hpdctl` into `/usr/local/bin/`, installs the systemd unit, D-Bus
-policy, and polkit policy from `package/`, then enables and starts
+policy, polkit policy + rule from `package/`, then enables and starts
 `hpd.service`. Live logs:
 
 ```bash
