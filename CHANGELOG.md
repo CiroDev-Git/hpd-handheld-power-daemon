@@ -5,9 +5,9 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Each entry references the Audit lote that introduced the change. The audit
-itself lives at [`docs/audit/AUDIT_V1.md`](docs/audit/AUDIT_V1.md) and the
-remediation plan at [`docs/audit/REMEDIATION_PLAN_V1.md`](docs/audit/REMEDIATION_PLAN_V1.md).
+Each entry references the Audit lote that introduced the change. The
+underlying audit and remediation plans are maintained internally and are
+not part of the published repository.
 
 ---
 
