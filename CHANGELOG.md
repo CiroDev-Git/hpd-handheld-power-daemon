@@ -13,52 +13,11 @@ remediation plan at [`docs/audit/REMEDIATION_PLAN_V1.md`](docs/audit/REMEDIATION
 
 ## [Unreleased]
 
-### Added
-
-- **`scripts/doctor.sh`** — standalone preflight that diagnoses every
-  prerequisite `install.sh` assumes: Linux + x86_64, sudo, the Rust
-  toolchain at MSRV (1.85), systemd as pid 1, D-Bus, polkit, a C
-  linker, and DMI-probes the board against the supported ASUS list
-  (RC71L / RC72L / RC72LA / RC73XA). Reports pass/warn/fail with
-  copy-paste remediation hints; supports `--quiet` and `--strict`.
-
-### Changed
-
-- **`install.sh`** now runs `scripts/doctor.sh` as a preflight and
-  aborts with exit 1 if any prerequisite is missing. Bypass with
-  `./install.sh --skip-doctor`. This stops the "`cargo: command not
-  found` halfway through the install" failure mode that hit fresh
-  CachyOS / minimal distro installs.
-
-### Fixed
-
-- `install.sh` and `uninstall.sh` are now tracked as `100755` in git
-  (previously `100644`), so users no longer need to `chmod +x` them
-  after cloning the repo.
-
-### CI
-
-- **`aur-sync.yml` gains `workflow_dispatch`.** Maintainers can now
-  trigger the AUR sync workflow manually from the Actions tab — with
-  an empty `version` input it only smoke-tests `AUR_SSH_KEY` against
-  `aur@aur.archlinux.org` (no PKGBUILD push, no AUR side-effects);
-  with a `version` + `packages` choice (`both` / `source` / `bin` /
-  `none`) it re-runs the full push for that version. Useful for
-  validating SSH credentials before cutting a release and for
-  recovering from a partial release-driven failure.
-- **`aur-sync.yml` smoke-test now surfaces actionable diagnostics on
-  failure.** Previously the step swallowed all `ssh` output and
-  exited with a generic "authentication failed" message, leaving no
-  way to tell whether the secret was corrupted or the public key
-  wasn't registered on AUR. The step now prints the offered private
-  key's fingerprint (safe to log), runs `ssh -v` with the verbose
-  log captured to a tempfile, and dumps that log only when auth
-  fails — alongside copy-paste recovery commands (including
-  `gh secret set AUR_SSH_KEY` to rule out paste-corruption).
+_Nothing yet._
 
 ---
 
-## [1.0.0] — 2026-05-24
+## [1.0.0] — 2026-05-28
 
 This release jumps directly from `0.1.0` to `1.0.0`. The intermediate
 `0.2.0` trajectory the project briefly advertised was abandoned: the
@@ -529,5 +488,65 @@ strictly.
     pins AUR's host key via `ssh-keyscan`, and pushes both
     source + bin packages in sequence.
   *(Lote 51 — Audit V2 Phase 5)*
+- **`scripts/doctor.sh` standalone preflight.** Diagnoses every
+  prerequisite `install.sh` assumes — Linux + x86_64, sudo, the Rust
+  toolchain at MSRV (1.85), systemd as pid 1, D-Bus, polkit, a C
+  linker — and DMI-probes the board against the supported ASUS list
+  (RC71L / RC72L / RC72LA / RC73XA). Reports pass/warn/fail with
+  copy-paste remediation hints; supports `--quiet` and `--strict`.
+- **Richer `--help` for `hpdctl` and `hpd-daemon`.** `hpdctl --help`
+  now explains what the daemon manages, notes that local changes need
+  no `sudo`, lists worked examples, and gives every subcommand and
+  argument an explanatory paragraph (`hpdctl <cmd> --help`).
+  `hpd-daemon` gains a dependency-free `--help` / `-V` handler: run by
+  hand it prints a one-screen orientation (systemctl/journalctl usage,
+  config/state paths, env vars, and a pointer to `hpdctl`) instead of
+  silently launching a foreground service.
 
-### Changed (Lote 22 follow-on)
+### Changed
+
+- **`install.sh` now runs `scripts/doctor.sh` as a preflight** and
+  aborts with exit 1 if any prerequisite is missing. Bypass with
+  `./install.sh --skip-doctor`. This stops the "`cargo: command not
+  found` halfway through the install" failure mode that hit fresh
+  CachyOS / minimal distro installs.
+
+### Fixed
+
+- **Local users no longer hit `AuthFailed` on every privileged call.**
+  The polkit policy declared `allow_active=auth_admin` for all three
+  actions, so even the user physically logged into the handheld's seat
+  session was challenged for an admin password on every TDP / charge /
+  profile change — and on a minimal handheld session with no polkit
+  auth agent the call failed outright with
+  `org.freedesktop.DBus.Error.AuthFailed`. The three actions now use
+  `allow_active=yes`: the owner present in the local seat session
+  manages the device without a password. Remote / inactive callers
+  (e.g. SSH) still require admin authentication.
+- `install.sh` and `uninstall.sh` are now tracked as `100755` in git
+  (previously `100644`), so users no longer need to `chmod +x` them
+  after cloning the repo.
+
+### CI
+
+- **`aur-sync.yml` gains `workflow_dispatch`.** Maintainers can
+  trigger the AUR sync manually from the Actions tab — with an empty
+  `version` input it only smoke-tests `AUR_SSH_KEY` against
+  `aur@aur.archlinux.org` (no PKGBUILD push, no AUR side-effects);
+  with a `version` + `packages` choice (`both` / `source` / `bin` /
+  `none`) it re-runs the full push for that version. Useful for
+  validating SSH credentials before cutting a release and for
+  recovering from a partial release-driven failure.
+- **`aur-sync.yml` smoke-test surfaces actionable diagnostics and no
+  longer chases a phantom auth failure.** It prints the offered key's
+  fingerprint (safe to log) and runs `ssh -v` with the verbose log
+  dumped only on failure, alongside copy-paste recovery commands. It
+  also fixes the underlying false negative: the container runs as root
+  with `$HOME=/github/home`, but root's passwd entry points at
+  `/root`, so ssh's internal `~` expansion missed `known_hosts` and
+  reported a misleading "Host key verification failed" that looked
+  like a publickey rejection. The smoke-test now forces absolute
+  `-F` / `-i` / `UserKnownHostsFile` paths so bash and ssh agree on
+  where the SSH state lives.
+- **All workflows opt into Node.js 24** ahead of the 2026-06-02
+  deprecation of the Node 20 action runtime.
