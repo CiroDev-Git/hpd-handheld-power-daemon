@@ -63,8 +63,64 @@ use hpd_backend_asus::detect::matches_asus_handheld;
 #[cfg(feature = "vendor-asus")]
 use hpd_backend_asus::AsusBackend;
 
+/// One-screen help shown by `hpd-daemon --help`. The daemon is normally
+/// started by systemd, not by hand; this exists so a user who runs it
+/// directly to "see what it does" gets oriented instead of accidentally
+/// launching a service in the foreground.
+const DAEMON_HELP: &str = "\
+hpd-daemon — Handheld Power Daemon (the long-running root service).
+
+Manages TDP / power envelope, ACPI cooling profile, fan reporting, and
+battery charge thresholds on supported handheld PCs. Exposes the D-Bus
+interface dev.cirodev.hpd.PowerDaemon1 on the system bus.
+
+You normally do NOT run this by hand — it is started by systemd:
+
+  sudo systemctl enable --now hpd     Start the service now and at boot
+  systemctl status hpd                Check whether it is running
+  journalctl -fu hpd                  Follow the daemon's live logs
+  sudo systemctl reload hpd           Re-read /etc/hpd/config.toml (SIGHUP)
+
+To change power, cooling, or battery settings, use the CLI instead:
+
+  hpdctl --help                       Show the user-facing commands
+  hpdctl status                       Current TDP / profile / battery state
+
+Configuration: /etc/hpd/config.toml   (see /etc/hpd/config.toml.example)
+Persisted state: /var/lib/hpd/state.toml
+
+Environment:
+  RUST_LOG        Override log filter (default: hpd=info,warn)
+  HPD_SIMULATOR   Run against a mock backend on the session bus
+                  (only with a binary built --features simulator)
+
+Options:
+  -h, --help      Print this help and exit
+  -V, --version   Print version and exit";
+
+/// Handle `--help` / `--version` before doing anything else, and exit.
+/// Returns normally for the daemon's usual no-argument invocation.
+fn handle_cli_args() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        println!("{DAEMON_HELP}");
+        std::process::exit(0);
+    }
+    if args.iter().any(|a| a == "-V" || a == "--version") {
+        println!("hpd-daemon {}", env!("CARGO_PKG_VERSION"));
+        std::process::exit(0);
+    }
+    if let Some(unknown) = args.first() {
+        eprintln!("hpd-daemon: unrecognized argument '{unknown}'\n");
+        eprintln!("{DAEMON_HELP}");
+        std::process::exit(2);
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    handle_cli_args();
+
     // Init logging unconditionally so the "no vendor compiled in" build
     // still prints something useful before exiting. Respects RUST_LOG;
     // defaults to `hpd=info,warn`.
