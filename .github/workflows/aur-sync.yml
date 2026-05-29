@@ -84,7 +84,7 @@ jobs:
           else
             version="${{ inputs.version }}"
             if [ -z "$version" ]; then
-              echo "::notice::Manual dispatch with empty version — pushes will be skipped, only the SSH smoke-test will run."
+              echo "Manual dispatch with empty version — pushes will be skipped, only the SSH smoke-test will run."
             else
               echo "Manual dispatch: version=$version"
             fi
