@@ -123,15 +123,24 @@ pub struct RuntimeConfig {
     /// SPL→FPPT multiplier applied by smart-mode `Transition::SetSpl`.
     /// Result is then clamped to `device_limits.fppt_max`.
     pub fppt_factor: f32,
+
+    /// When `true`, a platform-profile change also programs the matching
+    /// fan-curve preset (PowerSaver→Silent, Balanced→Balanced,
+    /// Performance→Aggressive), Armoury-Crate style. When `false`
+    /// (default), the fan curve is an independent manual selection set
+    /// via `hpdctl fan curve set`. Hot-reloadable.
+    pub fan_curve_follows_profile: bool,
 }
 
 impl RuntimeConfig {
     /// Defaults match the historic in-reducer constants: 1.15/1.25 boost
-    /// multipliers, 0.33/0.67 cooling-profile cut-offs.
+    /// multipliers, 0.33/0.67 cooling-profile cut-offs, fan-curve follow
+    /// off (the curve is a manual selection until the operator opts in).
     pub const DEFAULT: Self = Self {
         profile_thresholds: ProfileThresholds::DEFAULT,
         sppt_factor: 1.15,
         fppt_factor: 1.25,
+        fan_curve_follows_profile: false,
     };
 }
 

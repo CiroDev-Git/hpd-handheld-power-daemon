@@ -24,6 +24,14 @@
 # report the current value. 80% is the long-battery-life sweet spot.
 # default_charge_threshold = 80
 
+# Fan-curve preset to program on first boot (no curve persisted yet).
+# One of: silent, balanced, aggressive. The firmware's default curve is
+# very conservative above ~62°C, so "balanced" runs noticeably cooler
+# out of the box. Set to "" (empty) to leave the firmware curve alone.
+# A curve you set later with `hpdctl fan curve set` is persisted and
+# takes precedence over this on subsequent boots.
+# default_fan_curve = "balanced"
+
 # -------- Runtime-tunable (hot-reload via SIGHUP) ----------------------
 
 # SPL→SPPT and SPL→FPPT multipliers used by "smart mode" (when the user
@@ -39,3 +47,10 @@
 # [profile_thresholds]
 # low_frac  = 0.33
 # high_frac = 0.67
+
+# When true, every platform-profile change also programs the matching
+# fan-curve preset (power-saver → silent, balanced → balanced,
+# performance → aggressive), Armoury-Crate style. When false (default),
+# the fan curve is an independent manual choice set with
+# `hpdctl fan curve set` and is not touched by profile changes.
+# fan_curve_follows_profile = false

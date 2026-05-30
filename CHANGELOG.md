@@ -13,7 +13,39 @@ not part of the published repository.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **Custom fan curves (ASUS / ROG Xbox Ally X)** — the daemon can now
+  program the EC-mediated custom fan curve exposed by the
+  `asus_custom_fan_curve` hwmon, instead of only selecting an ACPI
+  platform profile. The firmware's default curve is defined only up to
+  ~62°C and tops out near 22% duty, so the chip runs hot under sustained
+  load; the new curves extend a monotonic ramp out to ~92°C.
+  - Three named presets — `silent`, `balanced`, `aggressive` —
+    calibrated against the ROG Xbox Ally X (RC73XA). Curves are written
+    as EC-mediated auto-points (never raw PWM), so the embedded
+    controller keeps running the last curve even if the daemon stops.
+  - New CLI: `hpdctl fan curve set <preset>`, `hpdctl fan curve get`,
+    `hpdctl fan curve reset` (back to firmware automatic).
+  - New D-Bus methods `SetFanCurve`, `ResetFanCurve` and a read-only
+    `fan_curve` property on `dev.cirodev.hpd.PowerDaemon1`.
+  - New polkit action `dev.cirodev.hpd.set-fan-curve` (`auth_admin_keep`;
+    `wheel` members are granted it passwordless by `49-hpd.rules`).
+  - New config keys: `default_fan_curve` (preset applied on first boot,
+    defaults to `balanced`) and `fan_curve_follows_profile` (when true,
+    a platform-profile change also swaps the matching curve).
+  - The active curve is re-applied on resume from suspend, fixing the
+    bug where the fans could blast at full speed after wake.
+  - New L2 capability `FanCurveControl` + `fan_curve()` accessor on
+    `HwBackend` (additive; existing backends default to `None`).
+
+### Fixed
+
+- **Fan-RPM read targeted the wrong hwmon** — the reader scanned
+  `/sys/class/hwmon` by lowest index and could latch onto the unrelated
+  `acpi_fan` node (which also exposes a `fan1_input`) instead of the
+  `asus` node. It now resolves the sensor node by its `name` attribute,
+  which is stable across boots and driver-load order.
 
 ---
 
