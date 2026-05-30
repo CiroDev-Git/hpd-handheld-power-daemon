@@ -214,6 +214,7 @@ async fn run_real_main() -> Result<(), Box<dyn std::error::Error>> {
             mock.create_file("sys/class/hwmon/hwmon6/temp1_input", "61000");
             mock.create_file("sys/class/hwmon/hwmon5/name", "amdgpu");
             mock.create_file("sys/class/hwmon/hwmon5/temp1_input", "54000");
+            mock.create_file("sys/class/hwmon/hwmon5/power1_input", "16088000"); // 16.1 W
             // Custom fan-curve node (`asus_custom_fan_curve` hwmon),
             // seeded with the firmware default curve and auto mode.
             mock.create_file("sys/class/hwmon/hwmon1/name", "asus_custom_fan_curve");

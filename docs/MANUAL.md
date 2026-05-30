@@ -119,14 +119,19 @@ level always matches the TDP.
 ## Reading the status dashboard
 
 ```
-   ⚡ TDP (SPL):        18W           ← power limit you set
-   🧊 Cooling:          balanced (auto)   ← level + mode
+   ⚡ Power:            16W now · 18W TDP cap   ← actual draw · your limit
+   🧊 Cooling:          balanced (auto)         ← level + mode
    🌡️ Temps:            CPU 68°C · GPU 58°C
    💨 Fans:             CPU 5300 RPM · GPU 5300 RPM
    🔌 Power adapter:    🔋 Battery (DC)
    🔋 Battery Limit:    80%
 ```
 
+- **Power** = the watts the chip is drawing *right now*, next to the TDP
+  cap you set. At idle it sits low; under load it climbs toward (and can
+  briefly exceed, via boost) the cap. If "now" stays well below the cap
+  under heavy load, something else is limiting you (e.g. a low cooling
+  level — see [combinations](#what-every-combination-does)).
 - **Cooling `(auto)`** = the level follows your TDP. `(manual)` = you
   pinned it.
 - **Temps / Fans** are live readings, straight from the hardware.

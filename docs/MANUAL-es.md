@@ -120,14 +120,19 @@ siempre coincide con el TDP.
 ## Leer el tablero (status)
 
 ```
-   ⚡ TDP (SPL):        18W           ← límite de potencia que pusiste
-   🧊 Cooling:          balanced (auto)   ← nivel + modo
+   ⚡ Power:            16W now · 18W TDP cap   ← consumo real · tu límite
+   🧊 Cooling:          balanced (auto)         ← nivel + modo
    🌡️ Temps:            CPU 68°C · GPU 58°C
    💨 Fans:             CPU 5300 RPM · GPU 5300 RPM
    🔌 Power adapter:    🔋 Battery (DC)
    🔋 Battery Limit:    80%
 ```
 
+- **Power** = los watts que el chip está usando *ahora mismo*, al lado del
+  tope (TDP) que pusiste. En reposo está bajo; bajo carga sube hacia el
+  tope (y puede pasarlo un instante, por el boost). Si "now" se queda muy
+  por debajo del tope bajo carga pesada, algo más te está limitando (por
+  ejemplo un nivel de cooling bajo — ver [combinaciones](#qué-hace-cada-combinación)).
 - **Cooling `(auto)`** = el nivel sigue al TDP. `(manual)` = lo fijaste vos.
 - **Temps / Fans** son lecturas en vivo, directo del hardware.
 

@@ -67,12 +67,16 @@ not part of the published repository.
     custom curve — so TDP auto-follow no longer silently loses it.
   - New L2 capability `FanCurveControl` + `fan_curve()` accessor on
     `HwBackend` (additive; existing backends default to `None`).
-- **Live fan & temperature telemetry** — `hpdctl status` / `monitor` now
-  show CPU/GPU temperatures and CPU/GPU fan RPM alongside the active fan
-  curve, via a new D-Bus `GetThermalStatus` method. This revives the
-  previously-unsurfaced `FanControl` read path and adds a new
-  `ThermalSensors` capability (CPU `k10temp` Tctl + GPU `amdgpu` edge,
-  located by hwmon name).
+- **Live power, fan & temperature telemetry** — `hpdctl status` /
+  `monitor` now show the **actual SoC power draw** (vs the configured TDP
+  cap), CPU/GPU temperatures and CPU/GPU fan RPM, alongside the active
+  fan curve, via the D-Bus `GetThermalStatus` method (now a 5-tuple
+  including `soc_power_mw`). This revives the previously-unsurfaced
+  `FanControl` read path and adds a `ThermalSensors` capability (CPU
+  `k10temp` Tctl + GPU `amdgpu` edge + SoC power from `amdgpu`
+  `power1_input`, located by hwmon name). Seeing actual power makes the
+  manual-clamp case visible: a low cooling level holds the draw well
+  below a high TDP cap.
 
 ### Fixed
 

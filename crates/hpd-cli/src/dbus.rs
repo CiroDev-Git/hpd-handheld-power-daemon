@@ -53,8 +53,9 @@ trait PowerDaemon {
     fn fan_curve(&self) -> zbus::Result<String>;
 
     /// Live thermal telemetry: `(cpu_temp_c, gpu_temp_c, cpu_fan_rpm,
-    /// gpu_fan_rpm)`. Any field is `i32::MIN` when unavailable.
-    fn get_thermal_status(&self) -> zbus::Result<(i32, i32, i32, i32)>;
+    /// gpu_fan_rpm, soc_power_mw)`. The last field is the actual SoC
+    /// power draw in milliwatts. Any field is `i32::MIN` when unavailable.
+    fn get_thermal_status(&self) -> zbus::Result<(i32, i32, i32, i32, i32)>;
 
     /// The 8 `(temp_c, pwm)` points of the active CPU and GPU fan
     /// curves: `(cpu_points, gpu_points)`. Empty when no curve is

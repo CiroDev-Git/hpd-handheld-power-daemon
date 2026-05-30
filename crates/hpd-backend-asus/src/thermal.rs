@@ -14,7 +14,7 @@
 //! degrees Celsius.
 
 use hpd_capabilities::thermal::ThermalSensors;
-use hpd_capabilities::units::Celsius;
+use hpd_capabilities::units::{Celsius, PowerMilliwatts};
 use hpd_error::{BackendError, HpdError};
 use hpd_sysfs::SysfsIo;
 
@@ -61,6 +61,30 @@ impl<S: SysfsIo> ThermalSensors for AsusThermalBackend<S> {
     fn get_gpu_temp(&self) -> Result<Option<Celsius>, HpdError> {
         self.read_temp(GPU_HWMON_NAME)
     }
+
+    /// Read `power1_input` (microwatts) under the `amdgpu` hwmon. On the
+    /// AMD APU this reports the SoC/package power the SMU is actually
+    /// drawing — a good live proxy for "how hard the chip is working"
+    /// next to the configured TDP limit. `Ok(None)` if absent.
+    fn get_soc_power(&self) -> Result<Option<PowerMilliwatts>, HpdError> {
+        let Some(base) = find_hwmon_by_name(&self.sysfs, GPU_HWMON_NAME) else {
+            return Ok(None);
+        };
+        let path = format!("{base}/power1_input");
+        if !self.sysfs.exists(&path) {
+            return Ok(None);
+        }
+        let raw = self.sysfs.read_string(&path)?;
+        let micro: u64 = raw.trim().parse().map_err(|_| BackendError::ParseFailed {
+            field: "power1_input",
+            raw: raw.clone(),
+            reason: "expected integer microwatts".into(),
+        })?;
+        // microwatts → milliwatts; clamp to u32 (the chip never pulls
+        // anywhere near 4.29 kW, so this only guards a garbage read).
+        let milli = (micro / 1000).min(u64::from(u32::MAX)) as u32;
+        Ok(Some(PowerMilliwatts(milli)))
+    }
 }
 
 #[cfg(test)]
@@ -92,5 +116,27 @@ mod tests {
         let backend = AsusThermalBackend::new(mock.clone());
         assert_eq!(backend.get_cpu_temp().unwrap(), Some(Celsius(60)));
         assert_eq!(backend.get_gpu_temp().unwrap(), None);
+        assert_eq!(backend.get_soc_power().unwrap(), None);
+    }
+
+    #[test]
+    fn reads_soc_power_from_amdgpu_microwatts() {
+        let mock = MockSysfs::new();
+        mock.create_file("sys/class/hwmon/hwmon5/name", "amdgpu");
+        mock.create_file("sys/class/hwmon/hwmon5/temp1_input", "72000");
+        mock.create_file("sys/class/hwmon/hwmon5/power1_input", "16088000"); // 16.088 W
+        let backend = AsusThermalBackend::new(mock.clone());
+        // microwatts → milliwatts
+        assert_eq!(backend.get_soc_power().unwrap(), Some(PowerMilliwatts(16088)));
+    }
+
+    #[test]
+    fn soc_power_none_when_node_lacks_power_input() {
+        let mock = MockSysfs::new();
+        mock.create_file("sys/class/hwmon/hwmon5/name", "amdgpu");
+        mock.create_file("sys/class/hwmon/hwmon5/temp1_input", "72000");
+        // No power1_input on this node.
+        let backend = AsusThermalBackend::new(mock.clone());
+        assert_eq!(backend.get_soc_power().unwrap(), None);
     }
 }

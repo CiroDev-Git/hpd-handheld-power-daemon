@@ -328,15 +328,17 @@ impl PowerDaemonInterface {
         Ok(())
     }
 
-    /// Live thermal telemetry as a 4-tuple of whole units:
-    /// `(cpu_temp_c, gpu_temp_c, cpu_fan_rpm, gpu_fan_rpm)`.
+    /// Live thermal telemetry:
+    /// `(cpu_temp_c, gpu_temp_c, cpu_fan_rpm, gpu_fan_rpm, soc_power_mw)`.
+    /// The first four are whole units (°C, RPM); the last is the actual
+    /// SoC power draw in **milliwatts**.
     ///
     /// Read on demand straight from the backend, so callers
     /// (`hpdctl status` / `monitor`) always see current values. Any
     /// field equals `i32::MIN` when that sensor or fan is not exposed by
     /// the hardware (or its read failed) — note `0` is a *valid* fan
     /// reading (a stopped fan), so absence needs its own sentinel.
-    async fn get_thermal_status(&self) -> (i32, i32, i32, i32) {
+    async fn get_thermal_status(&self) -> (i32, i32, i32, i32, i32) {
         let cpu_temp = self
             .backend
             .thermal()
@@ -357,7 +359,14 @@ impl PowerDaemonInterface {
             .fan()
             .and_then(|f| f.get_gpu_fan_rpm().ok().flatten())
             .map_or(TELEMETRY_UNAVAILABLE, |r| i32::from(r.0));
-        (cpu_temp, gpu_temp, cpu_rpm, gpu_rpm)
+        let soc_power_mw = self
+            .backend
+            .thermal()
+            .and_then(|t| t.get_soc_power().ok().flatten())
+            .map_or(TELEMETRY_UNAVAILABLE, |p| {
+                i32::try_from(p.0).unwrap_or(i32::MAX)
+            });
+        (cpu_temp, gpu_temp, cpu_rpm, gpu_rpm, soc_power_mw)
     }
 
     /// The eight `(temp_c, pwm)` points of the active CPU and GPU fan
