@@ -7,7 +7,8 @@ with code in this repository.
 
 `hpd` (Handheld Power Daemon) is a Linux system daemon — written in Rust
 as a Cargo workspace — that manages TDP/power envelope, platform profile
-(cooling), battery charge thresholds, and fan reporting on handheld PCs
+(cooling) + EC-mediated fan curves, battery charge thresholds, and
+fan / temperature / power reporting on handheld PCs
 (currently ASUS ROG Ally / Ally X / Xbox Ally X). It ships two binaries:
 
 - `hpd-daemon` — long-running root service, exposes D-Bus interface
@@ -15,7 +16,7 @@ as a Cargo workspace — that manages TDP/power envelope, platform profile
 - `hpdctl` (from crate `hpd-cli`) — user-facing CLI that talks to the
   daemon over D-Bus.
 
-Current release: **`1.0.0`** (target — see `CHANGELOG.md`). The public
+Current release: **`2.0.0`** (see `CHANGELOG.md`). The public
 surface (D-Bus interface, CLI subcommands, on-disk state, polkit action
 IDs) is stable and follows SemVer.
 
@@ -80,7 +81,8 @@ L0  hpd-sysfs        Sysfs read/write trait (SysfsIo) + RealSysfs +
 L2  hpd-capabilities Hardware-agnostic traits + value types (mW, RPM,
                      profiles, limits). Defines HwBackend =
                      PowerEnvelope + ChargeControl + PlatformProfile +
-                     FanControl, plus the hot-swappable RuntimeConfig
+                     FanControl + FanCurveControl + ThermalSensors, plus
+                     the hot-swappable RuntimeConfig
                      the executor swaps on `Transition::ConfigReload`.
 L1  hpd-backend-asus Vendor backend. Implements L2 traits using L0
                      sysfs paths. Only L1 crate in 1.0.
@@ -110,6 +112,7 @@ handlers or monitors.
 1. External events become `Transition` variants
    (`hpd-core/src/transition.rs`):
    `SetSpl`, `SetEnvelope`, `SetPreset`, `SetProfile`,
+   `SetCoolingLevel`, `SetFanCurve`, `ResetFanCurve`,
    `ChargeThresholdChanged`, `AcPowerChanged`, `SystemResumed`,
    `SyncPowerTarget`, `EnableFanAuto`, `ConfigReload(RuntimeConfig)`,
    `Shutdown`.
@@ -176,7 +179,9 @@ The check talks to `org.freedesktop.PolicyKit1.Authority` directly
 
 - `dev.cirodev.hpd.set-tdp` — TDP / preset changes (`auth_admin`).
 - `dev.cirodev.hpd.set-charge` — charge threshold (`auth_admin`).
-- `dev.cirodev.hpd.set-profile` — platform profile + fan-auto
+- `dev.cirodev.hpd.set-profile` — cooling level / platform profile +
+  fan-auto (`auth_admin_keep` — 5-minute cache).
+- `dev.cirodev.hpd.set-fan-curve` — fan-curve set / reset
   (`auth_admin_keep` — 5-minute cache).
 
 These `<defaults>` in `package/polkit/dev.cirodev.hpd.policy` are the
@@ -275,8 +280,9 @@ and exits cleanly rather than letting systemd `SIGKILL` it mid-write.
 ### Adding a new vendor backend
 
 1. Create `crates/hpd-backend-<vendor>/` (model on `hpd-backend-asus`).
-2. Implement `PowerEnvelope`, `ChargeControl`, `PlatformProfile`, and
-   `FanControl` from `hpd-capabilities`, then blanket-impl `HwBackend`.
+2. Implement `PowerEnvelope`, `ChargeControl`, `PlatformProfile`,
+   `FanControl` (and optionally `FanCurveControl`, `ThermalSensors`)
+   from `hpd-capabilities`, then blanket-impl `HwBackend`.
 3. Add a `detect.rs` returning `Option<Model>` from a `DmiInfo`.
 4. Register the crate in the root `Cargo.toml` `workspace.members`
    list (preserves dependency order).
@@ -364,8 +370,8 @@ and exits cleanly rather than letting systemd `SIGKILL` it mid-write.
 | You want…                                          | Look in                                              |
 |---------------------------------------------------|------------------------------------------------------|
 | The state machine (transitions / reducer / effects) | `hpd-core/src/{transition,reducer,effect,executor}.rs` |
-| Hardware-write contracts                          | `hpd-capabilities/src/{power,charge,fan,platform_profile}.rs` |
-| ASUS firmware-attribute paths                     | `hpd-backend-asus/src/{power,charge,fan,profile}.rs`  |
+| Hardware-write contracts                          | `hpd-capabilities/src/{power,charge,fan,fan_curve,thermal,platform_profile}.rs` |
+| ASUS firmware-attribute paths                     | `hpd-backend-asus/src/{power,charge,fan,fan_curve,thermal,profile}.rs`  |
 | D-Bus method / property surface                   | `hpd-dbus/src/service.rs`                            |
 | Polkit action IDs                                 | `hpd-dbus/src/actions.rs`                            |
 | Polkit fail-closed contract                       | `hpd-dbus/src/polkit.rs`                             |

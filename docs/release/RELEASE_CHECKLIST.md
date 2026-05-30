@@ -260,7 +260,7 @@ Public surface — stable under SemVer:
   * D-Bus  : dev.cirodev.hpd.PowerDaemon1
   * CLI    : hpdctl
   * State  : /var/lib/hpd/state.toml
-  * Polkit : dev.cirodev.hpd.{set-tdp,set-charge,set-profile}
+  * Polkit : dev.cirodev.hpd.{set-tdp,set-charge,set-profile,set-fan-curve}
   * Config : /etc/hpd/config.toml
 
 Hardware: ASUS ROG Ally / Ally X / Xbox Ally X
