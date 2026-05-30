@@ -11,6 +11,12 @@ not part of the published repository.
 
 ---
 
+## [Unreleased]
+
+_Nothing yet._
+
+---
+
 ## [2.0.0] — 2026-05-30
 
 Adds EC-mediated custom fan curves, live power/temperature telemetry, and
