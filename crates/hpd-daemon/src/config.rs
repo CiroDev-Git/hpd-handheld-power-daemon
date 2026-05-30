@@ -12,6 +12,7 @@ use serde::Deserialize;
 use tracing::{info, warn};
 
 use hpd_capabilities::charge::DEFAULT_CHARGE_THRESHOLD;
+use hpd_capabilities::fan_curve::FanCurvePreset;
 use hpd_capabilities::profile::RuntimeConfig;
 use hpd_core::executor::TRANSITION_CHANNEL_CAPACITY;
 
@@ -52,6 +53,14 @@ pub struct DaemonConfig {
     /// report the current value. Startup-only.
     pub default_charge_threshold: u8,
 
+    /// Fan-curve preset to program at startup when no curve is persisted
+    /// yet (first boot). `Some(Balanced)` by default so a fresh install
+    /// immediately runs a cooler-than-firmware curve; set to `None` to
+    /// leave the firmware's automatic curve untouched until the operator
+    /// picks one. Startup-only — a persisted `active_fan_curve` in
+    /// `state.toml` takes precedence on subsequent boots.
+    pub default_fan_curve: Option<FanCurvePreset>,
+
     /// Hot-swappable subset: thresholds + SPPT/FPPT boost multipliers
     /// the reducer reads on every transition. Replaced wholesale on
     /// `Transition::ConfigReload(RuntimeConfig)`.
@@ -69,6 +78,7 @@ impl Default for DaemonConfig {
             state_path: PathBuf::from("/var/lib/hpd/state.toml"),
             channel_capacity: TRANSITION_CHANNEL_CAPACITY,
             default_charge_threshold: DEFAULT_CHARGE_THRESHOLD,
+            default_fan_curve: Some(FanCurvePreset::Balanced),
             runtime: RuntimeConfig::DEFAULT,
         }
     }
@@ -191,6 +201,7 @@ high_frac = 0.80
             state_path: PathBuf::from("/var/lib/hpd/state.toml"),
             channel_capacity: 64,
             default_charge_threshold: 90,
+            default_fan_curve: Some(FanCurvePreset::Balanced),
             runtime: RuntimeConfig {
                 profile_thresholds: ProfileThresholds {
                     low_frac: 0.25,
@@ -198,6 +209,7 @@ high_frac = 0.80
                 },
                 sppt_factor: 1.10,
                 fppt_factor: 1.30,
+                fan_curve_follows_profile: true,
             },
         };
         assert_eq!(cfg.to_runtime(), cfg.runtime);

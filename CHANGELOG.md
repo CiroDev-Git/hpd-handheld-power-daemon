@@ -11,9 +11,92 @@ not part of the published repository.
 
 ---
 
-## [Unreleased]
+## [2.0.0] — 2026-05-30
 
-_Nothing yet._
+Adds EC-mediated custom fan curves, live power/temperature telemetry, and
+unifies cooling into a single `cool` lever. A **major** bump for one
+reason — the `hpdctl fan` subcommands were removed (see Breaking) — with
+everything else additive.
+
+### ⚠ Breaking — `hpdctl` users
+
+- **The `hpdctl fan` namespace was removed**; cooling is now one concept
+  under `cool`. Migration:
+  - `hpdctl fan set <profile>` → `hpdctl cool set <silent|balanced|aggressive>`
+    (or the raw ACPI profile via the D-Bus `set_profile` method).
+  - `hpdctl fan auto` → `hpdctl cool auto`.
+  - `hpdctl fan curve set|get|reset` → `hpdctl cool set|get|reset`
+    (and `hpdctl cool curve` to draw the active curve).
+
+  Per the no-deprecation-alias policy
+  ([`VERSIONING.md` §6](docs/release/VERSIONING.md)), the old forms are
+  removed, not aliased. The raw, decoupled platform profile and fan curve
+  remain available over D-Bus (`set_profile` / `set_fan_curve`).
+
+### Added
+
+- **Custom fan curves (ASUS / ROG Xbox Ally X)** — the daemon can now
+  program the EC-mediated custom fan curve exposed by the
+  `asus_custom_fan_curve` hwmon, instead of only selecting an ACPI
+  platform profile. The firmware's default curve is defined only up to
+  ~62 °C and tops out near 22 % duty, so the chip runs hot under sustained
+  load; the new curves extend a monotonic ramp out to ~92 °C.
+  - Three named presets — `silent`, `balanced`, `aggressive` — written as
+    EC-mediated auto-points (never raw PWM), so the embedded controller
+    keeps running the last curve even if the daemon stops.
+  - New CLI under `cool`: `hpdctl cool set <silent|balanced|aggressive>`,
+    `hpdctl cool auto`, `hpdctl cool reset`, `hpdctl cool get`, and
+    `hpdctl cool curve` (draws the active curve as bars).
+  - New D-Bus methods `SetCoolingLevel`, `SetFanCurve`, `ResetFanCurve`,
+    `GetFanCurve`, and a read-only `fan_curve` property on
+    `dev.cirodev.hpd.PowerDaemon1`.
+  - New polkit action `dev.cirodev.hpd.set-fan-curve` (`auth_admin_keep`;
+    `wheel` members are granted it passwordless by `49-hpd.rules`).
+  - New config keys: `default_fan_curve` (preset applied on first boot,
+    defaults to `balanced`) and `fan_curve_follows_profile`.
+  - The active curve is re-applied on resume from suspend (fixing the bug
+    where fans could blast at full speed after wake) and re-asserted after
+    any platform-profile change (writing the ACPI profile can make the EC
+    drop the custom curve, so TDP auto-follow no longer silently loses it).
+  - New L2 capabilities `FanCurveControl` and `ThermalSensors` +
+    `fan_curve()` / `thermal()` accessors on `HwBackend` (additive;
+    existing backends default to `None`).
+- **Live power, fan & temperature telemetry** — `hpdctl status` /
+  `monitor` now show the **actual SoC power draw** (vs the configured TDP
+  cap), CPU/GPU temperatures and CPU/GPU fan RPM, alongside the active
+  fan curve, via the D-Bus `GetThermalStatus` method (a 5-tuple including
+  `soc_power_mw`). This revives the previously-unsurfaced `FanControl`
+  read path and reads the CPU `k10temp` Tctl, GPU `amdgpu` edge, and SoC
+  power from `amdgpu` `power1_input` (located by hwmon name). Seeing
+  actual power makes the manual-clamp case visible: a low cooling level
+  holds the draw well below a high TDP cap.
+- **Documentation** — a full bilingual user manual
+  ([`docs/MANUAL.md`](docs/MANUAL.md) / [`docs/MANUAL-es.md`](docs/MANUAL-es.md)),
+  a Spanish cooling explainer, the thermal rationale
+  ([`docs/fan-curves.md`](docs/fan-curves.md)), and an on-device test plan.
+
+### Changed
+
+- **Unified cooling into a single lever.** `hpdctl cool set` programs the
+  platform profile *and* the matching fan curve together (the profile
+  also gates the chip's real power, so they are one decision); the status
+  dashboard collapses the former three cooling lines into one
+  `Cooling: <level> (auto|manual)`.
+- `fan_curve_follows_profile` now defaults to **`true`** so the profile
+  and curve always move together; set it to `false` to drive them
+  independently over D-Bus (advanced).
+- Fan-curve presets **validated on the ROG Xbox Ally X (RC73XA)**:
+  `silent` ≈58 °C, `balanced` ≈68 °C, `aggressive` ≈95 °C (fans maxed)
+  under a sustained all-core load — `balanced` solves the original
+  ~87 °C firmware behaviour.
+
+### Fixed
+
+- **Fan-RPM read targeted the wrong hwmon** — the reader scanned
+  `/sys/class/hwmon` by lowest index and could latch onto the unrelated
+  `acpi_fan` node (which also exposes a `fan1_input`) instead of the
+  `asus` node. It now resolves the sensor node by its `name` attribute,
+  which is stable across boots and driver-load order.
 
 ---
 

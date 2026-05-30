@@ -70,6 +70,7 @@ fn initial_state() -> ProfileState {
         charge_end_threshold: 80,
         fan_follows_tdp: true,
         last_dc_target: None,
+        active_fan_curve: None,
     }
 }
 
@@ -372,6 +373,7 @@ async fn test_executor_config_reload_swaps_runtime_config() {
         profile_thresholds: ProfileThresholds::DEFAULT,
         sppt_factor: 2.0,
         fppt_factor: 2.0,
+        fan_curve_follows_profile: false,
     };
     tx.send(Transition::ConfigReload(new_runtime))
         .await

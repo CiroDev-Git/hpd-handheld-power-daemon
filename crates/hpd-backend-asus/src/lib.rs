@@ -19,19 +19,27 @@
 pub mod charge;
 /// DMI-based detection of the supported ASUS handheld variants.
 pub mod detect;
-/// CPU/GPU fan-RPM reader (read-only — fan curves stay in firmware).
+/// CPU/GPU fan-RPM reader (read-only telemetry).
 pub mod fan;
+/// EC-mediated custom fan-curve writer (`asus_custom_fan_curve` hwmon).
+pub mod fan_curve;
+/// hwmon device lookup by stable `name` attribute.
+mod hwmon;
 /// SPL / SPPT / FPPT envelope backend backed by the upstream
 /// `asus-armoury` firmware-attributes driver.
 pub mod power;
 /// ACPI platform-profile reader/writer (`/sys/firmware/acpi/platform_profile`).
 pub mod profile;
+/// CPU/GPU temperature reader (`k10temp` / `amdgpu` hwmon).
+pub mod thermal;
 
 use hpd_capabilities::backend::HwBackend;
 use hpd_capabilities::charge::ChargeControl;
 use hpd_capabilities::fan::FanControl;
+use hpd_capabilities::fan_curve::FanCurveControl;
 use hpd_capabilities::platform_profile::PlatformProfile;
 use hpd_capabilities::power::PowerEnvelope;
+use hpd_capabilities::thermal::ThermalSensors;
 use hpd_sysfs::SysfsIo;
 
 /// Composition root for the ASUS backend. Owns the four
@@ -44,8 +52,12 @@ pub struct AsusBackend<S: SysfsIo + Clone> {
     pub charge: charge::AsusChargeBackend<S>,
     /// CPU/GPU fan-RPM backend (read-only).
     pub fan: fan::AsusFanBackend<S>,
+    /// EC-mediated custom fan-curve backend (write).
+    pub fan_curve: fan_curve::AsusFanCurveBackend<S>,
     /// ACPI platform-profile backend.
     pub profile: profile::AsusProfileBackend<S>,
+    /// CPU/GPU temperature backend (read-only).
+    pub thermal: thermal::AsusThermalBackend<S>,
 }
 
 impl<S: SysfsIo + Clone> AsusBackend<S> {
@@ -59,7 +71,9 @@ impl<S: SysfsIo + Clone> AsusBackend<S> {
             power: power::AsusPowerBackend::new(sysfs.clone()),
             charge: charge::AsusChargeBackend::new(sysfs.clone()),
             fan: fan::AsusFanBackend::new(sysfs.clone()),
-            profile: profile::AsusProfileBackend::new(sysfs),
+            fan_curve: fan_curve::AsusFanCurveBackend::new(sysfs.clone()),
+            profile: profile::AsusProfileBackend::new(sysfs.clone()),
+            thermal: thermal::AsusThermalBackend::new(sysfs),
         }
     }
 }
@@ -79,5 +93,13 @@ impl<S: SysfsIo + Clone + 'static> HwBackend for AsusBackend<S> {
 
     fn fan(&self) -> Option<&dyn FanControl> {
         Some(&self.fan)
+    }
+
+    fn fan_curve(&self) -> Option<&dyn FanCurveControl> {
+        Some(&self.fan_curve)
+    }
+
+    fn thermal(&self) -> Option<&dyn ThermalSensors> {
+        Some(&self.thermal)
     }
 }

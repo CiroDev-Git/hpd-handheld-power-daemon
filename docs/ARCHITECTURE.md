@@ -178,8 +178,9 @@ Lote 38 made this uniform across all three apply effects (only
 | `SetSpl(u32)`                    | `hpdctl tdp set`, D-Bus `set_spl`                 |
 | `SetEnvelope(PowerEnvelopeTarget)`| Manual full-envelope path (no preset, no derive)  |
 | `SetPreset(TdpPreset)`           | `hpdctl preset`, D-Bus `set_preset`               |
-| `SetProfile(ProfileName)`        | `hpdctl fan set`, D-Bus `set_profile`             |
-| `EnableFanAuto`                  | `hpdctl fan auto`, D-Bus `set_fan_auto`           |
+| `SetProfile(ProfileName)`        | D-Bus `set_profile` (advanced; not on the CLI)    |
+| `SetCoolingLevel(FanCurvePreset)`| `hpdctl cool set`, D-Bus `set_cooling_level`      |
+| `EnableFanAuto`                  | `hpdctl cool auto`, D-Bus `set_fan_auto`          |
 | `ChargeThresholdChanged(u8)`     | `hpdctl charge set`, D-Bus `set_charge_threshold` |
 | `AcPowerChanged(bool)`           | `hpd-netlink` udev event                          |
 | `SystemResumed`                  | logind `PrepareForSleep` (resume edge)            |

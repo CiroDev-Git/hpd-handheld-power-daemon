@@ -29,8 +29,7 @@ use std::process;
         It talks to the running hpd-daemon over D-Bus to manage four things:\n\
         \n  \
         • TDP / power envelope  — how many watts the APU is allowed to draw\n  \
-        • Cooling profile       — the ACPI platform profile (quiet/balanced/performance)\n  \
-        • Fan control           — automatic (follows TDP) or a manual profile\n  \
+        • Cooling               — one lever: silent / balanced / aggressive (or auto)\n  \
         • Battery charge limit  — cap charging to extend battery lifespan\n\
         \n\
         Reading status (status, monitor, limits, *-get) never needs root.\n\
@@ -43,8 +42,9 @@ use std::process;
         hpdctl tdp set 15             Set the power envelope to 15 W\n  \
         hpdctl preset eco             Apply the lowest-power preset\n  \
         hpdctl charge set 80          Stop charging the battery at 80%\n  \
-        hpdctl fan set performance    Force the performance cooling profile\n  \
-        hpdctl fan auto               Let the daemon pick cooling from TDP\n\
+        hpdctl cool set aggressive    Cool harder (profile + fan curve)\n  \
+        hpdctl cool auto              Let the daemon pick cooling from TDP\n  \
+        hpdctl cool get               Show current cooling level + mode\n\
         \n\
         Run `hpdctl <command> --help` for details on any command."
 )]
@@ -82,7 +82,7 @@ enum Commands {
     /// A preset is a shortcut that picks a target SPL wattage for you:
     /// `eco` = minimum SPL, `balanced` = midpoint, `max` = maximum SPL.
     ///
-    /// This is NOT the same as the ACPI cooling profile (see `hpdctl fan`).
+    /// This is NOT the same as the cooling level (see `hpdctl cool`).
     /// With auto-cooling enabled the cooling profile follows the preset's
     /// TDP automatically.
     Preset {
@@ -104,15 +104,20 @@ enum Commands {
     /// Same dashboard as `status` but redrawn once per second. Press
     /// Ctrl+C to exit.
     Monitor,
-    /// Control the fan / cooling profile (auto or manual)
+    /// Cooling: pick how hard the device cools (the one lever)
     ///
-    /// The daemon can either pick the cooling profile automatically from
-    /// the current TDP (`fan auto`) or hold a profile you choose
-    /// (`fan set <profile>`). Setting a manual profile turns auto-cooling
-    /// off until you run `fan auto` again.
-    Fan {
+    /// `cool set <level>` programs the platform profile AND the fan curve
+    /// together — one knob instead of three. `cool auto` lets the daemon
+    /// pick the level from the current TDP; `cool reset` hands the fans
+    /// back to firmware control. Levels, quietest → coolest: `silent`,
+    /// `balanced`, `aggressive`.
+    ///
+    /// (The raw platform profile and fan curve remain available over
+    /// D-Bus for advanced/decoupled use; they are intentionally off the
+    /// CLI to keep cooling a single concept.)
+    Cool {
         #[clap(subcommand)]
-        action: FanAction,
+        action: CoolAction,
     },
 }
 
@@ -145,17 +150,23 @@ enum ChargeAction {
 }
 
 #[derive(Subcommand)]
-enum FanAction {
-    /// Hold a manual cooling profile (quiet, balanced, performance)
+enum CoolAction {
+    /// Set the cooling level: silent, balanced, or aggressive
     ///
-    /// Pins the ACPI platform/cooling profile and disables auto-cooling
-    /// until you run `hpdctl fan auto`.
+    /// Programs the matching platform profile and fan curve together and
+    /// switches to manual cooling (until `cool auto`).
     Set {
-        #[arg(help = "Cooling profile: quiet, balanced, or performance")]
-        profile: String,
+        #[arg(help = "Cooling level: silent (quietest), balanced, or aggressive (coolest)")]
+        level: String,
     },
-    /// Re-enable automatic cooling (profile follows TDP)
+    /// Let the daemon pick the cooling level from the current TDP
     Auto,
+    /// Hand the fans back to the firmware's automatic curve
+    Reset,
+    /// Show the current cooling level and mode
+    Get,
+    /// Draw the active fan curve (temperature → fan speed)
+    Curve,
 }
 
 #[tokio::main]
@@ -257,26 +268,78 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
         }
-        Commands::Fan { action } => match action {
-            FanAction::Set { profile } => {
-                proxy.set_profile(&profile).await?;
-                println!("❄️ Fan profile manually changed to: {}", profile);
+        Commands::Cool { action } => match action {
+            CoolAction::Set { level } => {
+                if let Err(e) = proxy.set_cooling_level(&level).await {
+                    eprintln!("❌ Error setting cooling level: {}", e);
+                } else {
+                    println!("🧊 Cooling level set to: {}", level);
+                }
             }
-            FanAction::Auto => {
-                // Notify the daemon to re-enable auto mode
+            CoolAction::Auto => {
                 proxy.set_fan_auto().await?;
-                println!("🔄 Automatic fan control enabled (based on TDP).");
+                println!("🔄 Automatic cooling enabled (follows TDP).");
+            }
+            CoolAction::Reset => {
+                proxy.reset_fan_curve().await?;
+                println!("🔄 Fans handed back to firmware automatic control.");
+            }
+            CoolAction::Get => {
+                let level = proxy.fan_curve().await?;
+                let mode = if proxy.auto_cooling().await? {
+                    "auto"
+                } else {
+                    "manual"
+                };
+                println!("🧊 Cooling: {} ({})", level, mode);
+            }
+            CoolAction::Curve => {
+                let level = proxy.fan_curve().await?;
+                let (cpu, gpu) = proxy.get_fan_curve().await?;
+                println!("🌀 Fan curve: {}", level);
+                render_curve("CPU fan  (temp → speed)", &cpu);
+                render_curve("GPU fan  (temp → speed)", &gpu);
             }
         },
     }
     Ok(())
 }
 
+/// Draw an 8-point fan curve as horizontal bars: temperature on the
+/// left, the fan duty as a bar and a percentage on the right.
+fn render_curve(label: &str, points: &[(u32, u32)]) {
+    const BAR_W: u32 = 24;
+    if points.is_empty() {
+        println!("  {label}: firmware automatic (no custom curve)");
+        return;
+    }
+    println!("  {label}:");
+    for (temp, pwm) in points {
+        let pwm = (*pwm).min(255);
+        let pct = pwm * 100 / 255;
+        let filled = (pwm * BAR_W / 255) as usize;
+        let bar = "█".repeat(filled);
+        let pad = " ".repeat(BAR_W as usize - filled);
+        println!("    {temp:>3}°C │{bar}{pad}│ {pct:>3}%");
+    }
+}
+
+/// Render a telemetry field, mapping the `i32::MIN` "unavailable"
+/// sentinel from `get_thermal_status` to `n/a`.
+fn fmt_telemetry(value: i32, unit: &str) -> String {
+    if value == i32::MIN {
+        "n/a".to_string()
+    } else {
+        format!("{}{}", value, unit)
+    }
+}
+
 async fn print_dashboard(proxy: &PowerDaemonProxy<'_>) -> zbus::Result<()> {
     let spl_watts = proxy.current_spl().await?;
-    let profile = proxy.active_profile().await?;
     let charge_limit = proxy.charge_end_threshold().await?;
     let auto_cooling = proxy.auto_cooling().await?;
+    let fan_curve = proxy.fan_curve().await?;
+    let (cpu_temp, gpu_temp, cpu_rpm, gpu_rpm, soc_power_mw) = proxy.get_thermal_status().await?;
 
     let is_ac = proxy.is_ac_connected().await?;
     let power_icon = if is_ac {
@@ -284,18 +347,40 @@ async fn print_dashboard(proxy: &PowerDaemonProxy<'_>) -> zbus::Result<()> {
     } else {
         "🔋 Battery (DC)"
     };
-    let cooling_mode = if auto_cooling {
-        "auto (follows TDP)"
+    let cooling_mode = if auto_cooling { "auto" } else { "manual" };
+    // The fan curve is what actually drives the fans, so it is the
+    // user-facing "cooling level"; `auto` means the firmware curve.
+    let cooling_level = if fan_curve == "auto" {
+        "firmware".to_string()
     } else {
-        "manual"
+        fan_curve
+    };
+
+    // Actual power draw vs the configured TDP cap. soc_power is in mW.
+    let power_line = if soc_power_mw == i32::MIN {
+        format!("{}W (TDP cap)", spl_watts)
+    } else {
+        format!("{}W now · {}W TDP cap", soc_power_mw / 1000, spl_watts)
     };
 
     println!("=======================================");
     println!("  🎮 Handheld Power Daemon Status 🎮  ");
     println!("=======================================");
-    println!("   ⚡ TDP (SPL):        {}W", spl_watts);
-    println!("  ❄️ Cooling Profile:  {}", profile);
-    println!("  🔁 Cooling Mode:     {}", cooling_mode);
+    println!("   ⚡ Power:            {}", power_line);
+    println!(
+        "  🧊 Cooling:          {} ({})",
+        cooling_level, cooling_mode
+    );
+    println!(
+        "  🌡️ Temps:            CPU {} · GPU {}",
+        fmt_telemetry(cpu_temp, "°C"),
+        fmt_telemetry(gpu_temp, "°C")
+    );
+    println!(
+        "  💨 Fans:             CPU {} · GPU {}",
+        fmt_telemetry(cpu_rpm, " RPM"),
+        fmt_telemetry(gpu_rpm, " RPM")
+    );
     println!("  🔌 Power adapter:    {}", power_icon);
     println!("  🔋 Battery Limit:    {}%", charge_limit);
     println!("=======================================");

@@ -41,6 +41,8 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 #[cfg(feature = "vendor-asus")]
+use hpd_capabilities::fan_curve::FanCurveSelection;
+#[cfg(feature = "vendor-asus")]
 use hpd_capabilities::power::PowerEnvelopeTarget;
 #[cfg(feature = "vendor-asus")]
 use hpd_capabilities::profile::ProfileName;
@@ -198,6 +200,38 @@ async fn run_real_main() -> Result<(), Box<dyn std::error::Error>> {
                 "80",
             );
 
+            // Fan telemetry node (`asus` hwmon) — the RPM read path
+            // resolves it by name, so the index is arbitrary.
+            mock.create_file("sys/class/hwmon/hwmon0/name", "asus");
+            mock.create_file("sys/class/hwmon/hwmon0/fan1_input", "3200");
+            mock.create_file("sys/class/hwmon/hwmon0/fan2_input", "3000");
+            // Decoy `acpi_fan` node that also exposes a fan1_input — the
+            // backend must skip it and read the `asus` node above.
+            mock.create_file("sys/class/hwmon/hwmon3/name", "acpi_fan");
+            mock.create_file("sys/class/hwmon/hwmon3/fan1_input", "9999");
+            // Temperature sensors: k10temp (CPU Tctl) + amdgpu (GPU edge).
+            mock.create_file("sys/class/hwmon/hwmon6/name", "k10temp");
+            mock.create_file("sys/class/hwmon/hwmon6/temp1_input", "61000");
+            mock.create_file("sys/class/hwmon/hwmon5/name", "amdgpu");
+            mock.create_file("sys/class/hwmon/hwmon5/temp1_input", "54000");
+            mock.create_file("sys/class/hwmon/hwmon5/power1_input", "16088000"); // 16.1 W
+                                                                                 // Custom fan-curve node (`asus_custom_fan_curve` hwmon),
+                                                                                 // seeded with the firmware default curve and auto mode.
+            mock.create_file("sys/class/hwmon/hwmon1/name", "asus_custom_fan_curve");
+            for fan in [1u8, 2] {
+                mock.create_file(format!("sys/class/hwmon/hwmon1/pwm{fan}_enable"), "2");
+                for point in 1..=8u8 {
+                    mock.create_file(
+                        format!("sys/class/hwmon/hwmon1/pwm{fan}_auto_point{point}_temp"),
+                        "0",
+                    );
+                    mock.create_file(
+                        format!("sys/class/hwmon/hwmon1/pwm{fan}_auto_point{point}_pwm"),
+                        "0",
+                    );
+                }
+            }
+
             // Simulator only models ASUS firmware (enforced via
             // simulator → vendor-asus in Cargo.toml).
             run_daemon(AsusBackend::new(mock)).await?;
@@ -244,6 +278,12 @@ where
         }
     };
 
+    // Share the backend behind an Arc so both the Executor (which owns
+    // the command path) and the D-Bus interface (which reads live fan /
+    // temperature telemetry on demand) can reach the same instance.
+    let backend: std::sync::Arc<dyn hpd_capabilities::backend::HwBackend> =
+        std::sync::Arc::new(backend);
+
     // systemd's StateDirectory= injects STATE_DIRECTORY (e.g. /var/lib/hpd).
     // Outside systemd we honour the config's `state_path`. /var/tmp is
     // intentionally avoided: world-writable + survives reboots = symlink-race
@@ -262,7 +302,7 @@ where
         .and_then(|c| c.is_ac_connected().ok())
         .unwrap_or(false);
 
-    let initial_state = match persister.load().await {
+    let mut initial_state = match persister.load().await {
         Some(mut state) => {
             info!("Previous state loaded successfully from disk.");
             state.is_ac_connected = is_physically_plugged;
@@ -295,13 +335,35 @@ where
                 fan_follows_tdp: true,
                 is_ac_connected: is_physically_plugged,
                 last_dc_target: None,
+                active_fan_curve: None,
             }
         }
     };
 
+    // Decide which fan curve to program at boot: a persisted selection
+    // wins; otherwise fall back to the config's first-boot default. We
+    // then force the in-memory selection to `None` so the SetFanCurve
+    // transition enqueued below registers as a *change* and actually
+    // writes the curve to the EC (a cold boot leaves the EC on its
+    // conservative firmware default).
+    let boot_fan_curve = initial_state.active_fan_curve.or_else(|| {
+        daemon_config
+            .default_fan_curve
+            .map(FanCurveSelection::Preset)
+    });
+    initial_state.active_fan_curve = None;
+
     // 6. Create communication channels
     let (tx, rx) = mpsc::channel::<Transition>(daemon_config.channel_capacity);
     let internal_tx = tx.clone(); // For rollback
+
+    // Program the boot fan curve, if any. The channel buffers this until
+    // the executor starts draining it, so ordering here is irrelevant.
+    if let Some(selection) = boot_fan_curve {
+        if tx.send(Transition::SetFanCurve(selection)).await.is_err() {
+            warn!("Executor channel closed before boot fan curve could be applied");
+        }
+    }
 
     // SIGHUP reloads the config file and pushes a ConfigReload transition.
     // Maps cleanly to `systemctl reload hpd` via `ExecReload=` in the unit.
@@ -368,7 +430,7 @@ where
 
     // 7. Executor instance
     let (executor, state_rx) = Executor::new(
-        backend,
+        backend.clone(),
         initial_state,
         limits.clone(),
         daemon_config.to_runtime(),
@@ -393,7 +455,8 @@ where
     // emitter task spawned below.
     let state_rx_for_watcher = state_rx.clone();
 
-    let dbus_interface = hpd_dbus::service::PowerDaemonInterface::new(tx.clone(), state_rx, limits);
+    let dbus_interface =
+        hpd_dbus::service::PowerDaemonInterface::new(tx.clone(), state_rx, limits, backend);
 
     // Session bus is only a valid target when the simulator path is
     // compiled in; production builds always bind to the system bus
@@ -521,6 +584,11 @@ async fn spawn_properties_changed_emitter(
             // inferring it from observed behaviour.
             if let Err(e) = iface.auto_cooling_changed(ctx).await {
                 error!(error = %e, "Failed to emit auto_cooling PropertiesChanged");
+            }
+        }
+        if new.active_fan_curve != last.active_fan_curve {
+            if let Err(e) = iface.fan_curve_changed(ctx).await {
+                error!(error = %e, "Failed to emit fan_curve PropertiesChanged");
             }
         }
 

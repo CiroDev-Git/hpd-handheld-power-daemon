@@ -52,3 +52,22 @@ pub struct Rpm(
     /// Raw RPM value.
     pub u16,
 );
+
+/// Temperature in whole degrees Celsius. hwmon reports `tempN_input` in
+/// millidegrees; this type holds the value divided down to whole
+/// degrees (the only precision any external surface — D-Bus, the
+/// dashboard — needs). Signed so a sensor reporting below 0 °C never
+/// wraps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Celsius(
+    /// Whole degrees Celsius.
+    pub i16,
+);
+
+impl Celsius {
+    /// Convert a raw hwmon `tempN_input` millidegree reading to whole
+    /// degrees, truncating toward zero.
+    pub const fn from_millidegrees(milli: i32) -> Self {
+        Self((milli / 1000) as i16)
+    }
+}

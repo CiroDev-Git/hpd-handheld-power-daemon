@@ -7,10 +7,13 @@
 #![allow(missing_docs)]
 
 use std::str::FromStr;
+use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, error};
 use zbus::interface;
 
+use hpd_capabilities::backend::HwBackend;
+use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
 use hpd_capabilities::power::PowerEnvelopeLimits;
 use hpd_capabilities::profile::ProfileName;
 use hpd_core::state::ProfileState;
@@ -33,25 +36,37 @@ pub struct PowerDaemonInterface {
     tx: mpsc::Sender<Transition>,
     state_rx: watch::Receiver<ProfileState>,
     limits: PowerEnvelopeLimits,
+    /// Shared backend handle, used only to read live telemetry (fan RPM,
+    /// temperatures) on demand. Command mutations still flow through
+    /// `tx` into the executor — this handle is never used to write.
+    backend: Arc<dyn HwBackend>,
 }
 
 impl PowerDaemonInterface {
     /// Build the interface from the daemon's wiring. `tx` is the
     /// command lane into the [`Executor`](hpd_core::executor::Executor);
     /// `state_rx` is the live state mirror property getters read from;
-    /// `limits` is the immutable hardware envelope detected at startup.
+    /// `limits` is the immutable hardware envelope detected at startup;
+    /// `backend` is the shared handle used for live telemetry reads.
     pub fn new(
         tx: mpsc::Sender<Transition>,
         state_rx: watch::Receiver<ProfileState>,
         limits: PowerEnvelopeLimits,
+        backend: Arc<dyn HwBackend>,
     ) -> Self {
         Self {
             tx,
             state_rx,
             limits,
+            backend,
         }
     }
 }
+
+/// Sentinel returned in [`PowerDaemonInterface::get_thermal_status`] for
+/// a sensor or fan the hardware does not expose (or that failed to
+/// read). Distinct from `0`, which is a valid reading (a stopped fan).
+const TELEMETRY_UNAVAILABLE: i32 = i32::MIN;
 
 fn auth_denied() -> zbus::fdo::Error {
     zbus::fdo::Error::AuthFailed("Not authorized by polkit".into())
@@ -217,6 +232,37 @@ impl PowerDaemonInterface {
         Ok(())
     }
 
+    /// Unified cooling lever: set the cooling level (`silent`,
+    /// `balanced`, `aggressive`), which programs the matching platform
+    /// profile *and* fan curve together and latches manual cooling.
+    ///
+    /// This is the front-end for `hpdctl cool set`. The raw `set_profile`
+    /// and `set_fan_curve` methods remain for advanced callers.
+    ///
+    /// `polkit` action: `dev.cirodev.hpd.set-profile` (`auth_admin_keep`).
+    async fn set_cooling_level(
+        &self,
+        level: &str,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        debug!("D-Bus received request to Set Cooling Level: {}", level);
+        let preset = FanCurvePreset::from_str(level)
+            .map_err(|e| zbus::fdo::Error::InvalidArgs(e.to_string()))?;
+        if !polkit::check(conn, &header, PolkitAction::SetProfile).await {
+            return Err(auth_denied());
+        }
+        if self
+            .tx
+            .send(Transition::SetCoolingLevel(preset))
+            .await
+            .is_err()
+        {
+            return Err(executor_down());
+        }
+        Ok(())
+    }
+
     /// Re-enable auto-cooling: the daemon resumes inferring the
     /// platform profile from the active TDP envelope.
     ///
@@ -233,5 +279,128 @@ impl PowerDaemonInterface {
             return Err(executor_down());
         }
         Ok(())
+    }
+
+    /// Program a named custom fan curve (`silent`, `balanced`,
+    /// `aggressive`). The daemon resolves the preset to the model's
+    /// concrete curve, writes it to the EC, and re-applies it across
+    /// suspend/resume.
+    ///
+    /// `polkit` action: `dev.cirodev.hpd.set-fan-curve` (`auth_admin_keep`).
+    async fn set_fan_curve(
+        &self,
+        preset: &str,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        debug!("D-Bus received request to Set Fan Curve: {}", preset);
+        let preset = FanCurvePreset::from_str(preset)
+            .map_err(|e| zbus::fdo::Error::InvalidArgs(e.to_string()))?;
+        if !polkit::check(conn, &header, PolkitAction::SetFanCurve).await {
+            return Err(auth_denied());
+        }
+        if self
+            .tx
+            .send(Transition::SetFanCurve(FanCurveSelection::Preset(preset)))
+            .await
+            .is_err()
+        {
+            return Err(executor_down());
+        }
+        Ok(())
+    }
+
+    /// Hand fan control back to the firmware's automatic curve.
+    ///
+    /// `polkit` action: `dev.cirodev.hpd.set-fan-curve`.
+    async fn reset_fan_curve(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        debug!("D-Bus received request to reset fan curve to firmware auto");
+        if !polkit::check(conn, &header, PolkitAction::SetFanCurve).await {
+            return Err(auth_denied());
+        }
+        if self.tx.send(Transition::ResetFanCurve).await.is_err() {
+            return Err(executor_down());
+        }
+        Ok(())
+    }
+
+    /// Live thermal telemetry:
+    /// `(cpu_temp_c, gpu_temp_c, cpu_fan_rpm, gpu_fan_rpm, soc_power_mw)`.
+    /// The first four are whole units (°C, RPM); the last is the actual
+    /// SoC power draw in **milliwatts**.
+    ///
+    /// Read on demand straight from the backend, so callers
+    /// (`hpdctl status` / `monitor`) always see current values. Any
+    /// field equals `i32::MIN` when that sensor or fan is not exposed by
+    /// the hardware (or its read failed) — note `0` is a *valid* fan
+    /// reading (a stopped fan), so absence needs its own sentinel.
+    async fn get_thermal_status(&self) -> (i32, i32, i32, i32, i32) {
+        let cpu_temp = self
+            .backend
+            .thermal()
+            .and_then(|t| t.get_cpu_temp().ok().flatten())
+            .map_or(TELEMETRY_UNAVAILABLE, |c| i32::from(c.0));
+        let gpu_temp = self
+            .backend
+            .thermal()
+            .and_then(|t| t.get_gpu_temp().ok().flatten())
+            .map_or(TELEMETRY_UNAVAILABLE, |c| i32::from(c.0));
+        let cpu_rpm = self
+            .backend
+            .fan()
+            .and_then(|f| f.get_cpu_fan_rpm().ok())
+            .map_or(TELEMETRY_UNAVAILABLE, |r| i32::from(r.0));
+        let gpu_rpm = self
+            .backend
+            .fan()
+            .and_then(|f| f.get_gpu_fan_rpm().ok().flatten())
+            .map_or(TELEMETRY_UNAVAILABLE, |r| i32::from(r.0));
+        let soc_power_mw = self
+            .backend
+            .thermal()
+            .and_then(|t| t.get_soc_power().ok().flatten())
+            .map_or(TELEMETRY_UNAVAILABLE, |p| {
+                i32::try_from(p.0).unwrap_or(i32::MAX)
+            });
+        (cpu_temp, gpu_temp, cpu_rpm, gpu_rpm, soc_power_mw)
+    }
+
+    /// The eight `(temp_c, pwm)` points of the active CPU and GPU fan
+    /// curves as read back from the EC: `(cpu_points, gpu_points)`. `pwm`
+    /// is 0–255. Both vectors are empty when the backend exposes no
+    /// programmable curve or the read-back failed. Used by
+    /// `hpdctl cool curve` to draw the curve.
+    async fn get_fan_curve(&self) -> (Vec<(u32, u32)>, Vec<(u32, u32)>) {
+        let Some(cap) = self.backend.fan_curve() else {
+            return (Vec::new(), Vec::new());
+        };
+        match cap.get_curves() {
+            Ok(curves) => {
+                let to_pairs = |c: &hpd_capabilities::fan_curve::FanCurve| {
+                    c.points
+                        .iter()
+                        .map(|p| (u32::from(p.temp_c), u32::from(p.pwm)))
+                        .collect::<Vec<_>>()
+                };
+                (to_pairs(&curves.cpu), to_pairs(&curves.gpu))
+            }
+            Err(_) => (Vec::new(), Vec::new()),
+        }
+    }
+
+    /// Active fan-curve selection: a preset name (`silent`, `balanced`,
+    /// `aggressive`), `custom` for an explicit curve, or `auto` when the
+    /// firmware's automatic curve is in charge (daemon not managing it).
+    #[zbus(property)]
+    async fn fan_curve(&self) -> String {
+        match self.state_rx.borrow().active_fan_curve {
+            None => "auto".to_string(),
+            Some(FanCurveSelection::Preset(p)) => p.as_str().to_string(),
+            Some(FanCurveSelection::Custom { .. }) => "custom".to_string(),
+        }
     }
 }

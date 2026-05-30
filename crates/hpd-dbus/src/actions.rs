@@ -31,6 +31,9 @@ pub enum PolkitAction {
     /// Change the platform cooling profile or re-bind fan-auto.
     /// Low-impact, cosmetic-leaning: `auth_admin_keep` (5 min cache).
     SetProfile,
+    /// Program or reset the EC-mediated custom fan curve.
+    /// Low-impact, cosmetic-leaning: `auth_admin_keep` (5 min cache).
+    SetFanCurve,
 }
 
 impl PolkitAction {
@@ -40,6 +43,7 @@ impl PolkitAction {
             PolkitAction::SetTdp => "dev.cirodev.hpd.set-tdp",
             PolkitAction::SetCharge => "dev.cirodev.hpd.set-charge",
             PolkitAction::SetProfile => "dev.cirodev.hpd.set-profile",
+            PolkitAction::SetFanCurve => "dev.cirodev.hpd.set-fan-curve",
         }
     }
 }

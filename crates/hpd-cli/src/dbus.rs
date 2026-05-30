@@ -2,6 +2,9 @@
 
 use zbus::proxy;
 
+/// The eight `(temp_c, pwm)` points of one fan's curve.
+pub type CurvePoints = Vec<(u32, u32)>;
+
 #[proxy(
     interface = "dev.cirodev.hpd.PowerDaemon1",
     default_service = "dev.cirodev.hpd.PowerDaemon1",
@@ -31,4 +34,31 @@ trait PowerDaemon {
 
     fn set_profile(&self, profile: &str) -> zbus::Result<()>;
     fn set_fan_auto(&self) -> zbus::Result<()>;
+
+    /// Unified cooling lever: set the cooling level (`silent`,
+    /// `balanced`, `aggressive`) — programs the matching platform
+    /// profile and fan curve together and latches manual cooling.
+    async fn set_cooling_level(&self, level: &str) -> zbus::Result<()>;
+
+    /// Program a named custom fan curve (`silent`, `balanced`,
+    /// `aggressive`). Resolved to the model's concrete curve by the
+    /// daemon and re-applied across suspend/resume.
+    async fn set_fan_curve(&self, preset: &str) -> zbus::Result<()>;
+
+    /// Hand fan control back to the firmware's automatic curve.
+    async fn reset_fan_curve(&self) -> zbus::Result<()>;
+
+    /// Active fan-curve selection: a preset name, `custom`, or `auto`.
+    #[zbus(property)]
+    fn fan_curve(&self) -> zbus::Result<String>;
+
+    /// Live thermal telemetry: `(cpu_temp_c, gpu_temp_c, cpu_fan_rpm,
+    /// gpu_fan_rpm, soc_power_mw)`. The last field is the actual SoC
+    /// power draw in milliwatts. Any field is `i32::MIN` when unavailable.
+    fn get_thermal_status(&self) -> zbus::Result<(i32, i32, i32, i32, i32)>;
+
+    /// The 8 `(temp_c, pwm)` points of the active CPU and GPU fan
+    /// curves: `(cpu_points, gpu_points)`. Empty when no curve is
+    /// programmable. Used to draw the curve.
+    fn get_fan_curve(&self) -> zbus::Result<(CurvePoints, CurvePoints)>;
 }
