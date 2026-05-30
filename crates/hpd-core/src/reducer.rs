@@ -116,6 +116,23 @@ pub fn reduce(
             }
         }
 
+        Transition::SetCoolingLevel(preset) => {
+            // Unified lever: drive the platform profile and the fan curve
+            // together to the requested level, and latch manual mode.
+            let profile = profile_for_cooling(preset);
+            let selection = FanCurveSelection::Preset(preset);
+            new_state.fan_follows_tdp = false;
+            if new_state.active_profile != profile {
+                new_state.active_profile = profile.clone();
+                effects.push(Effect::ApplyPlatformProfile(profile));
+            }
+            // Always (re)apply the curve — after the profile write, which
+            // can reset the EC — so the two never drift apart.
+            new_state.active_fan_curve = Some(selection);
+            effects.push(Effect::ApplyFanCurve(selection));
+            effects.push(Effect::PersistState);
+        }
+
         Transition::ChargeThresholdChanged(threshold) => {
             if new_state.charge_end_threshold != threshold {
                 new_state.charge_end_threshold = threshold;
@@ -298,6 +315,17 @@ fn apply_target_and_profile(
     }
 
     Ok(ReducerOutput { new_state, effects })
+}
+
+/// Map a unified cooling level (expressed as a fan-curve preset) to the
+/// platform profile it pairs with. Inverse of
+/// [`curve_preset_for_profile`] over the three canonical levels.
+fn profile_for_cooling(preset: FanCurvePreset) -> ProfileName {
+    match preset {
+        FanCurvePreset::Silent => ProfileName::PowerSaver,
+        FanCurvePreset::Balanced => ProfileName::Balanced,
+        FanCurvePreset::Aggressive => ProfileName::Performance,
+    }
 }
 
 /// Map a platform profile to its companion fan-curve preset. `Custom`
@@ -986,14 +1014,16 @@ mod tests {
 
     #[test]
     fn test_set_profile_does_not_touch_curve_when_follow_disabled() {
-        // Default config has fan_curve_follows_profile = false: a profile
-        // change must leave the (manually-managed) fan curve alone.
-        let state = setup_state();
+        // With fan_curve_follows_profile explicitly off and no managed
+        // curve, a profile change must leave the fan curve alone.
+        let state = setup_state(); // active_fan_curve = None
+        let mut config = setup_config();
+        config.fan_curve_follows_profile = false;
         let out = reduce(
             &state,
             Transition::SetProfile(ProfileName::Performance),
             &setup_limits(),
-            &setup_config(),
+            &config,
         )
         .unwrap();
         assert_eq!(out.new_state.active_fan_curve, None);
@@ -1001,6 +1031,45 @@ mod tests {
             .effects
             .iter()
             .any(|e| matches!(e, Effect::ApplyFanCurve(_))));
+    }
+
+    #[test]
+    fn test_set_cooling_level_sets_profile_and_curve_together() {
+        use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
+        let mut state = setup_state(); // Balanced profile, fan_follows_tdp = true
+        state.fan_follows_tdp = true;
+        let out = reduce(
+            &state,
+            Transition::SetCoolingLevel(FanCurvePreset::Aggressive),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        // Profile + curve both move to the aggressive level, and mode latches manual.
+        assert_eq!(out.new_state.active_profile, ProfileName::Performance);
+        assert_eq!(
+            out.new_state.active_fan_curve,
+            Some(FanCurveSelection::Preset(FanCurvePreset::Aggressive))
+        );
+        assert!(!out.new_state.fan_follows_tdp);
+        assert!(out
+            .effects
+            .contains(&Effect::ApplyPlatformProfile(ProfileName::Performance)));
+        assert!(out.effects.contains(&Effect::ApplyFanCurve(
+            FanCurveSelection::Preset(FanCurvePreset::Aggressive)
+        )));
+        // Curve write comes AFTER the profile write.
+        let p = out
+            .effects
+            .iter()
+            .position(|e| matches!(e, Effect::ApplyPlatformProfile(_)))
+            .unwrap();
+        let c = out
+            .effects
+            .iter()
+            .position(|e| matches!(e, Effect::ApplyFanCurve(_)))
+            .unwrap();
+        assert!(c > p);
     }
 
     #[test]
@@ -1012,11 +1081,13 @@ mod tests {
         let sel = FanCurveSelection::Preset(FanCurvePreset::Silent);
         let mut state = setup_state();
         state.active_fan_curve = Some(sel);
+        let mut config = setup_config();
+        config.fan_curve_follows_profile = false; // preservation path, not follow
         let out = reduce(
             &state,
             Transition::SetProfile(ProfileName::Performance),
             &setup_limits(),
-            &setup_config(), // follows disabled
+            &config,
         )
         .unwrap();
         // Curve selection is preserved, not changed to a matching preset.

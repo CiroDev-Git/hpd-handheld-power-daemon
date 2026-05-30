@@ -134,13 +134,17 @@ pub struct RuntimeConfig {
 
 impl RuntimeConfig {
     /// Defaults match the historic in-reducer constants: 1.15/1.25 boost
-    /// multipliers, 0.33/0.67 cooling-profile cut-offs, fan-curve follow
-    /// off (the curve is a manual selection until the operator opts in).
+    /// multipliers, 0.33/0.67 cooling-profile cut-offs. Fan-curve follow
+    /// defaults **on** so that "cooling" is a single user-facing lever:
+    /// the platform profile and the fan curve move together (the `cool`
+    /// command and auto-cooling both rely on this). Advanced users set
+    /// `fan_curve_follows_profile = false` to drive the curve
+    /// independently of the profile.
     pub const DEFAULT: Self = Self {
         profile_thresholds: ProfileThresholds::DEFAULT,
         sppt_factor: 1.15,
         fppt_factor: 1.25,
-        fan_curve_follows_profile: false,
+        fan_curve_follows_profile: true,
     };
 }
 
