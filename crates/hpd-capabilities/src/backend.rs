@@ -2,11 +2,14 @@
 
 //! Aggregate backend trait that an L1 vendor implementation must satisfy.
 
+use std::sync::Arc;
+
 use crate::charge::ChargeControl;
 use crate::fan::FanControl;
 use crate::fan_curve::FanCurveControl;
 use crate::platform_profile::PlatformProfile;
 use crate::power::PowerEnvelope;
+use crate::thermal::ThermalSensors;
 
 /// Trait every L1 vendor backend implements to expose its capabilities
 /// to the daemon. Each capability is reached through an explicit
@@ -59,6 +62,38 @@ pub trait HwBackend: Send + Sync {
     /// the `asus_custom_fan_curve` hwmon). Default: `None`.
     fn fan_curve(&self) -> Option<&dyn FanCurveControl> {
         None
+    }
+
+    /// Optional temperature-sensor accessor. Returns `None` on hardware
+    /// that exposes no readable CPU/GPU temperature sensors. Default:
+    /// `None`.
+    fn thermal(&self) -> Option<&dyn ThermalSensors> {
+        None
+    }
+}
+
+/// Forward every accessor through a shared [`Arc`]. Lets the daemon hold
+/// the backend behind an `Arc<dyn HwBackend>` so the Executor (which
+/// consumes it) and the D-Bus interface (which reads live telemetry) can
+/// share one instance.
+impl<T: HwBackend + ?Sized> HwBackend for Arc<T> {
+    fn power(&self) -> &dyn PowerEnvelope {
+        (**self).power()
+    }
+    fn charge(&self) -> Option<&dyn ChargeControl> {
+        (**self).charge()
+    }
+    fn profile(&self) -> Option<&dyn PlatformProfile> {
+        (**self).profile()
+    }
+    fn fan(&self) -> Option<&dyn FanControl> {
+        (**self).fan()
+    }
+    fn fan_curve(&self) -> Option<&dyn FanCurveControl> {
+        (**self).fan_curve()
+    }
+    fn thermal(&self) -> Option<&dyn ThermalSensors> {
+        (**self).thermal()
     }
 }
 

@@ -30,6 +30,8 @@ mod hwmon;
 pub mod power;
 /// ACPI platform-profile reader/writer (`/sys/firmware/acpi/platform_profile`).
 pub mod profile;
+/// CPU/GPU temperature reader (`k10temp` / `amdgpu` hwmon).
+pub mod thermal;
 
 use hpd_capabilities::backend::HwBackend;
 use hpd_capabilities::charge::ChargeControl;
@@ -37,6 +39,7 @@ use hpd_capabilities::fan::FanControl;
 use hpd_capabilities::fan_curve::FanCurveControl;
 use hpd_capabilities::platform_profile::PlatformProfile;
 use hpd_capabilities::power::PowerEnvelope;
+use hpd_capabilities::thermal::ThermalSensors;
 use hpd_sysfs::SysfsIo;
 
 /// Composition root for the ASUS backend. Owns the four
@@ -53,6 +56,8 @@ pub struct AsusBackend<S: SysfsIo + Clone> {
     pub fan_curve: fan_curve::AsusFanCurveBackend<S>,
     /// ACPI platform-profile backend.
     pub profile: profile::AsusProfileBackend<S>,
+    /// CPU/GPU temperature backend (read-only).
+    pub thermal: thermal::AsusThermalBackend<S>,
 }
 
 impl<S: SysfsIo + Clone> AsusBackend<S> {
@@ -67,7 +72,8 @@ impl<S: SysfsIo + Clone> AsusBackend<S> {
             charge: charge::AsusChargeBackend::new(sysfs.clone()),
             fan: fan::AsusFanBackend::new(sysfs.clone()),
             fan_curve: fan_curve::AsusFanCurveBackend::new(sysfs.clone()),
-            profile: profile::AsusProfileBackend::new(sysfs),
+            profile: profile::AsusProfileBackend::new(sysfs.clone()),
+            thermal: thermal::AsusThermalBackend::new(sysfs),
         }
     }
 }
@@ -91,5 +97,9 @@ impl<S: SysfsIo + Clone + 'static> HwBackend for AsusBackend<S> {
 
     fn fan_curve(&self) -> Option<&dyn FanCurveControl> {
         Some(&self.fan_curve)
+    }
+
+    fn thermal(&self) -> Option<&dyn ThermalSensors> {
+        Some(&self.thermal)
     }
 }
