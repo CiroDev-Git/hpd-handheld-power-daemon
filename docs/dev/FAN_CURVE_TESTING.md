@@ -263,6 +263,68 @@ grep -i fan /var/lib/hpd/state.toml  # active_fan_curve persisted
 
 ---
 
+## 11. ⚖️ Does `platform_profile` still do anything? (decides if we keep it)
+
+Once `hpd` controls the TDP (SPL/SPPT/FPPT) *and* the fan curve directly,
+the ACPI `platform_profile` (driven by **amd_pmf**) may be redundant — or
+it may be silently **gating** the TDP that `hpd` requests. This isolation
+test settles it. Decouple first so we can vary the profile alone:
+
+```bash
+sudoedit /etc/hpd/config.toml          # fan_curve_follows_profile = false
+systemctl reload hpd
+hpdctl tdp set 15                       # fix the TDP
+hpdctl fan curve set balanced          # fix the curve
+PPT=/sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/current_value
+```
+
+**Test A — does writing the profile move the limits `hpd` set?**
+
+```bash
+hpdctl fan profile power-saver  ; cat $PPT
+hpdctl fan profile performance  ; cat $PPT
+```
+
+| Result | Meaning |
+|---|---|
+| `ppt_pl1_spl` **changes** when you write the profile | amd_pmf is overwriting `hpd`'s TDP → the profile **fights** `hpd` |
+| unchanged | the profile does not touch the power limits |
+
+**Test B — does `hpd`'s requested TDP actually *stick* under each profile?**
+Under a sustained load, request a high TDP and measure real package power
+(use `turbostat`, `ryzenadj -i`, or watch sustained temps/RPM as a proxy):
+
+```bash
+hpdctl fan profile power-saver ; hpdctl tdp set 25   # then load + measure
+hpdctl fan profile performance ; hpdctl tdp set 25   # then load + measure
+```
+
+| Result | Meaning | Decision |
+|---|---|---|
+| power-saver **caps** real draw < 25 W, performance lets it through | profile **gates** the TDP | **Keep it, pinned to `performance`** (an enabler, not a user knob) |
+| real draw is the same under both | profile does **not** gate the TDP | candidate for **removal** |
+
+**Test C — any adaptive effect?** Fix everything (TDP, curve, profile) and
+compare idle vs load behaviour across `balanced` vs `performance`. If
+nothing measurable differs (power, clocks, temps), there is no adaptive
+value either.
+
+### Decision tree
+
+- **A changes / B gates** → `platform_profile` is an *enabler*: the daemon
+  should **pin it to `performance`** (or the level matching `cool`) and it
+  must **not** be removed. `hpd`'s TDP depends on it.
+- **A inert / B sticks / C no effect** → `platform_profile` is vestigial
+  once TDP + curve are controlled → **remove it entirely** (the daemon
+  stops touching it; `PlatformProfile` capability + `SetProfile` retired).
+- **Anything in between** (does something useful) → keep it coupled to
+  `cool`, hidden from the primary CLI.
+
+Record the readings below; this is what tells us whether to delete the
+profile, pin it, or keep it.
+
+---
+
 ## Results template
 
 Copy, fill, and attach to the PR:
@@ -280,6 +342,8 @@ Device: ROG Xbox Ally X RC73XA   Kernel: ____   hpd: feat/fan-curves @ ____
 §8 persistence + first-boot default  PASS / FAIL
 §9 polkit (wheel passwordless) ..... PASS / FAIL
 §10 edge cases ..................... PASS / FAIL
+§11 platform_profile A (ppt moves?). YES / NO
+§11 platform_profile B (gates TDP?). YES / NO    → verdict: remove / pin / keep
 
 Calibration data (peak under sustained load):
             CPU°C  GPU°C  CPU rpm  GPU rpm  noise
