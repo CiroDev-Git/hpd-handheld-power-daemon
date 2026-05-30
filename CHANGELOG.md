@@ -13,7 +13,13 @@ not part of the published repository.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+
+- **AUR `pkgrel`** — both `package/aur/PKGBUILD*.template` files reset
+  `pkgrel` to `1` (they had carried `3` from the 1.0.0 packaging respins).
+  Takes effect from the next published version; the already-shipped
+  `2.0.0-3` packages are left as-is (re-syncing would be a `pkgrel`
+  downgrade).
 
 ---
 
