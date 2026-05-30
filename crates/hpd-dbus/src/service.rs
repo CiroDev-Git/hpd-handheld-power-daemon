@@ -232,6 +232,37 @@ impl PowerDaemonInterface {
         Ok(())
     }
 
+    /// Unified cooling lever: set the cooling level (`silent`,
+    /// `balanced`, `aggressive`), which programs the matching platform
+    /// profile *and* fan curve together and latches manual cooling.
+    ///
+    /// This is the front-end for `hpdctl cool set`. The raw `set_profile`
+    /// and `set_fan_curve` methods remain for advanced callers.
+    ///
+    /// `polkit` action: `dev.cirodev.hpd.set-profile` (`auth_admin_keep`).
+    async fn set_cooling_level(
+        &self,
+        level: &str,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        debug!("D-Bus received request to Set Cooling Level: {}", level);
+        let preset = FanCurvePreset::from_str(level)
+            .map_err(|e| zbus::fdo::Error::InvalidArgs(e.to_string()))?;
+        if !polkit::check(conn, &header, PolkitAction::SetProfile).await {
+            return Err(auth_denied());
+        }
+        if self
+            .tx
+            .send(Transition::SetCoolingLevel(preset))
+            .await
+            .is_err()
+        {
+            return Err(executor_down());
+        }
+        Ok(())
+    }
+
     /// Re-enable auto-cooling: the daemon resumes inferring the
     /// platform profile from the active TDP envelope.
     ///

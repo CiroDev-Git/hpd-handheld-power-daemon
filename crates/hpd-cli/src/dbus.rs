@@ -32,6 +32,11 @@ trait PowerDaemon {
     fn set_profile(&self, profile: &str) -> zbus::Result<()>;
     fn set_fan_auto(&self) -> zbus::Result<()>;
 
+    /// Unified cooling lever: set the cooling level (`silent`,
+    /// `balanced`, `aggressive`) — programs the matching platform
+    /// profile and fan curve together and latches manual cooling.
+    async fn set_cooling_level(&self, level: &str) -> zbus::Result<()>;
+
     /// Program a named custom fan curve (`silent`, `balanced`,
     /// `aggressive`). Resolved to the model's concrete curve by the
     /// daemon and re-applied across suspend/resume.
