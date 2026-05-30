@@ -315,11 +315,23 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
     Ok(())
 }
 
+/// Render a telemetry field, mapping the `i32::MIN` "unavailable"
+/// sentinel from `get_thermal_status` to `n/a`.
+fn fmt_telemetry(value: i32, unit: &str) -> String {
+    if value == i32::MIN {
+        "n/a".to_string()
+    } else {
+        format!("{}{}", value, unit)
+    }
+}
+
 async fn print_dashboard(proxy: &PowerDaemonProxy<'_>) -> zbus::Result<()> {
     let spl_watts = proxy.current_spl().await?;
     let profile = proxy.active_profile().await?;
     let charge_limit = proxy.charge_end_threshold().await?;
     let auto_cooling = proxy.auto_cooling().await?;
+    let fan_curve = proxy.fan_curve().await?;
+    let (cpu_temp, gpu_temp, cpu_rpm, gpu_rpm) = proxy.get_thermal_status().await?;
 
     let is_ac = proxy.is_ac_connected().await?;
     let power_icon = if is_ac {
@@ -339,6 +351,17 @@ async fn print_dashboard(proxy: &PowerDaemonProxy<'_>) -> zbus::Result<()> {
     println!("   ⚡ TDP (SPL):        {}W", spl_watts);
     println!("  ❄️ Cooling Profile:  {}", profile);
     println!("  🔁 Cooling Mode:     {}", cooling_mode);
+    println!("  🌀 Fan Curve:        {}", fan_curve);
+    println!(
+        "  🌡️ Temps:            CPU {} · GPU {}",
+        fmt_telemetry(cpu_temp, "°C"),
+        fmt_telemetry(gpu_temp, "°C")
+    );
+    println!(
+        "  💨 Fans:             CPU {} · GPU {}",
+        fmt_telemetry(cpu_rpm, " RPM"),
+        fmt_telemetry(gpu_rpm, " RPM")
+    );
     println!("  🔌 Power adapter:    {}", power_icon);
     println!("  🔋 Battery Limit:    {}%", charge_limit);
     println!("=======================================");

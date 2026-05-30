@@ -7,10 +7,12 @@
 #![allow(missing_docs)]
 
 use std::str::FromStr;
+use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, error};
 use zbus::interface;
 
+use hpd_capabilities::backend::HwBackend;
 use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
 use hpd_capabilities::power::PowerEnvelopeLimits;
 use hpd_capabilities::profile::ProfileName;
@@ -34,25 +36,37 @@ pub struct PowerDaemonInterface {
     tx: mpsc::Sender<Transition>,
     state_rx: watch::Receiver<ProfileState>,
     limits: PowerEnvelopeLimits,
+    /// Shared backend handle, used only to read live telemetry (fan RPM,
+    /// temperatures) on demand. Command mutations still flow through
+    /// `tx` into the executor — this handle is never used to write.
+    backend: Arc<dyn HwBackend>,
 }
 
 impl PowerDaemonInterface {
     /// Build the interface from the daemon's wiring. `tx` is the
     /// command lane into the [`Executor`](hpd_core::executor::Executor);
     /// `state_rx` is the live state mirror property getters read from;
-    /// `limits` is the immutable hardware envelope detected at startup.
+    /// `limits` is the immutable hardware envelope detected at startup;
+    /// `backend` is the shared handle used for live telemetry reads.
     pub fn new(
         tx: mpsc::Sender<Transition>,
         state_rx: watch::Receiver<ProfileState>,
         limits: PowerEnvelopeLimits,
+        backend: Arc<dyn HwBackend>,
     ) -> Self {
         Self {
             tx,
             state_rx,
             limits,
+            backend,
         }
     }
 }
+
+/// Sentinel returned in [`PowerDaemonInterface::get_thermal_status`] for
+/// a sensor or fan the hardware does not expose (or that failed to
+/// read). Distinct from `0`, which is a valid reading (a stopped fan).
+const TELEMETRY_UNAVAILABLE: i32 = i32::MIN;
 
 fn auth_denied() -> zbus::fdo::Error {
     zbus::fdo::Error::AuthFailed("Not authorized by polkit".into())
@@ -281,6 +295,38 @@ impl PowerDaemonInterface {
             return Err(executor_down());
         }
         Ok(())
+    }
+
+    /// Live thermal telemetry as a 4-tuple of whole units:
+    /// `(cpu_temp_c, gpu_temp_c, cpu_fan_rpm, gpu_fan_rpm)`.
+    ///
+    /// Read on demand straight from the backend, so callers
+    /// (`hpdctl status` / `monitor`) always see current values. Any
+    /// field equals `i32::MIN` when that sensor or fan is not exposed by
+    /// the hardware (or its read failed) — note `0` is a *valid* fan
+    /// reading (a stopped fan), so absence needs its own sentinel.
+    async fn get_thermal_status(&self) -> (i32, i32, i32, i32) {
+        let cpu_temp = self
+            .backend
+            .thermal()
+            .and_then(|t| t.get_cpu_temp().ok().flatten())
+            .map_or(TELEMETRY_UNAVAILABLE, |c| i32::from(c.0));
+        let gpu_temp = self
+            .backend
+            .thermal()
+            .and_then(|t| t.get_gpu_temp().ok().flatten())
+            .map_or(TELEMETRY_UNAVAILABLE, |c| i32::from(c.0));
+        let cpu_rpm = self
+            .backend
+            .fan()
+            .and_then(|f| f.get_cpu_fan_rpm().ok())
+            .map_or(TELEMETRY_UNAVAILABLE, |r| i32::from(r.0));
+        let gpu_rpm = self
+            .backend
+            .fan()
+            .and_then(|f| f.get_gpu_fan_rpm().ok().flatten())
+            .map_or(TELEMETRY_UNAVAILABLE, |r| i32::from(r.0));
+        (cpu_temp, gpu_temp, cpu_rpm, gpu_rpm)
     }
 
     /// Active fan-curve selection: a preset name (`silent`, `balanced`,

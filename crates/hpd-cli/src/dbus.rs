@@ -43,4 +43,8 @@ trait PowerDaemon {
     /// Active fan-curve selection: a preset name, `custom`, or `auto`.
     #[zbus(property)]
     fn fan_curve(&self) -> zbus::Result<String>;
+
+    /// Live thermal telemetry: `(cpu_temp_c, gpu_temp_c, cpu_fan_rpm,
+    /// gpu_fan_rpm)`. Any field is `i32::MIN` when unavailable.
+    fn get_thermal_status(&self) -> zbus::Result<(i32, i32, i32, i32)>;
 }

@@ -209,6 +209,11 @@ async fn run_real_main() -> Result<(), Box<dyn std::error::Error>> {
             // backend must skip it and read the `asus` node above.
             mock.create_file("sys/class/hwmon/hwmon3/name", "acpi_fan");
             mock.create_file("sys/class/hwmon/hwmon3/fan1_input", "9999");
+            // Temperature sensors: k10temp (CPU Tctl) + amdgpu (GPU edge).
+            mock.create_file("sys/class/hwmon/hwmon6/name", "k10temp");
+            mock.create_file("sys/class/hwmon/hwmon6/temp1_input", "61000");
+            mock.create_file("sys/class/hwmon/hwmon5/name", "amdgpu");
+            mock.create_file("sys/class/hwmon/hwmon5/temp1_input", "54000");
             // Custom fan-curve node (`asus_custom_fan_curve` hwmon),
             // seeded with the firmware default curve and auto mode.
             mock.create_file("sys/class/hwmon/hwmon1/name", "asus_custom_fan_curve");
@@ -271,6 +276,12 @@ where
             return Err(e.into());
         }
     };
+
+    // Share the backend behind an Arc so both the Executor (which owns
+    // the command path) and the D-Bus interface (which reads live fan /
+    // temperature telemetry on demand) can reach the same instance.
+    let backend: std::sync::Arc<dyn hpd_capabilities::backend::HwBackend> =
+        std::sync::Arc::new(backend);
 
     // systemd's StateDirectory= injects STATE_DIRECTORY (e.g. /var/lib/hpd).
     // Outside systemd we honour the config's `state_path`. /var/tmp is
@@ -416,7 +427,7 @@ where
 
     // 7. Executor instance
     let (executor, state_rx) = Executor::new(
-        backend,
+        backend.clone(),
         initial_state,
         limits.clone(),
         daemon_config.to_runtime(),
@@ -441,7 +452,8 @@ where
     // emitter task spawned below.
     let state_rx_for_watcher = state_rx.clone();
 
-    let dbus_interface = hpd_dbus::service::PowerDaemonInterface::new(tx.clone(), state_rx, limits);
+    let dbus_interface =
+        hpd_dbus::service::PowerDaemonInterface::new(tx.clone(), state_rx, limits, backend);
 
     // Session bus is only a valid target when the simulator path is
     // compiled in; production builds always bind to the system bus
