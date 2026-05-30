@@ -11,7 +11,7 @@ EC, (2) confirm the integration with profile / TDP / suspend / AC / boot
 behaves, (3) collect the temp↔RPM data needed to **calibrate the preset
 values** (they are a safe starting point, not a final tune).
 
-Most steps are read-only or trivially reversible (`fan curve reset`
+Most steps are read-only or trivially reversible (`cool reset`
 returns to firmware automatic). Nothing here writes raw PWM.
 
 > Shell note: the daemon/CLI commands are shell-agnostic. The raw
@@ -77,11 +77,11 @@ This is the core correctness check — **does the EC actually accept and
 respect our curve?**
 
 ```bash
-hpdctl fan curve get                 # baseline (likely "balanced" after install)
+hpdctl cool get                 # baseline (likely "balanced" after install)
 bash ~/curve.sh                      # snapshot firmware/active points
 
-hpdctl fan curve set aggressive
-hpdctl fan curve get                 # -> aggressive
+hpdctl cool set aggressive
+hpdctl cool get                 # -> aggressive
 bash ~/curve.sh                      # points must match the aggressive table
 ```
 
@@ -90,7 +90,7 @@ bash ~/curve.sh                      # points must match the aggressive table
 | 2.1 read-back | `pwm1` points match the aggressive CPU table (40/26 … 91/255) |
 | 2.2 enable | `pwm1_enable` and `pwm2_enable` are **1** (custom active) after a set |
 | 2.3 daemon log | `journalctl -u hpd -n20` shows no "Fan curve write failed" / read-back mismatch |
-| 2.4 reset | `hpdctl fan curve reset` → `pwm*_enable` back to **2** (firmware auto) |
+| 2.4 reset | `hpdctl cool reset` → `pwm*_enable` back to **2** (firmware auto) |
 
 > ⚠️ **`pwm_enable` assumption to confirm here:** we assume `1 = custom`,
 > `2 = automatic`. If after `set` the enable is not `1`, or the points do
@@ -110,19 +110,28 @@ Goal: collect the temp↔RPM response so we can finalize the preset
 values. Use a sustained load (a game, or `stress-ng --cpu 0 --timeout
 120s` if available).
 
-For each preset, run the load and sample every ~10 s for ~2 min:
+For each level, run a sustained load and sample temps + RPM. The repo
+ships a ready sampler — `docs/dev/cooling-sample.fish` — that reads the
+sensors straight from sysfs and prints the PEAK at the end:
 
-```bash
-# one-line sampler (bash): timestamp, CPU°C, GPU°C, CPU rpm, GPU rpm
-while true; do hpdctl status | awk '/Temps|Fans/{printf "%s ",$0} END{print ""}'; sleep 10; done
+```fish
+# terminal A — sustained all-core load:
+for i in (seq 8); yes >/dev/null & ; end
+# terminal B — set a level, then sample (repeat per level):
+hpdctl cool set silent     ; fish docs/dev/cooling-sample.fish
+hpdctl cool set balanced   ; fish docs/dev/cooling-sample.fish
+hpdctl cool set aggressive ; fish docs/dev/cooling-sample.fish
+hpdctl cool reset          ; fish docs/dev/cooling-sample.fish   # firmware baseline
+# stop the load:
+kill (jobs -p)
 ```
 
 | Preset | Command | Record |
 |---|---|---|
-| 3.1 silent | `hpdctl fan curve set silent` + load | peak CPU °C, peak RPM, noise (subjective) |
-| 3.2 balanced | `hpdctl fan curve set balanced` + load | same |
-| 3.3 aggressive | `hpdctl fan curve set aggressive` + load | same |
-| 3.4 firmware | `hpdctl fan curve reset` + load | same (the conservative baseline) |
+| 3.1 silent | `hpdctl cool set silent` + load | peak CPU °C, peak RPM, noise (subjective) |
+| 3.2 balanced | `hpdctl cool set balanced` + load | same |
+| 3.3 aggressive | `hpdctl cool set aggressive` + load | same |
+| 3.4 firmware | `hpdctl cool reset` + load | same (the conservative baseline) |
 
 **What we want to learn:**
 - Does `balanced` keep the CPU meaningfully cooler than firmware
@@ -134,36 +143,41 @@ Record the table; it drives the calibration commit.
 
 ---
 
-## 4. ⚠️ Profile change must NOT drop the curve (preservation)
+## 4. ⚠️ The curve must survive a profile change (preservation)
 
-The critical integration test. Hypothesis: writing the platform profile
-resets the EC's custom curve. The daemon should re-assert it.
+Two things: **(a)** does an *external* profile change reset the EC's
+curve (the hypothesis behind the re-assert), and **(b)** does `hpd` keep
+the curve alive across its own profile changes?
+
+**(a) Probe the EC directly, bypassing `hpd`** (the raw profile is no
+longer a CLI command, so write the sysfs node by hand):
 
 ```bash
-hpdctl fan curve set aggressive
-bash ~/curve.sh                      # pwm*_enable = 1, aggressive points
-
-# Force a raw profile change directly (advanced command):
-hpdctl fan profile performance
+hpdctl cool set aggressive
+bash ~/curve.sh                                          # enable=1, aggressive
+echo balanced | sudo tee /sys/firmware/acpi/platform_profile
 sleep 1
-bash ~/curve.sh                      # pwm*_enable STILL 1, points STILL aggressive?
-hpdctl fan curve get                 # still "aggressive"
+bash ~/curve.sh                                          # did pwm*_enable flip to 2?
+```
+
+**(b) `hpd`'s own path keeps profile + curve consistent:**
+
+```bash
+hpdctl cool set aggressive    # performance profile + aggressive curve
+hpdctl cool set silent        # hpd writes power-saver + silent
+bash ~/curve.sh               # enable=1 with the SILENT points (not dropped)
+hpdctl cool auto; hpdctl tdp set 8; sleep 1; bash ~/curve.sh   # curve followed the inferred profile
 ```
 
 | Check | Expect |
 |---|---|
-| 4.1 | after `fan profile performance`, `pwm*_enable` is still **1** and points unchanged |
-| 4.2 | `journalctl` shows an `ApplyFanCurve` re-apply right after the profile write |
-| 4.3 TDP-driven | `hpdctl cool auto` then `hpdctl tdp set <high>` (crosses a profile threshold) → curve still active |
-
-✅ Pass = the curve survives profile changes. **If 4.1 fails even with the
-re-assert** (enable flips to 2 *and stays* 2), the firmware reset is
-happening *after* our re-write — capture timing from the journal; we may
-need to re-apply with a small delay or re-order the effects.
+| 4.1 (a) | if `pwm*_enable` flips to **2** after the external sysfs write → the EC **does** reset the curve on a profile change → this is exactly why `hpd` re-asserts. If it stays **1**, the re-assert is harmless insurance. |
+| 4.2 (b) | after `hpd`'s own profile changes (`cool set`, or `cool auto` + `tdp set`), the curve is always `enable=1` with the expected points |
+| 4.3 | `journalctl -u hpd` shows an `ApplyFanCurve` right after each `ApplyPlatformProfile` |
 
 > This is the integration that makes the feature usable with the default
-> `fan_follows_tdp` auto-cooling: TDP changes nudge the profile constantly,
-> and the curve must not evaporate.
+> auto-cooling: TDP changes nudge the profile constantly, and the curve
+> must not evaporate.
 
 ---
 
@@ -172,12 +186,12 @@ need to re-apply with a small delay or re-order the effects.
 The original bug: fans blast at 100 % after waking. Fix: re-apply on resume.
 
 ```bash
-hpdctl fan curve set aggressive
+hpdctl cool set aggressive
 systemctl suspend                    # or close the lid / power button
 # … wake the device …
 sleep 2
 bash ~/curve.sh                      # enable=1, aggressive points restored?
-hpdctl fan curve get                 # "aggressive"
+hpdctl cool get                 # "aggressive"
 hpdctl status                        # fans sane, not pinned at max
 ```
 
@@ -189,22 +203,27 @@ hpdctl status                        # fans sane, not pinned at max
 
 ---
 
-## 6. `fan_curve_follows_profile` (hybrid mode)
+## 6. Profile ↔ curve coupling (the default)
+
+`fan_curve_follows_profile` is **on by default**, so a cooling level
+moves the platform profile and the fan curve together. Verify both move:
 
 ```bash
-sudoedit /etc/hpd/config.toml        # set: fan_curve_follows_profile = true
-systemctl reload hpd                 # SIGHUP hot-reload (no restart)
+# `cool set` moves both at once:
+hpdctl cool set silent     ; cat /sys/firmware/acpi/platform_profile ; hpdctl cool get  # power-saver / silent
+hpdctl cool set aggressive ; cat /sys/firmware/acpi/platform_profile ; hpdctl cool get  # performance / aggressive
 
-hpdctl fan profile power-saver ; hpdctl fan curve get   # -> silent
-hpdctl fan profile balanced    ; hpdctl fan curve get   # -> balanced
-hpdctl fan profile performance ; hpdctl fan curve get   # -> aggressive
+# auto mode: the curve follows the TDP-inferred profile
+hpdctl cool auto
+hpdctl tdp set 8  ; sleep 1 ; cat /sys/firmware/acpi/platform_profile ; hpdctl cool get  # low  → power-saver / silent
+hpdctl tdp set 30 ; sleep 1 ; cat /sys/firmware/acpi/platform_profile ; hpdctl cool get  # high → performance / aggressive
 ```
 
 | Check | Expect |
 |---|---|
-| 6.1 | each profile change swaps the matching curve preset |
-| 6.2 | with follows on, `fan curve reset` is overridden on the next profile change |
-| 6.3 | revert config + `systemctl reload hpd` → manual mode restored |
+| 6.1 | `cool set <level>` moves both the `platform_profile` and the curve |
+| 6.2 | in auto mode, a TDP change that crosses a threshold re-infers the profile *and* the curve together |
+| 6.3 (advanced) | with `fan_curve_follows_profile = false` (config), a raw D-Bus `set_profile` leaves the curve unchanged |
 
 ---
 
@@ -224,9 +243,9 @@ With auto-cooling + follows on, plugging AC ramps TDP→max→performance→aggr
 ## 8. Persistence across restart & reboot
 
 ```bash
-hpdctl fan curve set aggressive
+hpdctl cool set aggressive
 sudo systemctl restart hpd
-hpdctl fan curve get                 # still aggressive (from state.toml)
+hpdctl cool get                 # still aggressive (from state.toml)
 bash ~/curve.sh                      # re-written to EC on startup (enable=1)
 grep -i fan /var/lib/hpd/state.toml  # active_fan_curve persisted
 ```
@@ -244,7 +263,7 @@ grep -i fan /var/lib/hpd/state.toml  # active_fan_curve persisted
 
 | Step | Action | Expect |
 |---|---|---|
-| 9.1 | as a `wheel` user (device owner), `hpdctl fan curve set balanced` | **no password prompt** (49-hpd.rules grant) |
+| 9.1 | as a `wheel` user (device owner), `hpdctl cool set balanced` | **no password prompt** (49-hpd.rules grant) |
 | 9.2 | over SSH as the same wheel user | still no prompt (the rule keys on group, not session tier) |
 | 9.3 | as a non-wheel user | prompted to authenticate (`auth_admin_keep`); cached ~5 min after |
 | 9.4 | `pkaction --action-id dev.cirodev.hpd.set-fan-curve` | action is registered |
@@ -255,9 +274,9 @@ grep -i fan /var/lib/hpd/state.toml  # active_fan_curve persisted
 
 | Step | Action | Expect |
 |---|---|---|
-| 10.1 | `hpdctl fan curve set turbo` | clean error: "unknown fan curve preset 'turbo'", no state change |
-| 10.2 | `hpdctl fan curve reset` when already auto | no-op, no error |
-| 10.3 | `hpdctl fan curve set balanced` ×2 | second is a no-op (already active), no redundant write |
+| 10.1 | `hpdctl cool set turbo` | clean error: "unknown fan curve preset 'turbo'", no state change |
+| 10.2 | `hpdctl cool reset` when already auto | no-op, no error |
+| 10.3 | `hpdctl cool set balanced` ×2 | second is a no-op (already active), no redundant write |
 | 10.4 | kill the daemon mid-session (`sudo pkill -9 hpd-daemon`) while a curve is active | fans keep following the last curve (EC-mediated); `systemctl start hpd` re-applies |
 | 10.5 | `journalctl -u hpd -p warning` after the full run | no unexpected warnings/errors |
 
@@ -286,8 +305,8 @@ fan curve is irrelevant to the power measurement.
 set PPT /sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/current_value
 hpdctl tdp set 15; sleep 1
 echo "after tdp 15:        "(cat $PPT)
-hpdctl fan profile power-saver;  sleep 1; echo "after power-saver:   "(cat $PPT)
-hpdctl fan profile performance;  sleep 1; echo "after performance:   "(cat $PPT)
+echo power-saver | sudo tee /sys/firmware/acpi/platform_profile >/dev/null;  sleep 1; echo "after power-saver:   "(cat $PPT)
+echo performance | sudo tee /sys/firmware/acpi/platform_profile >/dev/null;  sleep 1; echo "after performance:   "(cat $PPT)
 ```
 
 On RC73XA all three read `15`: the asus-armoury attribute is untouched, so
@@ -303,8 +322,8 @@ for i in (seq 8); yes >/dev/null & ; end
 
 # Terminal 2 — fixed high TDP, compare sustained CPU temp per profile:
 hpdctl tdp set 30
-hpdctl fan profile power-saver;  sleep 25; hpdctl status | grep Temps
-hpdctl fan profile performance;  sleep 25; hpdctl status | grep Temps
+echo power-saver | sudo tee /sys/firmware/acpi/platform_profile >/dev/null;  sleep 25; hpdctl status | grep Temps
+echo performance | sudo tee /sys/firmware/acpi/platform_profile >/dev/null;  sleep 25; hpdctl status | grep Temps
 
 # stop the load:
 kill (jobs -p)
@@ -315,8 +334,8 @@ getting through. If `ryzenadj` is installed, read the real power directly
 instead of inferring from temperature:
 
 ```fish
-hpdctl fan profile power-saver;  sleep 20; ryzenadj -i | grep -Ei 'STAPM|PPT'
-hpdctl fan profile performance;  sleep 20; ryzenadj -i | grep -Ei 'STAPM|PPT'
+echo power-saver | sudo tee /sys/firmware/acpi/platform_profile >/dev/null;  sleep 20; ryzenadj -i | grep -Ei 'STAPM|PPT'
+echo performance | sudo tee /sys/firmware/acpi/platform_profile >/dev/null;  sleep 20; ryzenadj -i | grep -Ei 'STAPM|PPT'
 ```
 
 ### Verdict

@@ -82,7 +82,7 @@ enum Commands {
     /// A preset is a shortcut that picks a target SPL wattage for you:
     /// `eco` = minimum SPL, `balanced` = midpoint, `max` = maximum SPL.
     ///
-    /// This is NOT the same as the ACPI cooling profile (see `hpdctl fan`).
+    /// This is NOT the same as the cooling level (see `hpdctl cool`).
     /// With auto-cooling enabled the cooling profile follows the preset's
     /// TDP automatically.
     Preset {

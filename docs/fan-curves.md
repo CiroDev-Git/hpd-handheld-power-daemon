@@ -145,7 +145,7 @@ auto-points and the EC runs the control loop in firmware. Consequences:
   **last curve we wrote** — they do not freeze at a fixed duty or stop.
 - The presets keep a non-trivial duty floor at the low end, so the fans
   never fall to the firmware's near-silent ~1 % under sustained load.
-- `hpdctl fan curve reset` (or `ResetFanCurve` over D-Bus) writes
+- `hpdctl cool reset` (or `ResetFanCurve` over D-Bus) writes
   `pwmN_enable = 2`, handing control cleanly back to the firmware curve.
 
 ### 4. Verify every write (fail closed)
@@ -168,7 +168,8 @@ Cooling is presented as a single concept so users don't have to juggle
 - `fan_curve_follows_profile` defaults **on**, which is what keeps the
   profile and curve in lock-step (for both the `cool` command and
   auto-cooling). Advanced users set it `false` and drive the raw
-  `hpdctl fan profile …` / `hpdctl fan curve …` controls independently.
+  raw platform-profile / fan-curve controls independently over D-Bus
+  (`set_profile` / `set_fan_curve`).
 
 ## Calibration caveats
 

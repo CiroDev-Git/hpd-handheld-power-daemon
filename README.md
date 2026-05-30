@@ -210,7 +210,9 @@ level couples a profile with a curve rather than just a fan speed.
 
 See [`docs/fan-curves.md`](docs/fan-curves.md) for the thermal rationale
 and [`docs/dev/FAN_CURVE_TESTING.md`](docs/dev/FAN_CURVE_TESTING.md) for
-the on-device validation plan.
+the on-device validation plan. A plain-language explainer in Spanish
+(cooling, auto vs manual, the power gating) lives in
+[`docs/COOLING-es.md`](docs/COOLING-es.md).
 
 ---
 

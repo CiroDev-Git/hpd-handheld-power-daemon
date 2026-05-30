@@ -128,7 +128,7 @@ pub struct RuntimeConfig {
     /// fan-curve preset (PowerSaver→Silent, Balanced→Balanced,
     /// Performance→Aggressive), Armoury-Crate style. When `false`
     /// (default), the fan curve is an independent manual selection set
-    /// via `hpdctl fan curve set`. Hot-reloadable.
+    /// via `hpdctl cool set`. Hot-reloadable.
     pub fan_curve_follows_profile: bool,
 }
 
