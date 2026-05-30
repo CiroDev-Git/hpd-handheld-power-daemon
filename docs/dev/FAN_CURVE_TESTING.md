@@ -143,8 +143,8 @@ resets the EC's custom curve. The daemon should re-assert it.
 hpdctl fan curve set aggressive
 bash ~/curve.sh                      # pwm*_enable = 1, aggressive points
 
-# Force a profile change directly:
-hpdctl fan set performance
+# Force a raw profile change directly (advanced command):
+hpdctl fan profile performance
 sleep 1
 bash ~/curve.sh                      # pwm*_enable STILL 1, points STILL aggressive?
 hpdctl fan curve get                 # still "aggressive"
@@ -152,9 +152,9 @@ hpdctl fan curve get                 # still "aggressive"
 
 | Check | Expect |
 |---|---|
-| 4.1 | after `fan set performance`, `pwm*_enable` is still **1** and points unchanged |
+| 4.1 | after `fan profile performance`, `pwm*_enable` is still **1** and points unchanged |
 | 4.2 | `journalctl` shows an `ApplyFanCurve` re-apply right after the profile write |
-| 4.3 TDP-driven | `hpdctl fan auto` then `hpdctl tdp set <high>` (crosses a profile threshold) → curve still active |
+| 4.3 TDP-driven | `hpdctl cool auto` then `hpdctl tdp set <high>` (crosses a profile threshold) → curve still active |
 
 ✅ Pass = the curve survives profile changes. **If 4.1 fails even with the
 re-assert** (enable flips to 2 *and stays* 2), the firmware reset is
@@ -195,9 +195,9 @@ hpdctl status                        # fans sane, not pinned at max
 sudoedit /etc/hpd/config.toml        # set: fan_curve_follows_profile = true
 systemctl reload hpd                 # SIGHUP hot-reload (no restart)
 
-hpdctl fan set power-saver  ; hpdctl fan curve get   # -> silent
-hpdctl fan set balanced     ; hpdctl fan curve get   # -> balanced
-hpdctl fan set performance  ; hpdctl fan curve get   # -> aggressive
+hpdctl fan profile power-saver ; hpdctl fan curve get   # -> silent
+hpdctl fan profile balanced    ; hpdctl fan curve get   # -> balanced
+hpdctl fan profile performance ; hpdctl fan curve get   # -> aggressive
 ```
 
 | Check | Expect |
@@ -214,7 +214,7 @@ With auto-cooling + follows on, plugging AC ramps TDP→max→performance→aggr
 
 | Step | Action | Expect |
 |---|---|---|
-| 7.1 | ensure `fan auto` + `fan_curve_follows_profile=true` | — |
+| 7.1 | ensure `cool auto` + `fan_curve_follows_profile=true` (default) | — |
 | 7.2 | plug AC | TDP→max, profile→performance, curve→aggressive (`hpdctl status`) |
 | 7.3 | unplug AC | TDP restores DC target, profile/curve follow back down |
 | 7.4 | with follows **off** + a manual curve set | AC plug changes TDP/profile but the manual curve is **preserved** (re-asserted, not changed) |
@@ -273,7 +273,7 @@ Device: ROG Xbox Ally X RC73XA   Kernel: ____   hpd: feat/fan-curves @ ____
 §1 telemetry matches sysfs ......... PASS / FAIL  notes:
 §2 write + read-back ............... PASS / FAIL  pwm_enable on set = ___ (expect 1)
 §2 audible ramp up/down ............ PASS / FAIL
-§4 curve survives profile change ... PASS / FAIL  enable after fan set = ___
+§4 curve survives profile change ... PASS / FAIL  enable after fan profile = ___
 §5 curve restored on resume ........ PASS / FAIL
 §6 follows_profile ................. PASS / FAIL
 §7 AC chain ........................ PASS / FAIL

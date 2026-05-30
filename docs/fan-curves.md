@@ -157,15 +157,18 @@ purely additive at the capability layer: a backend without a
 programmable curve simply returns `None` and the daemon treats fan-curve
 effects as no-ops.
 
-### 5. Hybrid UX: manual presets + optional profile-follow
+### 5. One user-facing lever
 
-- **Manual (default):** `hpdctl fan curve set <silent|balanced|aggressive>`,
-  `hpdctl fan curve get`, `hpdctl fan curve reset`. The curve is an
-  independent lever.
-- **Profile-follow (opt-in):** set `fan_curve_follows_profile = true` and
-  every platform-profile change also swaps the matching curve preset
-  (`power-saver → silent`, `balanced → balanced`, `performance →
-  aggressive`), Armoury-Crate style.
+Cooling is presented as a single concept so users don't have to juggle
+"profile" vs "curve" vs "mode":
+
+- **`hpdctl cool set <silent|balanced|aggressive>`** sets the platform
+  profile *and* the matching fan curve together (manual cooling).
+- **`hpdctl cool auto`** lets the daemon infer the level from the TDP.
+- `fan_curve_follows_profile` defaults **on**, which is what keeps the
+  profile and curve in lock-step (for both the `cool` command and
+  auto-cooling). Advanced users set it `false` and drive the raw
+  `hpdctl fan profile …` / `hpdctl fan curve …` controls independently.
 
 ## Calibration caveats
 

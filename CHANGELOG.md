@@ -13,6 +13,22 @@ not part of the published repository.
 
 ## [Unreleased]
 
+### Changed
+
+- **Unified cooling into a single lever.** Cooling is now one concept:
+  `hpdctl cool set silent|balanced|aggressive` programs the platform
+  profile *and* the matching fan curve together, and `hpdctl cool auto`
+  lets the daemon pick the level from the TDP. The status dashboard
+  collapses the former three lines (cooling profile, cooling mode, fan
+  curve) into one `Cooling: <level> (auto|manual)`.
+  - `fan_curve_follows_profile` now defaults to **`true`** so the profile
+    and curve always move together; set it to `false` to drive the curve
+    independently (advanced).
+  - The raw controls remain for advanced use: `hpdctl fan profile
+    <power-saver|balanced|performance>` (renamed from `hpdctl fan set`)
+    and `hpdctl fan curve set|get|reset`. `hpdctl fan auto` is replaced by
+    `hpdctl cool auto`. New D-Bus method `SetCoolingLevel`.
+
 ### Added
 
 - **Custom fan curves (ASUS / ROG Xbox Ally X)** — the daemon can now
