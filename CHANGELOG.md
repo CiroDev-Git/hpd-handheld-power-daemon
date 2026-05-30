@@ -36,8 +36,17 @@ not part of the published repository.
     a platform-profile change also swaps the matching curve).
   - The active curve is re-applied on resume from suspend, fixing the
     bug where the fans could blast at full speed after wake.
+  - The active curve is also re-asserted after any platform-profile
+    change, because writing the ACPI profile can make the EC drop the
+    custom curve — so TDP auto-follow no longer silently loses it.
   - New L2 capability `FanCurveControl` + `fan_curve()` accessor on
     `HwBackend` (additive; existing backends default to `None`).
+- **Live fan & temperature telemetry** — `hpdctl status` / `monitor` now
+  show CPU/GPU temperatures and CPU/GPU fan RPM alongside the active fan
+  curve, via a new D-Bus `GetThermalStatus` method. This revives the
+  previously-unsurfaced `FanControl` read path and adds a new
+  `ThermalSensors` capability (CPU `k10temp` Tctl + GPU `amdgpu` edge,
+  located by hwmon name).
 
 ### Fixed
 

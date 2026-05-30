@@ -9,8 +9,12 @@ sysfs writes:
 
 - **TDP envelope** (SPL / SPPT / FPPT) — sustained and burst power limits.
 - **Platform / cooling profile** — `power-saver`, `balanced`, `performance`.
+- **Custom fan curves** — EC-mediated temperature→speed curves
+  (`silent` / `balanced` / `aggressive`) that cool harder than the
+  conservative firmware default. See [`docs/fan-curves.md`](docs/fan-curves.md).
 - **Battery charge threshold** — the upper SoC cap used to extend cell life.
-- **Fan telemetry** — read-only RPM reporting for the in-tree UIs.
+- **Fan & temperature telemetry** — read-only RPM and CPU/GPU temperature
+  reporting for the in-tree UIs.
 
 Everything sits behind a single D-Bus interface
 (`dev.cirodev.hpd.PowerDaemon1`) on the system bus, and a thin CLI
@@ -25,13 +29,16 @@ Everything sits behind a single D-Bus interface
 
 ## Hardware support
 
-| Vendor / model | Backend crate | TDP | Charge | Profile | Fan | Status |
-|---|---|:---:|:---:|:---:|:---:|---|
-| ASUS ROG Ally          | `hpd-backend-asus`   | ✅ | ✅ | ✅ | ✅ | **Stable** |
-| ASUS ROG Ally X        | `hpd-backend-asus`   | ✅ | ✅ | ✅ | ✅ | **Stable** |
-| ASUS ROG Xbox Ally X   | `hpd-backend-asus`   | ✅ | ✅ | ✅ | ✅ | **Stable** (primary test target — board `RC73XA`) |
-| Lenovo Legion Go       | —                    | — | — | — | — | Planned — no backend crate yet ([open an issue](https://github.com/CiroDev-Git/hpd-handheld-power-daemon/issues) to contribute) |
-| Valve Steam Deck       | —                    | — | — | — | — | Planned — no backend crate yet ([open an issue](https://github.com/CiroDev-Git/hpd-handheld-power-daemon/issues) to contribute) |
+Capability columns: **TDP**, **Charge** threshold, platform **Profile**,
+fan **Curve** (write), **Fan/Temp** telemetry (read).
+
+| Vendor / model | Backend crate | TDP | Charge | Profile | Curve | Fan/Temp | Status |
+|---|---|:---:|:---:|:---:|:---:|:---:|---|
+| ASUS ROG Ally          | `hpd-backend-asus`   | ✅ | ✅ | ✅ | ⚠️ | ✅ | **Stable** (curve presets shared, not yet model-calibrated) |
+| ASUS ROG Ally X        | `hpd-backend-asus`   | ✅ | ✅ | ✅ | ⚠️ | ✅ | **Stable** (curve presets shared, not yet model-calibrated) |
+| ASUS ROG Xbox Ally X   | `hpd-backend-asus`   | ✅ | ✅ | ✅ | ✅ | ✅ | **Stable** (primary test target — board `RC73XA`) |
+| Lenovo Legion Go       | —                    | — | — | — | — | — | Planned — no backend crate yet ([open an issue](https://github.com/CiroDev-Git/hpd-handheld-power-daemon/issues) to contribute) |
+| Valve Steam Deck       | —                    | — | — | — | — | — | Planned — no backend crate yet ([open an issue](https://github.com/CiroDev-Git/hpd-handheld-power-daemon/issues) to contribute) |
 
 Detection is driven by DMI (`/sys/class/dmi/id/`). Adding a new vendor
 means creating a sibling crate that implements the four L2 traits from
@@ -132,7 +139,7 @@ authenticate as an administrator (the `auth_admin` defaults in
 
 ```bash
 # Read current state
-hpdctl status                  # power target, profile, charge, AC
+hpdctl status                  # power target, profile, fan curve, temps, RPM, charge, AC
 hpdctl limits                  # hardware SPL/SPPT/FPPT range
 
 # Power envelope
@@ -143,6 +150,11 @@ hpdctl preset eco|balanced|max # presets relative to hardware range
 # Cooling profile (independent of TDP)
 hpdctl fan set power-saver|balanced|performance
 hpdctl fan auto                # re-bind cooling to follow TDP
+
+# Custom fan curve (EC-mediated; cools harder than firmware default)
+hpdctl fan curve set silent|balanced|aggressive
+hpdctl fan curve get           # active preset / custom / auto
+hpdctl fan curve reset         # hand control back to firmware automatic
 
 # Battery
 hpdctl charge set 80           # 20..=100, persisted across reboots
@@ -166,6 +178,33 @@ a cooling profile from the SPL fraction of the hardware range
 (`< 33% → power-saver`, `< 67% → balanced`, else `performance`). Setting
 the profile manually (`hpdctl profile …`) latches `fan_follows_tdp=false`
 until you call `hpdctl fan auto` again.
+
+### Cooling profile vs custom fan curve
+
+There are now *two* cooling levers, and they layer:
+
+- **Platform profile** (`hpdctl fan set …`) is the ACPI cooling hint.
+  Its built-in fan behaviour is whatever the firmware decides for that
+  profile — on the Ally family that is deliberately quiet.
+- **Custom fan curve** (`hpdctl fan curve set …`) overrides the firmware
+  fan behaviour with an explicit EC-mediated curve. While a custom curve
+  is active, *it* drives the fans, not the profile's built-in curve.
+
+Two important interactions handled by the daemon:
+
+- **Profile changes re-assert the curve.** Writing the platform profile
+  can make the EC drop the custom curve back to automatic, so the daemon
+  re-applies the active curve immediately after any profile change (and
+  after resume from suspend). You do not lose your curve when the TDP
+  auto-follow nudges the profile.
+- **`fan_curve_follows_profile`** (config, off by default) couples the
+  two on purpose: each profile then carries its matching curve preset
+  (`power-saver → silent`, `balanced → balanced`,
+  `performance → aggressive`).
+
+See [`docs/fan-curves.md`](docs/fan-curves.md) for the thermal rationale
+and [`docs/dev/FAN_CURVE_TESTING.md`](docs/dev/FAN_CURVE_TESTING.md) for
+the on-device validation plan.
 
 ---
 

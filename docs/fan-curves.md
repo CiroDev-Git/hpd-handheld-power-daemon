@@ -188,6 +188,35 @@ These presets are a **sensible starting point, not a final calibration**:
 Sustained full duty is safe for the hardware (the fans are rated for it);
 it is only louder.
 
+## Integration with the rest of the daemon
+
+The curve is not a bolted-on side feature — it threads through the
+existing cooling/power flows:
+
+- **Platform profile ↔ curve.** While a custom curve is active
+  (`pwm_enable = 1`), *the curve* drives the fans, overriding whatever
+  fan behaviour the ACPI `platform_profile` would have applied. Because
+  writing the profile can make the EC drop the custom curve back to
+  automatic, the reducer **re-asserts the active curve after every
+  `ApplyPlatformProfile`** (`reassert_curve_after_profile`), decoupled
+  from `fan_curve_follows_profile`. This is what keeps the curve alive
+  when the default `fan_follows_tdp` auto-cooling nudges the profile as
+  the TDP changes.
+- **Suspend/resume.** `SystemResumed` re-applies the active curve as a
+  final effect (the EC can reset it across suspend).
+- **AC plug/unplug.** Plugging AC ramps the TDP and, with auto-cooling
+  on, the profile — which (via the re-assert above, or
+  `fan_curve_follows_profile`) carries the curve along.
+- **Telemetry.** The daemon now surfaces live fan RPM (CPU/GPU) and
+  CPU/GPU temperatures over D-Bus (`GetThermalStatus`), shown in
+  `hpdctl status` / `monitor` alongside the active curve. This revived
+  the previously-unused `FanControl` read path and added a
+  `ThermalSensors` capability (`k10temp` Tctl + `amdgpu` edge, located by
+  hwmon name).
+
+On-device validation of all of the above is scripted in
+[`docs/dev/FAN_CURVE_TESTING.md`](dev/FAN_CURVE_TESTING.md).
+
 ## Where this lives in the code
 
 | Concern | Location |
