@@ -225,10 +225,19 @@ jobs:
       # ------------------------------------------------------------
       # Publish. RC tags create a Draft Release (invisible to
       # non-maintainers); stable tags create a Public Release.
+      #
+      # Token: prefer the RELEASE_PAT secret over GITHUB_TOKEN. A Release
+      # created with the built-in GITHUB_TOKEN does NOT emit a
+      # `release: published` event that can trigger other workflows
+      # (GitHub's anti-recursion rule), so aur-sync.yml would never fire.
+      # Creating it with a PAT makes the event chain to aur-sync.yml
+      # automatically. Falls back to GITHUB_TOKEN when RELEASE_PAT is
+      # unset — the Release still publishes, but AUR must be synced
+      # manually (workflow_dispatch). See docs/release/RELEASE_CHECKLIST.md.
       # ------------------------------------------------------------
       - name: Create GitHub Release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.parse.outputs.tag }}
           VERSION: ${{ steps.parse.outputs.version }}
           IS_PRERELEASE: ${{ steps.parse.outputs.is_prerelease }}
