@@ -9,9 +9,9 @@
 //! * **CPU/SoC** — `k10temp` hwmon, `temp1_input` (Tctl).
 //! * **GPU** — `amdgpu` hwmon, `temp1_input` (edge).
 //!
-//! Both are located by hwmon `name` (indices are not stable; see
-//! [`crate::hwmon`]) and read in millidegrees, divided down to whole
-//! degrees Celsius.
+//! Both are located by hwmon `name` (indices are not stable; see the
+//! crate's `hwmon` module) and read in millidegrees, divided down to
+//! whole degrees Celsius.
 
 use hpd_capabilities::thermal::ThermalSensors;
 use hpd_capabilities::units::{Celsius, PowerMilliwatts};
@@ -127,7 +127,10 @@ mod tests {
         mock.create_file("sys/class/hwmon/hwmon5/power1_input", "16088000"); // 16.088 W
         let backend = AsusThermalBackend::new(mock.clone());
         // microwatts → milliwatts
-        assert_eq!(backend.get_soc_power().unwrap(), Some(PowerMilliwatts(16088)));
+        assert_eq!(
+            backend.get_soc_power().unwrap(),
+            Some(PowerMilliwatts(16088))
+        );
     }
 
     #[test]

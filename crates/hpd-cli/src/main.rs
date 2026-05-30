@@ -339,8 +339,7 @@ async fn print_dashboard(proxy: &PowerDaemonProxy<'_>) -> zbus::Result<()> {
     let charge_limit = proxy.charge_end_threshold().await?;
     let auto_cooling = proxy.auto_cooling().await?;
     let fan_curve = proxy.fan_curve().await?;
-    let (cpu_temp, gpu_temp, cpu_rpm, gpu_rpm, soc_power_mw) =
-        proxy.get_thermal_status().await?;
+    let (cpu_temp, gpu_temp, cpu_rpm, gpu_rpm, soc_power_mw) = proxy.get_thermal_status().await?;
 
     let is_ac = proxy.is_ac_connected().await?;
     let power_icon = if is_ac {
@@ -368,7 +367,10 @@ async fn print_dashboard(proxy: &PowerDaemonProxy<'_>) -> zbus::Result<()> {
     println!("  🎮 Handheld Power Daemon Status 🎮  ");
     println!("=======================================");
     println!("   ⚡ Power:            {}", power_line);
-    println!("  🧊 Cooling:          {} ({})", cooling_level, cooling_mode);
+    println!(
+        "  🧊 Cooling:          {} ({})",
+        cooling_level, cooling_mode
+    );
     println!(
         "  🌡️ Temps:            CPU {} · GPU {}",
         fmt_telemetry(cpu_temp, "°C"),

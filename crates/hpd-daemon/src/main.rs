@@ -215,8 +215,8 @@ async fn run_real_main() -> Result<(), Box<dyn std::error::Error>> {
             mock.create_file("sys/class/hwmon/hwmon5/name", "amdgpu");
             mock.create_file("sys/class/hwmon/hwmon5/temp1_input", "54000");
             mock.create_file("sys/class/hwmon/hwmon5/power1_input", "16088000"); // 16.1 W
-            // Custom fan-curve node (`asus_custom_fan_curve` hwmon),
-            // seeded with the firmware default curve and auto mode.
+                                                                                 // Custom fan-curve node (`asus_custom_fan_curve` hwmon),
+                                                                                 // seeded with the firmware default curve and auto mode.
             mock.create_file("sys/class/hwmon/hwmon1/name", "asus_custom_fan_curve");
             for fan in [1u8, 2] {
                 mock.create_file(format!("sys/class/hwmon/hwmon1/pwm{fan}_enable"), "2");
@@ -346,9 +346,11 @@ where
     // transition enqueued below registers as a *change* and actually
     // writes the curve to the EC (a cold boot leaves the EC on its
     // conservative firmware default).
-    let boot_fan_curve = initial_state
-        .active_fan_curve
-        .or_else(|| daemon_config.default_fan_curve.map(FanCurveSelection::Preset));
+    let boot_fan_curve = initial_state.active_fan_curve.or_else(|| {
+        daemon_config
+            .default_fan_curve
+            .map(FanCurveSelection::Preset)
+    });
     initial_state.active_fan_curve = None;
 
     // 6. Create communication channels

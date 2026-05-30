@@ -1007,9 +1007,11 @@ mod tests {
             out.new_state.active_fan_curve,
             Some(FanCurveSelection::Preset(FanCurvePreset::Aggressive))
         );
-        assert!(out.effects.contains(&Effect::ApplyFanCurve(
-            FanCurveSelection::Preset(FanCurvePreset::Aggressive)
-        )));
+        assert!(out
+            .effects
+            .contains(&Effect::ApplyFanCurve(FanCurveSelection::Preset(
+                FanCurvePreset::Aggressive
+            ))));
     }
 
     #[test]
@@ -1055,9 +1057,11 @@ mod tests {
         assert!(out
             .effects
             .contains(&Effect::ApplyPlatformProfile(ProfileName::Performance)));
-        assert!(out.effects.contains(&Effect::ApplyFanCurve(
-            FanCurveSelection::Preset(FanCurvePreset::Aggressive)
-        )));
+        assert!(out
+            .effects
+            .contains(&Effect::ApplyFanCurve(FanCurveSelection::Preset(
+                FanCurvePreset::Aggressive
+            ))));
         // Curve write comes AFTER the profile write.
         let p = out
             .effects
@@ -1105,7 +1109,10 @@ mod tests {
             .iter()
             .position(|e| matches!(e, Effect::ApplyFanCurve(_)))
             .unwrap();
-        assert!(curve_idx > profile_idx, "curve must be re-applied AFTER the profile");
+        assert!(
+            curve_idx > profile_idx,
+            "curve must be re-applied AFTER the profile"
+        );
     }
 
     // ---------- ConfigReload (no-op at the reducer layer) ----------

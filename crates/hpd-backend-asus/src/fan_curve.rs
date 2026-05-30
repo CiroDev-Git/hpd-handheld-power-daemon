@@ -103,8 +103,8 @@ const fn preset_curves(preset: FanCurvePreset) -> (FanCurve, FanCurve) {
 /// [`FanCurveControl`] implementation for ASUS handhelds.
 ///
 /// Locates the `asus_custom_fan_curve` hwmon by `name` (never by index —
-/// see [`crate::hwmon`]) and programs the eight auto-points per fan,
-/// then reads them back to confirm the EC accepted the write.
+/// see the crate's `hwmon` module) and programs the eight auto-points
+/// per fan, then reads them back to confirm the EC accepted the write.
 pub struct AsusFanCurveBackend<S: SysfsIo> {
     sysfs: S,
 }
@@ -139,8 +139,10 @@ impl<S: SysfsIo> AsusFanCurveBackend<S> {
                 Self::point_path(base, fan, point, "temp"),
                 &p.temp_c.to_string(),
             )?;
-            self.sysfs
-                .write_string(Self::point_path(base, fan, point, "pwm"), &p.pwm.to_string())?;
+            self.sysfs.write_string(
+                Self::point_path(base, fan, point, "pwm"),
+                &p.pwm.to_string(),
+            )?;
         }
         Ok(())
     }
