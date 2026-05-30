@@ -4,6 +4,7 @@
 
 use crate::charge::ChargeControl;
 use crate::fan::FanControl;
+use crate::fan_curve::FanCurveControl;
 use crate::platform_profile::PlatformProfile;
 use crate::power::PowerEnvelope;
 
@@ -50,6 +51,13 @@ pub trait HwBackend: Send + Sync {
     /// that does not expose hwmon fan inputs the daemon can read.
     /// Default: `None`.
     fn fan(&self) -> Option<&dyn FanControl> {
+        None
+    }
+
+    /// Optional custom-fan-curve accessor. Returns `None` on hardware
+    /// that does not expose an EC-mediated programmable fan curve (e.g.
+    /// the `asus_custom_fan_curve` hwmon). Default: `None`.
+    fn fan_curve(&self) -> Option<&dyn FanCurveControl> {
         None
     }
 }
@@ -108,5 +116,6 @@ mod tests {
         assert!(b.charge().is_none());
         assert!(b.profile().is_none());
         assert!(b.fan().is_none());
+        assert!(b.fan_curve().is_none());
     }
 }

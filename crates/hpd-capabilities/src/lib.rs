@@ -4,10 +4,13 @@
 //!
 //! This crate sits at workspace layer **L2**. It owns:
 //!
-//! * The four capability traits an L1 backend must implement
+//! * The capability traits an L1 backend may implement
 //!   ([`charge::ChargeControl`], [`fan::FanControl`],
+//!   [`fan_curve::FanCurveControl`],
 //!   [`platform_profile::PlatformProfile`], [`power::PowerEnvelope`])
-//!   plus the blanket [`backend::HwBackend`] that requires all of them.
+//!   surfaced through the [`backend::HwBackend`] aggregate (only
+//!   [`power::PowerEnvelope`] is mandatory; the rest are optional
+//!   accessors).
 //! * The strongly-typed value types they exchange ([`units::PowerMilliwatts`],
 //!   [`units::Rpm`], [`power::PowerEnvelopeTarget`],
 //!   [`power::PowerEnvelopeLimits`], [`profile::ProfileName`], etc.).
@@ -27,6 +30,7 @@
 pub mod backend;
 pub mod charge;
 pub mod fan;
+pub mod fan_curve;
 pub mod platform_profile;
 pub mod power;
 pub mod probe;
