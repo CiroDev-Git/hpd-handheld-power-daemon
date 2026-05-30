@@ -9,6 +9,8 @@ Versión en inglés: [`MANUAL.md`](MANUAL.md).
 - [Las dos perillas: Potencia y Enfriamiento](#las-dos-perillas)
 - [Lista de comandos](#lista-de-comandos)
 - [Qué hace cada combinación](#qué-hace-cada-combinación)
+- [Cómo se asigna el cooling](#cómo-se-asigna-el-cooling-vos-nunca-seteás-el-profile-directo)
+- [Configuraciones recomendadas](#configuraciones-recomendadas)
 - [Leer el tablero (status)](#leer-el-tablero-status)
 - [Dibujar la curva del ventilador](#dibujar-la-curva-del-ventilador)
 - [Vida útil de la batería](#vida-útil-de-la-batería)
@@ -116,6 +118,62 @@ chip queda limitado y el TDP alto **no tiene efecto** (queda guardado pero
 inerte). Si querés que un TDP alto funcione de verdad, usá `cool auto` o
 `cool set aggressive`. **En modo auto esto nunca pasa**, porque el nivel
 siempre coincide con el TDP.
+
+## Cómo se asigna el cooling (vos nunca seteás el profile directo)
+
+Por debajo, un nivel de cooling son *dos* cosas que se escriben juntas: el
+**platform profile** ACPI (que gatea la potencia real) y la **curva del
+ventilador**. Vos nunca seteás el profile a mano; el daemon asigna las dos,
+siempre juntas, en estos momentos:
+
+| Cuándo | Qué setea el daemon |
+|---|---|
+| Corrés `cool set <nivel>` | Profile **y** curva → ese nivel (y pasa a manual). |
+| Corrés `cool auto` | Pasa a auto; el nivel se deriva del TDP actual. |
+| En **auto**, cambiás el TDP (`tdp set` / `preset`) | El nivel se re-deriva según dónde cae el TDP en el rango de tu hardware — `< 33 %` → silent, `33–67 %` → balanced, `> 67 %` → aggressive — y si cruza una franja, profile + curva se actualizan juntos. |
+| Volver de suspensión | Se re-aplican el profile + la curva activos (el firmware los puede perder al dormir). |
+| Enchufar AC | El TDP sube; en auto, el nivel lo sigue. |
+| Arranque | Se restaura tu último cooling guardado. |
+
+O sea, el platform profile **sí** es importante — es la palanca dominante
+de potencia (a un TDP fijo, el chip consume mucho menos en `silent` que en
+`aggressive`). Pero lo manejás a través del **nivel de cooling**, nunca
+directo. Ya no es un comando del CLI a propósito; la única forma de tocar el
+profile crudo *decoplado* de la curva es el método D-Bus avanzado
+`set_profile` con `fan_curve_follows_profile = false` — que el 99 % de los
+usuarios nunca necesita.
+
+## Configuraciones recomendadas
+
+### `tdp set` vs `preset` — cuándo usar cada uno
+
+- **`preset eco|balanced|max`** — rápido. Elige los watts **min / medio /
+  máx** del rango de tu hardware. Usalo cuando solo querés "bajo / medio /
+  alto" sin pensar en watts. En cooling auto, caen justo en silent /
+  balanced / aggressive.
+- **`tdp set <watts>`** — preciso. Poné un wattaje exacto cuando tenés un
+  presupuesto en mente (ej. `tdp set 12` para apuntar a más batería).
+
+### Combinaciones recomendadas
+
+| Objetivo | Setup | Resultado |
+|---|---|---|
+| **Que funcione solo (recomendado)** | `cool auto` + `preset balanced` (o dejar los defaults) | El cooling siempre coincide con la potencia; no hay que vigilar nada. |
+| **Máximo rendimiento** (dock / enchufado) | `cool set aggressive` + `preset max` (o `tdp set <alto>`) | Potencia full, fans al máximo, lo más fresco que el chip puede estar a tope (~95 °C). Ruidoso. |
+| **Silencioso y mucha batería** (lectura, video, emulación liviana) | `cool set silent` + `preset eco` | Poca potencia, silencioso, fresco, mucha batería. |
+| **Equilibrado de todos los días** | `cool auto` (el default) | El daemon elige el nivel según tu TDP. |
+
+### Checklist de "config perfecta"
+
+1. **Batería:** corré `hpdctl charge set 80` una vez — lo más importante
+   para la salud de la batería a largo plazo.
+2. **Dejá `cool auto`** salvo que tengas un motivo para fijar un nivel.
+3. Usá **`preset`** para cambios rápidos, **`tdp set`** para un wattaje exacto.
+4. Mirá `hpdctl status`: la línea **Power** muestra el consumo real al lado
+   de tu tope, así ves si estás limitado por potencia.
+5. **Evitá** manual `silent` + un TDP alto — es contradictorio (el nivel
+   bajo capa la potencia, así que el TDP alto no hace nada). Usá `cool auto`
+   o `cool set aggressive` cuando querés que los watts realmente apliquen.
 
 ## Leer el tablero (status)
 

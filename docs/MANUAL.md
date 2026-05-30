@@ -9,6 +9,8 @@ A Spanish version is at [`MANUAL-es.md`](MANUAL-es.md).
 - [The two knobs: Power and Cooling](#the-two-knobs)
 - [Command reference](#command-reference)
 - [What every combination does](#what-every-combination-does)
+- [How cooling gets assigned](#how-cooling-gets-assigned-you-never-set-the-profile-directly)
+- [Recommended setups](#recommended-setups)
 - [Reading the status dashboard](#reading-the-status-dashboard)
 - [Drawing the fan curve](#drawing-the-fan-curve)
 - [Battery longevity](#battery-longevity)
@@ -103,7 +105,7 @@ The two knobs interact. Here is the full picture:
 
 | You do | In **auto** cooling | In **manual** cooling |
 |---|---|---|
-| `tdp set` low | hp lowers the cooling level (quiet, cool) | TDP applies within your fixed level |
+| `tdp set` low | hpd lowers the cooling level (quiet, cool) | TDP applies within your fixed level |
 | `tdp set` high | hpd raises the cooling level (full power, strong fans) | **only fully applies if your level is `aggressive`** |
 | `cool set <level>` | switches to manual at that level | sets that level |
 | `cool auto` | (already auto) | back to auto |
@@ -115,6 +117,61 @@ clamped low and the high TDP simply does not take effect (it is stored
 but inert). If you want a high TDP to actually work, use `cool auto` or
 `cool set aggressive`. **In auto mode this never happens**, because the
 level always matches the TDP.
+
+## How cooling gets assigned (you never set the profile directly)
+
+Under the hood, a cooling level is *two* things written together — the
+ACPI **platform profile** (which gates real power) and the **fan curve**.
+You never set the profile by hand; the daemon assigns both, always
+together, at these moments:
+
+| When | What the daemon sets |
+|---|---|
+| You run `cool set <level>` | Profile **and** curve → that level (and switches to manual). |
+| You run `cool auto` | Switches to auto; the level is then derived from the current TDP. |
+| In **auto**, you change the TDP (`tdp set` / `preset`) | The level is re-derived from where the TDP sits in your hardware range — `< 33 %` → silent, `33–67 %` → balanced, `> 67 %` → aggressive — and if it crosses a band, the profile + curve both update. |
+| Resume from suspend | The active profile + curve are re-applied (the firmware can drop them across sleep). |
+| Plug in AC | The TDP ramps up; in auto, the level follows it. |
+| Boot | Your last saved cooling is restored. |
+
+So the platform profile **is** important — it is the dominant power lever
+(at a fixed TDP the chip draws far less on `silent` than on `aggressive`).
+But you steer it through the **cooling level**, never directly. It is no
+longer a CLI command on purpose; the only way to drive the raw profile
+*decoupled* from the curve is the advanced D-Bus `set_profile` method with
+`fan_curve_follows_profile = false` — which 99 % of users never need.
+
+## Recommended setups
+
+### `tdp set` vs `preset` — when to use which
+
+- **`preset eco|balanced|max`** — quick. Picks the **min / middle / max**
+  watts of your hardware range. Use it when you just want "low / medium /
+  high" without thinking in watts. In auto cooling these land exactly on
+  silent / balanced / aggressive.
+- **`tdp set <watts>`** — precise. Set an exact wattage when you have a
+  specific budget in mind (e.g. `tdp set 12` for a long-battery target).
+
+### Recommended combinations
+
+| Goal | Setup | Result |
+|---|---|---|
+| **Just works (recommended)** | `cool auto` + `preset balanced` (or leave the defaults) | Cooling always matches the power; nothing to babysit. |
+| **Max performance** (docked / plugged in) | `cool set aggressive` + `preset max` (or `tdp set <high>`) | Full power, fans maxed, the coolest the chip can be at full tilt (~95 °C). Loud. |
+| **Quiet & long battery** (reading, video, light emulation) | `cool set silent` + `preset eco` | Low power, quiet, cool, long battery. |
+| **Everyday balanced** | `cool auto` (the default) | The daemon picks the level from your TDP. |
+
+### The "perfect config" checklist
+
+1. **Battery:** run `hpdctl charge set 80` once — the single biggest thing
+   for long-term battery health.
+2. **Leave `cool auto`** unless you have a specific reason to pin a level.
+3. Use **`preset`** for quick changes, **`tdp set`** for an exact watt budget.
+4. Glance at `hpdctl status`: the **Power** line shows the actual draw next
+   to your cap, so you can tell whether you are power-limited.
+5. **Avoid** manual `silent` + a high TDP — it is contradictory (the low
+   level clamps the power, so the high TDP does nothing). Use `cool auto`
+   or `cool set aggressive` when you want the watts to actually land.
 
 ## Reading the status dashboard
 
