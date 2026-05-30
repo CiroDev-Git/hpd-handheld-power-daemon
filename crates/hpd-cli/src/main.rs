@@ -44,7 +44,9 @@ use std::process;
         hpdctl preset eco             Apply the lowest-power preset\n  \
         hpdctl charge set 80          Stop charging the battery at 80%\n  \
         hpdctl fan set performance    Force the performance cooling profile\n  \
-        hpdctl fan auto               Let the daemon pick cooling from TDP\n\
+        hpdctl fan auto               Let the daemon pick cooling from TDP\n  \
+        hpdctl fan curve set aggressive  Apply an aggressive custom fan curve\n  \
+        hpdctl fan curve reset        Return fan control to firmware auto\n\
         \n\
         Run `hpdctl <command> --help` for details on any command."
 )]
@@ -156,6 +158,30 @@ enum FanAction {
     },
     /// Re-enable automatic cooling (profile follows TDP)
     Auto,
+    /// Program a custom fan curve (silent, balanced, aggressive)
+    ///
+    /// Writes an EC-mediated temperature→speed curve that cools more
+    /// aggressively than the conservative firmware default, and is
+    /// re-applied automatically after suspend/resume. The curve is
+    /// safe: the embedded controller keeps running it even if the
+    /// daemon stops.
+    Curve {
+        #[clap(subcommand)]
+        action: FanCurveAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum FanCurveAction {
+    /// Apply a named curve preset: silent, balanced, or aggressive
+    Set {
+        #[arg(help = "Curve preset: silent (quiet), balanced (default), or aggressive (coolest)")]
+        preset: String,
+    },
+    /// Print the active fan curve (preset name, custom, or auto)
+    Get,
+    /// Hand fan control back to the firmware's automatic curve
+    Reset,
 }
 
 #[tokio::main]
@@ -267,6 +293,23 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
                 proxy.set_fan_auto().await?;
                 println!("🔄 Automatic fan control enabled (based on TDP).");
             }
+            FanAction::Curve { action } => match action {
+                FanCurveAction::Set { preset } => {
+                    if let Err(e) = proxy.set_fan_curve(&preset).await {
+                        eprintln!("❌ Error applying fan curve: {}", e);
+                    } else {
+                        println!("🌀 Fan curve set to: {}", preset);
+                    }
+                }
+                FanCurveAction::Get => {
+                    let curve = proxy.fan_curve().await?;
+                    println!("🌀 Active fan curve: {}", curve);
+                }
+                FanCurveAction::Reset => {
+                    proxy.reset_fan_curve().await?;
+                    println!("🔄 Fan curve reset to firmware automatic.");
+                }
+            },
         },
     }
     Ok(())

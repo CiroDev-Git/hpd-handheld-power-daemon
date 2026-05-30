@@ -31,4 +31,16 @@ trait PowerDaemon {
 
     fn set_profile(&self, profile: &str) -> zbus::Result<()>;
     fn set_fan_auto(&self) -> zbus::Result<()>;
+
+    /// Program a named custom fan curve (`silent`, `balanced`,
+    /// `aggressive`). Resolved to the model's concrete curve by the
+    /// daemon and re-applied across suspend/resume.
+    async fn set_fan_curve(&self, preset: &str) -> zbus::Result<()>;
+
+    /// Hand fan control back to the firmware's automatic curve.
+    async fn reset_fan_curve(&self) -> zbus::Result<()>;
+
+    /// Active fan-curve selection: a preset name, `custom`, or `auto`.
+    #[zbus(property)]
+    fn fan_curve(&self) -> zbus::Result<String>;
 }
