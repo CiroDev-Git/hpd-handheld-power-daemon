@@ -104,25 +104,20 @@ enum Commands {
     /// Same dashboard as `status` but redrawn once per second. Press
     /// Ctrl+C to exit.
     Monitor,
-    /// Cooling: pick how hard the device cools (the main lever)
+    /// Cooling: pick how hard the device cools (the one lever)
     ///
     /// `cool set <level>` programs the platform profile AND the fan curve
     /// together — one knob instead of three. `cool auto` lets the daemon
-    /// pick the level from the current TDP. Levels, quietest → coolest:
-    /// `silent`, `balanced`, `aggressive`.
+    /// pick the level from the current TDP; `cool reset` hands the fans
+    /// back to firmware control. Levels, quietest → coolest: `silent`,
+    /// `balanced`, `aggressive`.
+    ///
+    /// (The raw platform profile and fan curve remain available over
+    /// D-Bus for advanced/decoupled use; they are intentionally off the
+    /// CLI to keep cooling a single concept.)
     Cool {
         #[clap(subcommand)]
         action: CoolAction,
-    },
-    /// Advanced: raw platform profile and fan-curve controls
-    ///
-    /// Most users want `cool` instead. These expose the underlying ACPI
-    /// platform profile and the fan curve independently, for when you
-    /// need to decouple them (set `fan_curve_follows_profile = false` in
-    /// the config first to stop a profile change from moving the curve).
-    Fan {
-        #[clap(subcommand)]
-        action: FanAction,
     },
 }
 
@@ -166,44 +161,10 @@ enum CoolAction {
     },
     /// Let the daemon pick the cooling level from the current TDP
     Auto,
+    /// Hand the fans back to the firmware's automatic curve
+    Reset,
     /// Show the current cooling level and mode
     Get,
-}
-
-#[derive(Subcommand)]
-enum FanAction {
-    /// (Advanced) Hold a raw ACPI platform profile
-    ///
-    /// Pins the platform profile and disables auto-cooling. Prefer
-    /// `hpdctl cool set` unless you specifically need the raw profile.
-    Profile {
-        #[arg(help = "Platform profile: power-saver, balanced, or performance")]
-        profile: String,
-    },
-    /// Program a custom fan curve (silent, balanced, aggressive)
-    ///
-    /// Writes an EC-mediated temperature→speed curve that cools more
-    /// aggressively than the conservative firmware default, and is
-    /// re-applied automatically after suspend/resume. The curve is
-    /// safe: the embedded controller keeps running it even if the
-    /// daemon stops.
-    Curve {
-        #[clap(subcommand)]
-        action: FanCurveAction,
-    },
-}
-
-#[derive(Subcommand)]
-enum FanCurveAction {
-    /// Apply a named curve preset: silent, balanced, or aggressive
-    Set {
-        #[arg(help = "Curve preset: silent (quiet), balanced (default), or aggressive (coolest)")]
-        preset: String,
-    },
-    /// Print the active fan curve (preset name, custom, or auto)
-    Get,
-    /// Hand fan control back to the firmware's automatic curve
-    Reset,
 }
 
 #[tokio::main]
@@ -317,6 +278,10 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
                 proxy.set_fan_auto().await?;
                 println!("🔄 Automatic cooling enabled (follows TDP).");
             }
+            CoolAction::Reset => {
+                proxy.reset_fan_curve().await?;
+                println!("🔄 Fans handed back to firmware automatic control.");
+            }
             CoolAction::Get => {
                 let level = proxy.fan_curve().await?;
                 let mode = if proxy.auto_cooling().await? {
@@ -326,29 +291,6 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
                 };
                 println!("🧊 Cooling: {} ({})", level, mode);
             }
-        },
-        Commands::Fan { action } => match action {
-            FanAction::Profile { profile } => {
-                proxy.set_profile(&profile).await?;
-                println!("❄️ Platform profile manually changed to: {}", profile);
-            }
-            FanAction::Curve { action } => match action {
-                FanCurveAction::Set { preset } => {
-                    if let Err(e) = proxy.set_fan_curve(&preset).await {
-                        eprintln!("❌ Error applying fan curve: {}", e);
-                    } else {
-                        println!("🌀 Fan curve set to: {}", preset);
-                    }
-                }
-                FanCurveAction::Get => {
-                    let curve = proxy.fan_curve().await?;
-                    println!("🌀 Active fan curve: {}", curve);
-                }
-                FanCurveAction::Reset => {
-                    proxy.reset_fan_curve().await?;
-                    println!("🔄 Fan curve reset to firmware automatic.");
-                }
-            },
         },
     }
     Ok(())

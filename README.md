@@ -147,14 +147,14 @@ hpdctl tdp set 18              # smart mode: SPL=18W, SPPT/FPPT derived
 hpdctl tdp get
 hpdctl preset eco|balanced|max # presets relative to hardware range
 
-# Cooling — one lever (profile + fan curve together)
+# Cooling — one lever (platform profile + fan curve together)
 hpdctl cool set silent|balanced|aggressive
 hpdctl cool auto               # let the daemon pick the level from TDP
+hpdctl cool reset              # hand the fans back to firmware control
 hpdctl cool get                # current level + mode
 
-# Advanced: raw platform profile / fan curve (decoupled)
-hpdctl fan profile power-saver|balanced|performance
-hpdctl fan curve set|get|reset silent|balanced|aggressive
+# (The raw platform profile and fan curve are available over D-Bus —
+#  set_profile / set_fan_curve — for advanced/decoupled use.)
 
 # Battery
 hpdctl charge set 80           # 20..=100, persisted across reboots
@@ -200,7 +200,13 @@ The daemon keeps the two in sync for you:
   after resume from suspend — you never silently lose it.
 - **`fan_curve_follows_profile`** (config, **on by default**) is what
   ties them together. Set it to `false` only if you want to drive the raw
-  `hpdctl fan profile …` and `hpdctl fan curve …` controls independently.
+  platform profile and fan curve independently over D-Bus (`set_profile`
+  / `set_fan_curve`).
+
+The platform profile is not cosmetic: on the Ally family it gates the
+*real* power the chip may draw (measured: ~36 °C swing between
+`power-saver` and `performance` at a fixed TDP), which is why a cooling
+level couples a profile with a curve rather than just a fan speed.
 
 See [`docs/fan-curves.md`](docs/fan-curves.md) for the thermal rationale
 and [`docs/dev/FAN_CURVE_TESTING.md`](docs/dev/FAN_CURVE_TESTING.md) for
