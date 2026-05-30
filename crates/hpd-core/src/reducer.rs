@@ -111,7 +111,7 @@ pub fn reduce(
 
                 effects.push(Effect::ApplyPlatformProfile(new_profile));
                 // Hybrid: when the curve tracks the profile, swap it too.
-                maybe_follow_curve(&mut new_state, &mut effects, config);
+                reassert_curve_after_profile(&mut new_state, &mut effects, config);
                 effects.push(Effect::PersistState);
             }
         }
@@ -290,7 +290,7 @@ fn apply_target_and_profile(
                 effects.push(Effect::ApplyPlatformProfile(inferred_profile));
                 // Hybrid: keep the fan curve in lock-step with the
                 // inferred cooling profile when the operator opted in.
-                maybe_follow_curve(&mut new_state, &mut effects, config);
+                reassert_curve_after_profile(&mut new_state, &mut effects, config);
             }
         }
 
@@ -312,25 +312,39 @@ fn curve_preset_for_profile(profile: &ProfileName) -> Option<FanCurvePreset> {
     }
 }
 
-/// When `fan_curve_follows_profile` is enabled, program the curve preset
-/// that matches `new_state.active_profile`. Mutates `new_state` and
-/// appends an `ApplyFanCurve` effect only when the selection actually
-/// changes, so a no-op profile re-application stays effect-free. The
-/// caller is responsible for the surrounding `PersistState`.
-fn maybe_follow_curve(
+/// Re-assert the fan curve after a platform-profile change. Call this
+/// whenever an `ApplyPlatformProfile` effect was just emitted.
+///
+/// Two jobs, both ending in an unconditional `ApplyFanCurve`:
+///
+/// * **Follow** (`fan_curve_follows_profile` on) — switch the active
+///   curve to the preset matching the new profile and re-apply it.
+/// * **Preserve** (the default) — re-apply the *currently active* curve
+///   unchanged. Writing the ACPI `platform_profile` can make the EC drop
+///   the custom curve back to its automatic mode (the same failure mode
+///   as suspend/resume), so we must re-write our curve afterwards or it
+///   is silently lost. A no-op when no curve is managed (`None`).
+///
+/// The re-apply is intentionally unconditional (not gated on "selection
+/// changed") precisely because the EC may have reset a curve that is, by
+/// our bookkeeping, unchanged. The caller owns the surrounding
+/// `PersistState`.
+fn reassert_curve_after_profile(
     new_state: &mut ProfileState,
     effects: &mut Vec<Effect>,
     config: &RuntimeConfig,
 ) {
-    if !config.fan_curve_follows_profile {
-        return;
+    if config.fan_curve_follows_profile {
+        if let Some(preset) = curve_preset_for_profile(&new_state.active_profile) {
+            let selection = FanCurveSelection::Preset(preset);
+            new_state.active_fan_curve = Some(selection);
+            effects.push(Effect::ApplyFanCurve(selection));
+            return;
+        }
+        // Custom vendor profile has no companion preset — fall through
+        // and preserve whatever curve is currently active.
     }
-    let Some(preset) = curve_preset_for_profile(&new_state.active_profile) else {
-        return;
-    };
-    let selection = FanCurveSelection::Preset(preset);
-    if new_state.active_fan_curve != Some(selection) {
-        new_state.active_fan_curve = Some(selection);
+    if let Some(selection) = new_state.active_fan_curve {
         effects.push(Effect::ApplyFanCurve(selection));
     }
 }
@@ -987,6 +1001,40 @@ mod tests {
             .effects
             .iter()
             .any(|e| matches!(e, Effect::ApplyFanCurve(_))));
+    }
+
+    #[test]
+    fn test_profile_change_reasserts_active_curve_even_with_follow_disabled() {
+        // Preservation: writing the platform profile can make the EC drop
+        // the custom curve, so a profile change must re-apply the active
+        // curve UNCHANGED even when fan_curve_follows_profile is off.
+        use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
+        let sel = FanCurveSelection::Preset(FanCurvePreset::Silent);
+        let mut state = setup_state();
+        state.active_fan_curve = Some(sel);
+        let out = reduce(
+            &state,
+            Transition::SetProfile(ProfileName::Performance),
+            &setup_limits(),
+            &setup_config(), // follows disabled
+        )
+        .unwrap();
+        // Curve selection is preserved, not changed to a matching preset.
+        assert_eq!(out.new_state.active_fan_curve, Some(sel));
+        // But it IS re-applied to the hardware after the profile write.
+        assert!(out.effects.contains(&Effect::ApplyFanCurve(sel)));
+        // Ordering: the curve re-apply comes after the profile write.
+        let profile_idx = out
+            .effects
+            .iter()
+            .position(|e| matches!(e, Effect::ApplyPlatformProfile(_)))
+            .unwrap();
+        let curve_idx = out
+            .effects
+            .iter()
+            .position(|e| matches!(e, Effect::ApplyFanCurve(_)))
+            .unwrap();
+        assert!(curve_idx > profile_idx, "curve must be re-applied AFTER the profile");
     }
 
     // ---------- ConfigReload (no-op at the reducer layer) ----------
