@@ -3,6 +3,7 @@
 //! Every external event that can mutate the daemon's state goes
 //! through one of these variants.
 
+use hpd_capabilities::fan_curve::FanCurveSelection;
 use hpd_capabilities::power::PowerEnvelopeTarget;
 use hpd_capabilities::profile::{ProfileName, RuntimeConfig, TdpPreset};
 
@@ -41,6 +42,12 @@ pub enum Transition {
     SystemResumed,
     /// Re-bind cooling-profile inference to the TDP envelope.
     EnableFanAuto,
+    /// Program a custom fan curve (named preset or explicit curves).
+    /// The backend resolves presets to its model's concrete points and
+    /// reads them back to confirm the EC accepted the write.
+    SetFanCurve(FanCurveSelection),
+    /// Hand fan control back to the firmware's automatic curve.
+    ResetFanCurve,
     /// Hot-reload of runtime-tunable config. Intercepted by the Executor
     /// before `reduce()` is called: the executor swaps its own
     /// `RuntimeConfig` and the next transition uses the new values. The

@@ -202,6 +202,37 @@ impl<B: HwBackend> Executor<B> {
                     debug!("Charge threshold applied successfully");
                 }
             }
+            Effect::ApplyFanCurve(selection) => {
+                let Some(curve_cap) = self.backend.fan_curve() else {
+                    debug!(
+                        effect = "ApplyFanCurve",
+                        "Backend does not expose FanCurveControl; ignoring"
+                    );
+                    return;
+                };
+                // No rollback path: the backend reads the curve back and
+                // fails closed if the EC rejected it, and the EC keeps
+                // running the last good curve regardless. Log and move on.
+                if let Err(e) = curve_cap.apply(&selection) {
+                    error!(effect = "ApplyFanCurve", error = %e, "Fan curve write failed");
+                } else {
+                    debug!("Fan curve applied successfully");
+                }
+            }
+            Effect::ResetFanCurve => {
+                let Some(curve_cap) = self.backend.fan_curve() else {
+                    debug!(
+                        effect = "ResetFanCurve",
+                        "Backend does not expose FanCurveControl; ignoring"
+                    );
+                    return;
+                };
+                if let Err(e) = curve_cap.reset_to_auto() {
+                    error!(effect = "ResetFanCurve", error = %e, "Fan curve reset failed");
+                } else {
+                    debug!("Fan curve reset to firmware auto");
+                }
+            }
             Effect::PersistState => {
                 let current_state = self.state_tx.borrow().clone();
                 self.persister.save(&current_state).await;

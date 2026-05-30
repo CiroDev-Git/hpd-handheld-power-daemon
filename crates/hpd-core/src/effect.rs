@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use hpd_capabilities::fan_curve::FanCurveSelection;
 use hpd_capabilities::power::PowerEnvelopeTarget;
 use hpd_capabilities::profile::ProfileName;
 
@@ -17,6 +18,11 @@ pub enum Effect {
     ApplyPlatformProfile(ProfileName),
     /// Write the battery charge end threshold to the L1 backend.
     ApplyChargeThreshold(u8),
+    /// Program a custom fan curve into the EC via the L1 backend. The
+    /// backend resolves a `Preset` to its model's concrete curves.
+    ApplyFanCurve(FanCurveSelection),
+    /// Hand fan control back to the firmware's automatic curve.
+    ResetFanCurve,
     /// Flush the current `ProfileState` to disk via the persister.
     PersistState,
 }

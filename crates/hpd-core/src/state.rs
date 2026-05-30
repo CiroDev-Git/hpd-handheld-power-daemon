@@ -2,6 +2,7 @@
 
 //! Persistent state of the daemon.
 
+use hpd_capabilities::fan_curve::FanCurveSelection;
 use hpd_capabilities::power::PowerEnvelopeTarget;
 use hpd_capabilities::profile::ProfileName;
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,15 @@ pub struct ProfileState {
     /// Last envelope used while running on battery, restored on AC
     /// unplug. `None` until the first AC plug event mutates it.
     pub last_dc_target: Option<PowerEnvelopeTarget>,
+
+    /// Active custom fan-curve selection. `None` means the firmware's
+    /// automatic curve is in charge (the daemon is not managing the fan
+    /// curve). Re-applied on resume so a suspend/resume cycle never
+    /// leaves the EC running a stale or maxed-out curve. Defaults to
+    /// `None` so state files written before this field existed load
+    /// cleanly as "firmware auto".
+    #[serde(default)]
+    pub active_fan_curve: Option<FanCurveSelection>,
 
     /// Whether AC is currently connected. Skipped during
     /// (de)serialisation — at boot we always re-query the backend

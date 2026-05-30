@@ -4,9 +4,10 @@
 
 use tracing::info;
 
+use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
 use hpd_capabilities::power::PowerEnvelopeLimits;
 use hpd_capabilities::power::PowerEnvelopeTarget;
-use hpd_capabilities::profile::{ProfileThresholds, RuntimeConfig, TdpPreset};
+use hpd_capabilities::profile::{ProfileName, RuntimeConfig, TdpPreset};
 use hpd_capabilities::units::PowerMilliwatts;
 use hpd_error::HpdError;
 
@@ -91,12 +92,7 @@ pub fn reduce(
 
             validate_power_envelope(&new_target)?;
 
-            return apply_target_and_profile(
-                state,
-                new_target,
-                device_limits,
-                &config.profile_thresholds,
-            );
+            return apply_target_and_profile(state, new_target, device_limits, config);
         }
 
         // -----------------------------------------------------
@@ -105,12 +101,7 @@ pub fn reduce(
         Transition::SetEnvelope(new_target) => {
             validate_power_envelope(&new_target)?;
 
-            return apply_target_and_profile(
-                state,
-                new_target,
-                device_limits,
-                &config.profile_thresholds,
-            );
+            return apply_target_and_profile(state, new_target, device_limits, config);
         }
 
         Transition::SetProfile(new_profile) => {
@@ -119,6 +110,8 @@ pub fn reduce(
                 new_state.fan_follows_tdp = false;
 
                 effects.push(Effect::ApplyPlatformProfile(new_profile));
+                // Hybrid: when the curve tracks the profile, swap it too.
+                maybe_follow_curve(&mut new_state, &mut effects, config);
                 effects.push(Effect::PersistState);
             }
         }
@@ -210,14 +203,38 @@ pub fn reduce(
 
         Transition::SystemResumed => {
             info!("System resumed: reapplying last known config");
+            let mut effects = vec![
+                Effect::ApplyPowerEnvelope(state.power_target.clone()),
+                Effect::ApplyPlatformProfile(state.active_profile.clone()),
+                Effect::ApplyChargeThreshold(state.charge_end_threshold),
+            ];
+            // Re-apply the managed fan curve: the EC can drop or reset
+            // the custom curve across suspend (the "fans blast at 100%
+            // on resume" bug). If we are not managing the curve
+            // (`None`), leave firmware auto alone.
+            if let Some(ref selection) = state.active_fan_curve {
+                effects.push(Effect::ApplyFanCurve(*selection));
+            }
             return Ok(ReducerOutput {
                 new_state: state.clone(),
-                effects: vec![
-                    Effect::ApplyPowerEnvelope(state.power_target.clone()),
-                    Effect::ApplyPlatformProfile(state.active_profile.clone()),
-                    Effect::ApplyChargeThreshold(state.charge_end_threshold),
-                ],
+                effects,
             });
+        }
+
+        Transition::SetFanCurve(selection) => {
+            if new_state.active_fan_curve != Some(selection) {
+                new_state.active_fan_curve = Some(selection);
+                effects.push(Effect::ApplyFanCurve(selection));
+                effects.push(Effect::PersistState);
+            }
+        }
+
+        Transition::ResetFanCurve => {
+            if new_state.active_fan_curve.is_some() {
+                new_state.active_fan_curve = None;
+                effects.push(Effect::ResetFanCurve);
+                effects.push(Effect::PersistState);
+            }
         }
 
         Transition::EnableFanAuto => {
@@ -254,7 +271,7 @@ fn apply_target_and_profile(
     current_state: &ProfileState,
     new_target: PowerEnvelopeTarget,
     device_limits: &PowerEnvelopeLimits,
-    thresholds: &ProfileThresholds,
+    config: &RuntimeConfig,
 ) -> Result<ReducerOutput, HpdError> {
     let mut new_state = current_state.clone();
     let mut effects = Vec::new();
@@ -265,11 +282,15 @@ fn apply_target_and_profile(
 
         // Auto-Profile
         if new_state.fan_follows_tdp {
-            let inferred_profile = infer_profile_from_spl(&new_target, device_limits, thresholds);
+            let inferred_profile =
+                infer_profile_from_spl(&new_target, device_limits, &config.profile_thresholds);
 
             if new_state.active_profile != inferred_profile {
                 new_state.active_profile = inferred_profile.clone();
                 effects.push(Effect::ApplyPlatformProfile(inferred_profile));
+                // Hybrid: keep the fan curve in lock-step with the
+                // inferred cooling profile when the operator opted in.
+                maybe_follow_curve(&mut new_state, &mut effects, config);
             }
         }
 
@@ -277,6 +298,41 @@ fn apply_target_and_profile(
     }
 
     Ok(ReducerOutput { new_state, effects })
+}
+
+/// Map a platform profile to its companion fan-curve preset. `Custom`
+/// vendor profiles have no canonical curve, so they leave the fan curve
+/// untouched.
+fn curve_preset_for_profile(profile: &ProfileName) -> Option<FanCurvePreset> {
+    match profile {
+        ProfileName::PowerSaver => Some(FanCurvePreset::Silent),
+        ProfileName::Balanced => Some(FanCurvePreset::Balanced),
+        ProfileName::Performance => Some(FanCurvePreset::Aggressive),
+        ProfileName::Custom(_) => None,
+    }
+}
+
+/// When `fan_curve_follows_profile` is enabled, program the curve preset
+/// that matches `new_state.active_profile`. Mutates `new_state` and
+/// appends an `ApplyFanCurve` effect only when the selection actually
+/// changes, so a no-op profile re-application stays effect-free. The
+/// caller is responsible for the surrounding `PersistState`.
+fn maybe_follow_curve(
+    new_state: &mut ProfileState,
+    effects: &mut Vec<Effect>,
+    config: &RuntimeConfig,
+) {
+    if !config.fan_curve_follows_profile {
+        return;
+    }
+    let Some(preset) = curve_preset_for_profile(&new_state.active_profile) else {
+        return;
+    };
+    let selection = FanCurveSelection::Preset(preset);
+    if new_state.active_fan_curve != Some(selection) {
+        new_state.active_fan_curve = Some(selection);
+        effects.push(Effect::ApplyFanCurve(selection));
+    }
 }
 
 #[cfg(test)]
@@ -304,6 +360,7 @@ mod tests {
             charge_end_threshold: DEFAULT_CHARGE_THRESHOLD,
             fan_follows_tdp: true,
             last_dc_target: None,
+            active_fan_curve: None,
         }
     }
 
@@ -420,6 +477,7 @@ mod tests {
             charge_end_threshold: 80,
             fan_follows_tdp: true,
             last_dc_target: None,
+            active_fan_curve: None,
         };
 
         let output = reduce(&state, Transition::AcPowerChanged(true), &limits, &config)
@@ -793,6 +851,142 @@ mod tests {
             "Shutdown must not mutate ProfileState"
         );
         assert_eq!(out.effects, vec![Effect::PersistState]);
+    }
+
+    // ---------- Fan curve ----------
+
+    #[test]
+    fn test_set_fan_curve_applies_and_persists_when_changed() {
+        use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
+        let state = setup_state(); // active_fan_curve = None
+        let sel = FanCurveSelection::Preset(FanCurvePreset::Balanced);
+        let out = reduce(
+            &state,
+            Transition::SetFanCurve(sel),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert_eq!(out.new_state.active_fan_curve, Some(sel));
+        assert_eq!(
+            out.effects,
+            vec![Effect::ApplyFanCurve(sel), Effect::PersistState]
+        );
+    }
+
+    #[test]
+    fn test_set_fan_curve_is_no_op_when_unchanged() {
+        use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
+        let sel = FanCurveSelection::Preset(FanCurvePreset::Aggressive);
+        let mut state = setup_state();
+        state.active_fan_curve = Some(sel);
+        let out = reduce(
+            &state,
+            Transition::SetFanCurve(sel),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert_eq!(out.new_state, state);
+        assert!(out.effects.is_empty());
+    }
+
+    #[test]
+    fn test_reset_fan_curve_clears_and_emits_reset() {
+        use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
+        let mut state = setup_state();
+        state.active_fan_curve = Some(FanCurveSelection::Preset(FanCurvePreset::Silent));
+        let out = reduce(
+            &state,
+            Transition::ResetFanCurve,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert_eq!(out.new_state.active_fan_curve, None);
+        assert_eq!(
+            out.effects,
+            vec![Effect::ResetFanCurve, Effect::PersistState]
+        );
+    }
+
+    #[test]
+    fn test_reset_fan_curve_is_no_op_when_already_auto() {
+        let state = setup_state(); // active_fan_curve = None
+        let out = reduce(
+            &state,
+            Transition::ResetFanCurve,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert_eq!(out.new_state, state);
+        assert!(out.effects.is_empty());
+    }
+
+    #[test]
+    fn test_system_resumed_reapplies_fan_curve_when_managed() {
+        // Regression for the suspend/resume bug: a managed curve must be
+        // re-applied on resume (the EC can reset it across suspend),
+        // adding a 4th effect on top of the envelope/profile/charge trio.
+        use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
+        let sel = FanCurveSelection::Preset(FanCurvePreset::Balanced);
+        let mut state = setup_state();
+        state.active_fan_curve = Some(sel);
+        let out = reduce(
+            &state,
+            Transition::SystemResumed,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert_eq!(out.new_state, state);
+        assert_eq!(out.effects.len(), 4);
+        assert!(out.effects.contains(&Effect::ApplyFanCurve(sel)));
+    }
+
+    #[test]
+    fn test_set_profile_follows_curve_when_enabled() {
+        use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
+        let state = setup_state(); // active_profile = Balanced, curve = None
+        let mut config = setup_config();
+        config.fan_curve_follows_profile = true;
+
+        let out = reduce(
+            &state,
+            Transition::SetProfile(ProfileName::Performance),
+            &setup_limits(),
+            &config,
+        )
+        .unwrap();
+
+        assert_eq!(out.new_state.active_profile, ProfileName::Performance);
+        assert_eq!(
+            out.new_state.active_fan_curve,
+            Some(FanCurveSelection::Preset(FanCurvePreset::Aggressive))
+        );
+        assert!(out.effects.contains(&Effect::ApplyFanCurve(
+            FanCurveSelection::Preset(FanCurvePreset::Aggressive)
+        )));
+    }
+
+    #[test]
+    fn test_set_profile_does_not_touch_curve_when_follow_disabled() {
+        // Default config has fan_curve_follows_profile = false: a profile
+        // change must leave the (manually-managed) fan curve alone.
+        let state = setup_state();
+        let out = reduce(
+            &state,
+            Transition::SetProfile(ProfileName::Performance),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert_eq!(out.new_state.active_fan_curve, None);
+        assert!(!out
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::ApplyFanCurve(_))));
     }
 
     // ---------- ConfigReload (no-op at the reducer layer) ----------

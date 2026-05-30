@@ -109,6 +109,7 @@ mod tests {
             charge_end_threshold: 80,
             fan_follows_tdp: true,
             last_dc_target: None,
+            active_fan_curve: None,
         }
     }
 
