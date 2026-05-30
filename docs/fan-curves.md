@@ -205,6 +205,14 @@ existing cooling/power flows:
   from `fan_curve_follows_profile`. This is what keeps the curve alive
   when the default `fan_follows_tdp` auto-cooling nudges the profile as
   the TDP changes.
+- **The platform profile gates real power.** Measured on the RC73XA: at a
+  fixed `tdp set 30` under identical load and fans, `power-saver` settled
+  at 59 °C while `performance` hit 95 °C — amd_pmf clamps the actual power
+  draw by profile, regardless of the SPL `hpd` writes. The profile is
+  therefore the *dominant* performance/thermal lever, not a cosmetic
+  hint, which is exactly why `cool` couples it to the curve as one level
+  (`silent`→power-saver = low power + quiet, `aggressive`→performance =
+  full power + hard cooling). See `docs/dev/FAN_CURVE_TESTING.md` §11.
 - **Suspend/resume.** `SystemResumed` re-applies the active curve as a
   final effect (the EC can reset it across suspend).
 - **AC plug/unplug.** Plugging AC ramps the TDP and, with auto-cooling

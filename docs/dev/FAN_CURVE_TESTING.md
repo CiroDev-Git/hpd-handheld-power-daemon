@@ -266,62 +266,67 @@ grep -i fan /var/lib/hpd/state.toml  # active_fan_curve persisted
 ## 11. ⚖️ Does `platform_profile` still do anything? (decides if we keep it)
 
 Once `hpd` controls the TDP (SPL/SPPT/FPPT) *and* the fan curve directly,
-the ACPI `platform_profile` (driven by **amd_pmf**) may be redundant — or
-it may be silently **gating** the TDP that `hpd` requests. This isolation
-test settles it. Decouple first so we can vary the profile alone:
+the ACPI `platform_profile` (driven by **amd_pmf**) might be redundant —
+or it might silently **gate** the real power the chip is allowed to draw.
+This isolation test settles it.
 
-```bash
-sudoedit /etc/hpd/config.toml          # fan_curve_follows_profile = false
-systemctl reload hpd
-hpdctl tdp set 15                       # fix the TDP
-hpdctl fan curve set balanced          # fix the curve
-PPT=/sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/current_value
+> **Result on ROG Xbox Ally X (RC73XA), 2026-05-29 — DECISIVE: keep it.**
+> Same all-core load, same `hpdctl tdp set 30`, same fan curve, only the
+> profile changed: `power-saver` → CPU **59 °C**, `performance` → CPU
+> **95 °C** (a **36 °C** swing). The profile gates the real power draw, so
+> it is the dominant performance/thermal lever — **not** removable. `hpd`
+> couples it to the fan curve under `cool`.
+
+No config change is needed — Test B varies the profile directly and the
+fan curve is irrelevant to the power measurement.
+
+**Test A — does writing the profile move the limit `hpd` set? (quick)**
+
+```fish
+set PPT /sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/current_value
+hpdctl tdp set 15; sleep 1
+echo "after tdp 15:        "(cat $PPT)
+hpdctl fan profile power-saver;  sleep 1; echo "after power-saver:   "(cat $PPT)
+hpdctl fan profile performance;  sleep 1; echo "after performance:   "(cat $PPT)
 ```
 
-**Test A — does writing the profile move the limits `hpd` set?**
+On RC73XA all three read `15`: the asus-armoury attribute is untouched, so
+Test A alone is **inconclusive** (amd_pmf gates power via the SMU, not via
+this file). Test B is the decisive one.
 
-```bash
-hpdctl fan profile power-saver  ; cat $PPT
-hpdctl fan profile performance  ; cat $PPT
+**Test B — does the requested TDP actually take effect? (decisive)**
+
+```fish
+# Terminal 1 — sustained all-core load (kill to stop):
+for i in (seq 8); yes >/dev/null & ; end
+# or, if installed: stress-ng --cpu 0 --timeout 120s
+
+# Terminal 2 — fixed high TDP, compare sustained CPU temp per profile:
+hpdctl tdp set 30
+hpdctl fan profile power-saver;  sleep 25; hpdctl status | grep Temps
+hpdctl fan profile performance;  sleep 25; hpdctl status | grep Temps
+
+# stop the load:
+kill (jobs -p)
 ```
 
-| Result | Meaning |
-|---|---|
-| `ppt_pl1_spl` **changes** when you write the profile | amd_pmf is overwriting `hpd`'s TDP → the profile **fights** `hpd` |
-| unchanged | the profile does not touch the power limits |
+With the fans fixed, a hotter chip under identical load means more power is
+getting through. If `ryzenadj` is installed, read the real power directly
+instead of inferring from temperature:
 
-**Test B — does `hpd`'s requested TDP actually *stick* under each profile?**
-Under a sustained load, request a high TDP and measure real package power
-(use `turbostat`, `ryzenadj -i`, or watch sustained temps/RPM as a proxy):
-
-```bash
-hpdctl fan profile power-saver ; hpdctl tdp set 25   # then load + measure
-hpdctl fan profile performance ; hpdctl tdp set 25   # then load + measure
+```fish
+hpdctl fan profile power-saver;  sleep 20; ryzenadj -i | grep -Ei 'STAPM|PPT'
+hpdctl fan profile performance;  sleep 20; ryzenadj -i | grep -Ei 'STAPM|PPT'
 ```
 
-| Result | Meaning | Decision |
-|---|---|---|
-| power-saver **caps** real draw < 25 W, performance lets it through | profile **gates** the TDP | **Keep it, pinned to `performance`** (an enabler, not a user knob) |
-| real draw is the same under both | profile does **not** gate the TDP | candidate for **removal** |
+### Verdict
 
-**Test C — any adaptive effect?** Fix everything (TDP, curve, profile) and
-compare idle vs load behaviour across `balanced` vs `performance`. If
-nothing measurable differs (power, clocks, temps), there is no adaptive
-value either.
-
-### Decision tree
-
-- **A changes / B gates** → `platform_profile` is an *enabler*: the daemon
-  should **pin it to `performance`** (or the level matching `cool`) and it
-  must **not** be removed. `hpd`'s TDP depends on it.
-- **A inert / B sticks / C no effect** → `platform_profile` is vestigial
-  once TDP + curve are controlled → **remove it entirely** (the daemon
-  stops touching it; `PlatformProfile` capability + `SetProfile` retired).
-- **Anything in between** (does something useful) → keep it coupled to
-  `cool`, hidden from the primary CLI.
-
-Record the readings below; this is what tells us whether to delete the
-profile, pin it, or keep it.
+- **performance clearly hotter / higher-power** than power-saver under
+  identical load + fans → the profile **gates** the real power → **keep
+  it**; the daemon couples it to `cool` and must never remove it.
+  *(This is what RC73XA showed: 59 °C vs 95 °C.)*
+- **identical under both** → the profile is vestigial once TDP + curve are
+  controlled → remove the `PlatformProfile` capability + `SetProfile`.
 
 ---
 
