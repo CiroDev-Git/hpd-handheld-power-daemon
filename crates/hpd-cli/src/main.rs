@@ -165,6 +165,8 @@ enum CoolAction {
     Reset,
     /// Show the current cooling level and mode
     Get,
+    /// Draw the active fan curve (temperature → fan speed)
+    Curve,
 }
 
 #[tokio::main]
@@ -291,9 +293,35 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
                 };
                 println!("🧊 Cooling: {} ({})", level, mode);
             }
+            CoolAction::Curve => {
+                let level = proxy.fan_curve().await?;
+                let (cpu, gpu) = proxy.get_fan_curve().await?;
+                println!("🌀 Fan curve: {}", level);
+                render_curve("CPU fan  (temp → speed)", &cpu);
+                render_curve("GPU fan  (temp → speed)", &gpu);
+            }
         },
     }
     Ok(())
+}
+
+/// Draw an 8-point fan curve as horizontal bars: temperature on the
+/// left, the fan duty as a bar and a percentage on the right.
+fn render_curve(label: &str, points: &[(u32, u32)]) {
+    const BAR_W: u32 = 24;
+    if points.is_empty() {
+        println!("  {label}: firmware automatic (no custom curve)");
+        return;
+    }
+    println!("  {label}:");
+    for (temp, pwm) in points {
+        let pwm = (*pwm).min(255);
+        let pct = pwm * 100 / 255;
+        let filled = (pwm * BAR_W / 255) as usize;
+        let bar = "█".repeat(filled);
+        let pad = " ".repeat(BAR_W as usize - filled);
+        println!("    {temp:>3}°C │{bar}{pad}│ {pct:>3}%");
+    }
 }
 
 /// Render a telemetry field, mapping the `i32::MIN` "unavailable"

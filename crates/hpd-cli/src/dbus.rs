@@ -2,6 +2,9 @@
 
 use zbus::proxy;
 
+/// The eight `(temp_c, pwm)` points of one fan's curve.
+pub type CurvePoints = Vec<(u32, u32)>;
+
 #[proxy(
     interface = "dev.cirodev.hpd.PowerDaemon1",
     default_service = "dev.cirodev.hpd.PowerDaemon1",
@@ -52,4 +55,9 @@ trait PowerDaemon {
     /// Live thermal telemetry: `(cpu_temp_c, gpu_temp_c, cpu_fan_rpm,
     /// gpu_fan_rpm)`. Any field is `i32::MIN` when unavailable.
     fn get_thermal_status(&self) -> zbus::Result<(i32, i32, i32, i32)>;
+
+    /// The 8 `(temp_c, pwm)` points of the active CPU and GPU fan
+    /// curves: `(cpu_points, gpu_points)`. Empty when no curve is
+    /// programmable. Used to draw the curve.
+    fn get_fan_curve(&self) -> zbus::Result<(CurvePoints, CurvePoints)>;
 }

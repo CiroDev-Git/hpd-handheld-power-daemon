@@ -152,6 +152,7 @@ hpdctl cool set silent|balanced|aggressive
 hpdctl cool auto               # let the daemon pick the level from TDP
 hpdctl cool reset              # hand the fans back to firmware control
 hpdctl cool get                # current level + mode
+hpdctl cool curve              # draw the active fan curve
 
 # (The raw platform profile and fan curve are available over D-Bus —
 #  set_profile / set_fan_curve — for advanced/decoupled use.)
@@ -207,6 +208,10 @@ The platform profile is not cosmetic: on the Ally family it gates the
 *real* power the chip may draw (measured: ~36 °C swing between
 `power-saver` and `performance` at a fixed TDP), which is why a cooling
 level couples a profile with a curve rather than just a fan speed.
+
+**Full user manual:** [`docs/MANUAL.md`](docs/MANUAL.md) (English) ·
+[`docs/MANUAL-es.md`](docs/MANUAL-es.md) (Spanish) — every feature, every
+combination, and a "what's normal vs. what to worry about" guide.
 
 See [`docs/fan-curves.md`](docs/fan-curves.md) for the thermal rationale
 and [`docs/dev/FAN_CURVE_TESTING.md`](docs/dev/FAN_CURVE_TESTING.md) for

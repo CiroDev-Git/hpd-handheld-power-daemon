@@ -171,23 +171,37 @@ Cooling is presented as a single concept so users don't have to juggle
   raw platform-profile / fan-curve controls independently over D-Bus
   (`set_profile` / `set_fan_curve`).
 
-## Calibration caveats
+## Calibration
 
-These presets are a **sensible starting point, not a final calibration**:
+The presets were **validated on the ROG Xbox Ally X (RC73XA)** under a
+sustained all-core load (`yes` ×8). Each cooling level couples the fan
+curve with the power-gating platform profile, so the measured peaks
+reflect the combined behaviour a user actually gets:
 
-1. **`pwm_enable` semantics** — we assume `1 = custom curve`,
-   `2 = firmware automatic`, based on the kernel interface and the
-   captured default state. The read-back guards correctness, but confirm
-   on-device that applying a curve actually changes fan behaviour.
-2. **PWM→RPM mapping is unknown per unit** — the duty values were chosen
-   for a monotonic, safe ramp, not measured against this unit's real RPM
-   response. Recommended tune loop: apply `balanced`, run a sustained
-   load, watch `k10temp`/`amdgpu` temps and `asus` RPMs, and adjust the
-   bands before treating the values as final.
-3. **One model captured** — the presets are currently shared across the
-   ASUS handheld family but only calibrated against the Xbox Ally X
-   (`RC73XA`). Per-model tuning lands when captures from the Ally / Ally
-   X exist.
+| Level | Peak CPU | Peak GPU | CPU fan | GPU fan |
+|---|---|---|---|---|
+| `silent` | 58 °C | 54 °C | ~3700 rpm | ~3900 rpm |
+| `balanced` (default) | 68 °C | 58 °C | ~5300 rpm | ~5300 rpm |
+| `aggressive` | 95 °C | 72 °C | ~8100 rpm (max) | ~8100 rpm (max) |
+
+Reading: `balanced` holds the CPU at **68 °C** vs the firmware default's
+**~87 °C** — the original "hot screen / quiet fans" complaint is solved.
+`aggressive` runs at **95 °C with the fans already maxed**: that is the
+chip at full power (the profile lets it draw everything), and 95 °C is
+its normal full-tilt temperature, not a cooling failure — pick a lower
+level for a cooler/quieter chip. These values are the shipped defaults.
+
+### Remaining caveats
+
+1. **`pwm_enable` semantics** — assumed `1 = custom`, `2 = automatic`.
+   The read-back guards correctness; the on-device test plan §2 confirms
+   the curve actually takes effect.
+2. **Other models** — the presets are shared across the ASUS handheld
+   family but only measured on the Xbox Ally X (`RC73XA`). Per-model
+   tuning lands when captures from the Ally / Ally X exist.
+3. **GPU curve under GPU load** — calibration used a CPU-bound load, so
+   `pwm2` (GPU) was not heavily exercised; a real game would stress it,
+   but the curve shape is shared with the (validated) CPU curve.
 
 Sustained full duty is safe for the hardware (the fans are rated for it);
 it is only louder.

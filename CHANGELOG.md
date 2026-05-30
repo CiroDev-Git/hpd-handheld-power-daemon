@@ -24,10 +24,20 @@ not part of the published repository.
   - `fan_curve_follows_profile` now defaults to **`true`** so the profile
     and curve always move together; set it to `false` to drive the curve
     independently (advanced).
-  - The raw controls remain for advanced use: `hpdctl fan profile
-    <power-saver|balanced|performance>` (renamed from `hpdctl fan set`)
-    and `hpdctl fan curve set|get|reset`. `hpdctl fan auto` is replaced by
-    `hpdctl cool auto`. New D-Bus method `SetCoolingLevel`.
+  - **The `fan` CLI namespace was removed entirely.** All cooling is now
+    under `cool` (`set` / `auto` / `reset` / `get` / `curve`). The raw
+    platform profile and fan curve stay available over D-Bus
+    (`set_profile` / `set_fan_curve`) for advanced/decoupled use. New
+    D-Bus method `SetCoolingLevel`.
+  - `hpdctl cool curve` draws the active fan curve (temperature → speed),
+    backed by a new D-Bus `GetFanCurve` method.
+  - Fan-curve presets validated on the ROG Xbox Ally X (RC73XA):
+    `silent` ≈58 °C, `balanced` ≈68 °C, `aggressive` ≈95 °C (fans maxed)
+    under a sustained all-core load — `balanced` solves the original
+    ~87 °C firmware behaviour.
+  - Added a full user manual ([`docs/MANUAL.md`](docs/MANUAL.md) /
+    [`docs/MANUAL-es.md`](docs/MANUAL-es.md)) and a Spanish cooling
+    explainer.
 
 ### Added
 

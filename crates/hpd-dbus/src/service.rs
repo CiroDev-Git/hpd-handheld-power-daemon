@@ -360,6 +360,29 @@ impl PowerDaemonInterface {
         (cpu_temp, gpu_temp, cpu_rpm, gpu_rpm)
     }
 
+    /// The eight `(temp_c, pwm)` points of the active CPU and GPU fan
+    /// curves as read back from the EC: `(cpu_points, gpu_points)`. `pwm`
+    /// is 0–255. Both vectors are empty when the backend exposes no
+    /// programmable curve or the read-back failed. Used by
+    /// `hpdctl cool curve` to draw the curve.
+    async fn get_fan_curve(&self) -> (Vec<(u32, u32)>, Vec<(u32, u32)>) {
+        let Some(cap) = self.backend.fan_curve() else {
+            return (Vec::new(), Vec::new());
+        };
+        match cap.get_curves() {
+            Ok(curves) => {
+                let to_pairs = |c: &hpd_capabilities::fan_curve::FanCurve| {
+                    c.points
+                        .iter()
+                        .map(|p| (u32::from(p.temp_c), u32::from(p.pwm)))
+                        .collect::<Vec<_>>()
+                };
+                (to_pairs(&curves.cpu), to_pairs(&curves.gpu))
+            }
+            Err(_) => (Vec::new(), Vec::new()),
+        }
+    }
+
     /// Active fan-curve selection: a preset name (`silent`, `balanced`,
     /// `aggressive`), `custom` for an explicit curve, or `auto` when the
     /// firmware's automatic curve is in charge (daemon not managing it).
