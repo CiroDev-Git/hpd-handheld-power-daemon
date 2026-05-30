@@ -33,12 +33,21 @@ and variables → Actions**):
 
 | Secret              | Purpose                                                              |
 |---------------------|----------------------------------------------------------------------|
+| `RELEASE_PAT`       | PAT used by `release.yml` to **create the Release** so the `release: published` event chains to `aur-sync.yml` automatically. Without it the Release is created with `GITHUB_TOKEN`, which does **not** trigger downstream workflows — AUR must then be synced manually. Optional. |
 | `GPG_PRIVATE_KEY`   | Used by `release.yml` to GPG-sign `SHA256SUMS`. Optional.            |
 | `GPG_PASSPHRASE`    | Passphrase for the key above.                                        |
 | `AUR_SSH_KEY`       | Private SSH key with push access to the two AUR packages. Optional.  |
 
 If none are configured, the release ships unsigned and AUR is
 updated manually (see [§5](#5-aur-update-manual-fallback)).
+
+**Fully-automatic AUR:** with both `RELEASE_PAT` *and* `AUR_SSH_KEY`
+configured, pushing a stable tag publishes the Release **and** updates
+both AUR packages with no manual step. `RELEASE_PAT` should be a
+**fine-grained PAT** scoped to this repository with **Contents:
+read & write** (enough to create a Release); classic PATs need the
+`repo` scope. Set it under **Settings → Secrets and variables →
+Actions → New repository secret**, name `RELEASE_PAT`.
 
 ---
 
@@ -296,10 +305,22 @@ Expected outcome:
 
 ## 5. AUR update (manual fallback)
 
-If `AUR_SSH_KEY` is configured, the [`aur-sync.yml`](../../.github/workflows/aur-sync.yml)
-workflow has already pushed to AUR — skip to §6. Otherwise, the
-manual path is just running [`scripts/aur-sync.sh`](../../scripts/aur-sync.sh)
-locally for each package (Arch host required — needs `makepkg`).
+If **both `RELEASE_PAT` and `AUR_SSH_KEY`** are configured, the
+[`aur-sync.yml`](../../.github/workflows/aur-sync.yml) workflow has
+already pushed to AUR (the `release: published` event chained
+automatically) — skip to §6.
+
+If only `AUR_SSH_KEY` is set (no `RELEASE_PAT`), the Release was created
+with `GITHUB_TOKEN`, which does not trigger downstream workflows — run
+`aur-sync` once by hand:
+
+```bash
+gh workflow run aur-sync.yml -f version="${new_version}" -f packages=both
+```
+
+If neither is set, the fully-manual path is running
+[`scripts/aur-sync.sh`](../../scripts/aur-sync.sh) locally for each
+package (Arch host required — needs `makepkg`).
 
 ### 5a. One-time SSH setup
 
