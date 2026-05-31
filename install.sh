@@ -115,6 +115,39 @@ sudo systemctl daemon-reload
 sudo systemctl try-reload-or-restart dbus.service
 sudo systemctl enable --now hpd.service
 
+echo "🔎 5. Verifying polkit registration..."
+# Nudge polkit to pick up the freshly-installed policy + rules. polkit
+# watches these directories and normally reloads on its own, but an
+# explicit reload makes the verification below deterministic right after
+# install (and reloads 49-hpd.rules so wheel members get passwordless
+# access immediately). All best-effort: never fail the install over it.
+sudo systemctl reload polkit.service 2>/dev/null \
+    || sudo systemctl try-restart polkit.service 2>/dev/null \
+    || true
+
+if command -v pkaction >/dev/null 2>&1; then
+    # pkaction with no args lists every registered action id, one per
+    # line — exactly what the daemon's startup self-check verifies over
+    # D-Bus. Confirm each of ours is present.
+    registered="$(pkaction 2>/dev/null || true)"
+    missing=()
+    for action in set-tdp set-charge set-profile set-fan-curve; do
+        if ! printf '%s\n' "$registered" | grep -qxF "dev.cirodev.hpd.$action"; then
+            missing+=("dev.cirodev.hpd.$action")
+        fi
+    done
+    if [[ ${#missing[@]} -eq 0 ]]; then
+        echo "   ✓ polkit knows all hpd actions (privileged commands will work)."
+    else
+        echo "   ⚠️  polkit did NOT register: ${missing[*]}" >&2
+        echo "      Privileged hpdctl commands would be denied with AuthFailed." >&2
+        echo "      Check /usr/share/polkit-1/actions/dev.cirodev.hpd.policy is valid XML," >&2
+        echo "      then: sudo systemctl restart polkit" >&2
+    fi
+else
+    echo "   ! pkaction not found; skipping polkit verification (is polkit installed?)." >&2
+fi
+
 echo ""
 echo "✅ Installation completed successfully!"
 echo "   • State file:    /var/lib/hpd/state.toml"

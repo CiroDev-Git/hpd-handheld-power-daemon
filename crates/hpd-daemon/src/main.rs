@@ -495,6 +495,38 @@ where
         iface_ref,
     ));
 
+    // Self-check: confirm polkit knows our privileged actions. A partial
+    // install (binary copied without package/polkit/*) leaves them
+    // unregistered, so every privileged command fails with an opaque
+    // AuthFailed and no obvious cause. Warn loudly and keep running —
+    // telemetry/status still work, the wheel-passwordless grant comes
+    // back the moment the policy lands, and the policy can be installed
+    // without restarting the daemon. `hpdctl status` reads the same check
+    // over D-Bus (get_diagnostics) so the user sees it without journalctl.
+    match hpd_dbus::polkit::missing_actions(&conn).await {
+        Ok(missing) if missing.is_empty() => {
+            info!("polkit: all privileged actions are registered");
+        }
+        Ok(missing) => {
+            warn!(
+                missing = ?missing,
+                count = missing.len(),
+                "polkit: hpd actions are NOT registered — every privileged command (TDP / charge / \
+                 profile / fan) will be denied. The polkit policy/rules are not installed. \
+                 Fix it in one step: run `hpdctl fix-polkit` (prompts for admin, installs the policy, \
+                 reloads polkit — no daemon restart needed). Alternatively reinstall via ./install.sh \
+                 or the AUR package."
+            );
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                "polkit: could not verify action registration (is polkit running?). \
+                 Privileged commands may be denied."
+            );
+        }
+    }
+
     info!("Daemon is fully running and listening for commands.");
 
     // 10. Wait for shutdown signal (Ctrl+C from a terminal, SIGTERM from

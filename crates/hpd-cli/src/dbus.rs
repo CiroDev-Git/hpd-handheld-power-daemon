@@ -61,4 +61,9 @@ trait PowerDaemon {
     /// curves: `(cpu_points, gpu_points)`. Empty when no curve is
     /// programmable. Used to draw the curve.
     fn get_fan_curve(&self) -> zbus::Result<(CurvePoints, CurvePoints)>;
+
+    /// Daemon self-diagnostics: `(polkit_ok, missing_action_ids)`.
+    /// `polkit_ok == false` means the polkit policy is not installed and
+    /// every privileged command will be denied with `AuthFailed`.
+    fn get_diagnostics(&self) -> zbus::Result<(bool, Vec<String>)>;
 }
