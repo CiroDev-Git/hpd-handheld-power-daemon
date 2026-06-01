@@ -66,4 +66,11 @@ trait PowerDaemon {
     /// `polkit_ok == false` means the polkit policy is not installed and
     /// every privileged command will be denied with `AuthFailed`.
     fn get_diagnostics(&self) -> zbus::Result<(bool, Vec<String>)>;
+
+    /// Friendly names of competing power daemons currently live on the
+    /// system bus (`power-profiles-daemon`, `steamos-manager`). Empty when
+    /// hpd is the sole power owner. Rendered by `hpdctl doctor` / `status`.
+    /// The call errors against a daemon predating this method; callers
+    /// degrade to "unknown / update hpd".
+    fn get_power_conflicts(&self) -> zbus::Result<Vec<String>>;
 }

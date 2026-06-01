@@ -9,5 +9,6 @@
 //! so adding a new privileged operation is a single source-of-truth edit.
 
 pub mod actions;
+pub mod conflicts;
 pub mod polkit;
 pub mod service;

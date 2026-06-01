@@ -11,6 +11,49 @@ not part of the published repository.
 
 ---
 
+## [2.2.0] — 2026-06-01
+
+### Added
+
+- **`hpdctl doctor` / `hpdctl doctor --fix`** — one command to make hpd the
+  sole power manager. `doctor` reports whether the polkit policy is
+  installed and whether a competing power daemon
+  (`power-profiles-daemon`, `steamos-manager`) is live and fighting hpd
+  over TDP / platform profile / charge. `doctor --fix` neutralizes those
+  daemons (`disable --now` + `mask`) and installs the polkit policy in one
+  elevated step (`pkexec`, falling back to `sudo`) — a superset of
+  `fix-polkit`. The per-user `steamos-manager` proxy is masked as the
+  invoking user before elevation.
+- New D-Bus method
+  `GetPowerConflicts() → (as conflicting_daemons)` on
+  `dev.cirodev.hpd.PowerDaemon1`, listing competing power daemons that
+  currently own their well-known bus name. Detection lives in the daemon
+  (`hpd-dbus/src/conflicts.rs`) and uses `NameHasOwner` (which does not
+  D-Bus-activate, so checking never revives a masked rival). Surfaced in
+  `hpdctl doctor` / `hpdctl status` and available to the Decky plugin.
+- The daemon's startup self-check now also warns when a competing power
+  daemon is live, pointing at `hpdctl doctor --fix` (mirrors the polkit
+  self-check).
+- `package/hpd.service` declares `Conflicts=power-profiles-daemon.service`,
+  so starting hpd stops PPD automatically (and vice versa). `steamos-manager`
+  is D-Bus-activated and handled by `hpdctl doctor --fix` instead.
+
+### Fixed
+
+- **`GetDiagnostics` is now actually implemented** on the D-Bus
+  interface. It was declared in the CLI proxy and documented in 2.1.0 but
+  never wired into `PowerDaemonInterface`, so every caller (`hpdctl
+  status`, the Decky plugin's diagnostics panel) silently received a
+  method-not-found error and no diagnostics. The polkit health surface now
+  works as documented.
+
+### Changed
+
+- AUR `post_install` message now points users at `hpdctl doctor --fix` to
+  make hpd the sole power manager.
+
+---
+
 ## [2.1.0] — 2026-05-31
 
 ### Added

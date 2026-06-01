@@ -239,6 +239,36 @@ ours are not. `hpdctl status` offers to run it interactively. The daemon
 so `/usr` is read-only to the daemon — the privileged write has to come
 from the user-side CLI.
 
+### Competing power daemons
+
+hpd expects to be the **sole** manager of the platform power knobs. Two
+system daemons seen on handheld images write the *same* surfaces and so
+fight it: `power-profiles-daemon` (owns `platform_profile` + EPP) and
+Valve's `steamos-manager` (the TDP / charge / fan backend behind Steam
+Game Mode's performance panel). Co-running either makes the last writer
+win and the effective state flap.
+
+Same split as polkit — **the daemon detects, the CLI repairs, the package
+only informs:**
+
+- **Detect.** `hpd_dbus::conflicts::power_conflicts` (single source of
+  truth for the rival list in `hpd-dbus/src/conflicts.rs`) asks the bus
+  `NameHasOwner` for each rival's well-known name — which does **not**
+  D-Bus-activate, so checking never revives a masked rival. The daemon
+  runs this at startup (loud warning) and exposes it live over D-Bus via
+  `get_power_conflicts() -> Vec<String>`.
+- **Repair.** `hpdctl doctor` (`hpd-cli/src/doctor.rs`) reports both the
+  polkit and conflict health; `hpdctl doctor --fix` `disable --now` +
+  `mask`s the rival system units and installs the polkit policy (reusing
+  `fix.rs`) in one elevated step — a superset of `fix-polkit`. The
+  per-user `steamos-manager` proxy is masked as the invoking user before
+  elevating (a root `pkexec` child can't target `systemctl --user`
+  cleanly). The daemon **cannot** do this itself (`ProtectSystem=strict`).
+- **Inform.** `package/hpd.service` declares
+  `Conflicts=power-profiles-daemon.service` (starting hpd stops PPD; the
+  D-Bus-activated `steamos-manager` is left to `doctor --fix`), and the
+  AUR `post_install` points at `hpdctl doctor --fix`.
+
 ### Configuration
 
 `DaemonConfig` (`hpd-daemon/src/config.rs`) is the on-disk
@@ -402,6 +432,8 @@ and exits cleanly rather than letting systemd `SIGKILL` it mid-write.
 | Polkit fail-closed contract                       | `hpd-dbus/src/polkit.rs`                             |
 | Polkit registration self-check                    | `hpd-dbus/src/polkit.rs::missing_actions` + `hpd-daemon/src/main.rs` startup check + `install.sh` step 5 |
 | Polkit one-command repair (`hpdctl fix-polkit`)   | `hpd-cli/src/fix.rs`                                 |
+| Competing power-daemon detection                  | `hpd-dbus/src/conflicts.rs` + `hpd-daemon/src/main.rs` startup check + `get_power_conflicts` in `hpd-dbus/src/service.rs` |
+| Power-ownership repair (`hpdctl doctor`)          | `hpd-cli/src/doctor.rs`                              |
 | Config schema + reload behaviour                  | `hpd-daemon/src/config.rs`                           |
 | Composition root / signal wiring                  | `hpd-daemon/src/main.rs`                             |
 | Suspend/resume                                    | `hpd-daemon/src/suspend.rs`                          |

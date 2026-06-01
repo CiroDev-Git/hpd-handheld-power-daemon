@@ -3,6 +3,12 @@ Description=Handheld Power Daemon (hpd)
 Documentation=https://github.com/CiroDev-Git/hpd-handheld-power-daemon
 After=multi-user.target dbus.service
 Wants=dbus.service
+# hpd is the platform's single power authority. power-profiles-daemon
+# writes the same platform_profile/EPP surfaces, so refuse to co-run:
+# starting hpd stops PPD (and vice versa). steamos-manager is
+# D-Bus-activated and can be revived by Steam, so it is handled by
+# `hpdctl doctor --fix` (mask), not declaratively here.
+Conflicts=power-profiles-daemon.service
 
 [Service]
 Type=simple
