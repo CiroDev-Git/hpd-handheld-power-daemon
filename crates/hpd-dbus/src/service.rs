@@ -403,4 +403,43 @@ impl PowerDaemonInterface {
             Some(FanCurveSelection::Custom { .. }) => "custom".to_string(),
         }
     }
+
+    /// Daemon self-diagnostics: `(polkit_ok, missing_action_ids)`.
+    ///
+    /// `polkit_ok == false` (a non-empty `missing_action_ids`) means the
+    /// polkit policy was never installed, so every privileged command is
+    /// denied with `AuthFailed`. `hpdctl status` / `hpdctl doctor` and the
+    /// Decky plugin render this to point the user at `hpdctl fix-polkit`.
+    ///
+    /// A transport error talking to polkit is reported as "ok" (empty
+    /// missing list): the loud startup self-check already covers that
+    /// rarer case, and we would rather not cry wolf over a transient
+    /// polkit hiccup on every status poll.
+    async fn get_diagnostics(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+    ) -> (bool, Vec<String>) {
+        let missing: Vec<String> = polkit::missing_actions(conn)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(String::from)
+            .collect();
+        (missing.is_empty(), missing)
+    }
+
+    /// Friendly names of competing power daemons currently live on the bus
+    /// (e.g. `power-profiles-daemon`, `steamos-manager`).
+    ///
+    /// These write the same TDP / platform-profile / charge surfaces hpd
+    /// owns; running one alongside hpd makes the effective state flap. An
+    /// empty list means hpd is the sole power owner. The repair is the
+    /// user-side `hpdctl doctor --fix` — the daemon is sandboxed and
+    /// cannot disable another service itself. See [`crate::conflicts`].
+    async fn get_power_conflicts(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+    ) -> Vec<String> {
+        crate::conflicts::power_conflicts(conn).await
+    }
 }

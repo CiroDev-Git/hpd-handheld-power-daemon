@@ -527,6 +527,28 @@ where
         }
     }
 
+    // Self-check: warn if a competing power daemon is live. PPD and
+    // steamos-manager write the same TDP / platform_profile / charge
+    // surfaces, so co-running them makes the effective state flap and
+    // hpd's settings may not stick. The daemon only detects — it is
+    // sandboxed (ProtectSystem=strict) and cannot stop another service;
+    // the repair is the user-side `hpdctl doctor --fix`. Also exposed live
+    // over D-Bus via get_power_conflicts for `hpdctl doctor` / the plugin.
+    let conflicts = hpd_dbus::conflicts::power_conflicts(&conn).await;
+    if conflicts.is_empty() {
+        info!(
+            "power ownership: no competing power daemons detected — hpd is the sole power manager"
+        );
+    } else {
+        warn!(
+            conflicts = ?conflicts,
+            "power ownership: competing power daemon(s) live ({}) — they fight hpd over TDP / \
+             platform_profile / charge, so settings may not stick. Make hpd the sole manager in \
+             one step: run `hpdctl doctor --fix`.",
+            conflicts.join(", ")
+        );
+    }
+
     info!("Daemon is fully running and listening for commands.");
 
     // 10. Wait for shutdown signal (Ctrl+C from a terminal, SIGTERM from

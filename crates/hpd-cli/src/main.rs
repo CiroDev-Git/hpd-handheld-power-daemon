@@ -12,6 +12,7 @@
 //! considered stable under SemVer from `1.0.0` onward.
 
 mod dbus;
+mod doctor;
 mod fix;
 
 use clap::{Parser, Subcommand};
@@ -45,7 +46,9 @@ use std::process;
         hpdctl charge set 80          Stop charging the battery at 80%\n  \
         hpdctl cool set aggressive    Cool harder (profile + fan curve)\n  \
         hpdctl cool auto              Let the daemon pick cooling from TDP\n  \
-        hpdctl cool get               Show current cooling level + mode\n\
+        hpdctl cool get               Show current cooling level + mode\n  \
+        hpdctl doctor                 Check that hpd is the sole power manager\n  \
+        hpdctl doctor --fix           Neutralize competing daemons + install polkit\n\
         \n\
         Run `hpdctl <command> --help` for details on any command."
 )]
@@ -132,6 +135,23 @@ enum Commands {
         #[arg(long, hide = true)]
         apply: bool,
     },
+    /// Diagnose and repair hpd's power ownership (polkit + competing daemons)
+    ///
+    /// `hpdctl doctor` reports whether the polkit policy is installed and
+    /// whether a competing power daemon (power-profiles-daemon,
+    /// steamos-manager) is running and fighting hpd over TDP / profile /
+    /// charge. `hpdctl doctor --fix` neutralizes those daemons (mask) and
+    /// installs the polkit policy in one elevated step (pkexec/sudo), so
+    /// hpd becomes the sole power manager — a superset of `fix-polkit`.
+    /// Read-only without `--fix`.
+    Doctor {
+        /// Neutralize competing power daemons and install the polkit policy.
+        #[arg(long)]
+        fix: bool,
+        /// Internal: perform the privileged work (already elevated). Not for manual use.
+        #[arg(long, hide = true)]
+        apply: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -192,6 +212,14 @@ async fn main() {
     // stopped or the policy missing.
     if let Commands::FixPolkit { apply } = &cli.command {
         process::exit(fix::run(*apply));
+    }
+
+    // `doctor --fix` does privileged systemctl/polkit work and needs no
+    // D-Bus — intercept it before the bus setup so it runs even with hpd
+    // stopped or the policy missing. The read-only `doctor` report needs
+    // the proxy, so it falls through to the dispatch below.
+    if let Commands::Doctor { fix: true, apply } = &cli.command {
+        process::exit(doctor::run_fix(*apply));
     }
 
     // System bus in production; session bus only when HPD_SIMULATOR
@@ -337,6 +365,15 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
             // arm keeps the match exhaustive and behaves identically if
             // reached.
             process::exit(fix::run(apply));
+        }
+        Commands::Doctor { fix, apply } => {
+            if fix {
+                // Normally intercepted in main() before the D-Bus setup;
+                // kept for exhaustiveness and identical behaviour.
+                process::exit(doctor::run_fix(apply));
+            }
+            // Read-only health report against the running daemon.
+            doctor::report(&proxy).await;
         }
     }
     Ok(())

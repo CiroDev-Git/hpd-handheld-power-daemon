@@ -105,7 +105,11 @@ fn elevate_and_reexec() -> i32 {
 
 /// Write both polkit files (mode 0644) and reload polkit. Must run as
 /// root; the `fs::write` calls fail with `PermissionDenied` otherwise.
-fn apply_as_root() -> io::Result<()> {
+///
+/// `pub(crate)` so `hpdctl doctor --fix` can reuse it: `doctor` is a
+/// superset of `fix-polkit` (it also masks competing daemons), and both
+/// should install byte-identical policy.
+pub(crate) fn apply_as_root() -> io::Result<()> {
     write_file(POLICY_DEST, POLICY)?;
     write_file(RULES_DEST, RULES)?;
     reload_polkit();
@@ -145,7 +149,9 @@ fn reload_polkit() {
 
 /// Whether `cmd` is found on `PATH`. Avoids executing the tool just to
 /// probe for it (so we don't spawn `pkexec --version` and friends).
-fn in_path(cmd: &str) -> bool {
+///
+/// `pub(crate)` so `hpdctl doctor` reuses the same pkexec/sudo probe.
+pub(crate) fn in_path(cmd: &str) -> bool {
     std::env::var_os("PATH")
         .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(cmd).is_file()))
         .unwrap_or(false)
@@ -158,7 +164,9 @@ fn in_path(cmd: &str) -> bool {
 /// `Uid:` line is `real  effective  saved  fs`; we want the effective
 /// one. Linux-only — on other hosts the read fails and we report
 /// non-root, falling back to pkexec/sudo elevation (fine for dev).
-fn is_root() -> bool {
+///
+/// `pub(crate)` so `hpdctl doctor` shares the same root detection.
+pub(crate) fn is_root() -> bool {
     std::fs::read_to_string("/proc/self/status")
         .ok()
         .and_then(|status| {
