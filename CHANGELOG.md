@@ -11,12 +11,6 @@ not part of the published repository.
 
 ---
 
-## [Unreleased]
-
-(Nothing yet.)
-
----
-
 ## [2.1.0] — 2026-05-31
 
 ### Added
