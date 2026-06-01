@@ -76,7 +76,11 @@ mod tests {
             );
         }
         let unique: std::collections::HashSet<&&str> = ids.iter().collect();
-        assert_eq!(unique.len(), ids.len(), "duplicate action id in PolkitAction::ALL");
+        assert_eq!(
+            unique.len(),
+            ids.len(),
+            "duplicate action id in PolkitAction::ALL"
+        );
     }
 
     #[test]

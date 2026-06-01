@@ -171,9 +171,7 @@ async fn check_inner(
 /// confirm authorization is wired up" and surface it the same way as a
 /// missing action.
 #[cfg(not(feature = "simulator"))]
-pub async fn missing_actions(
-    conn: &zbus::Connection,
-) -> Result<Vec<&'static str>, zbus::Error> {
+pub async fn missing_actions(conn: &zbus::Connection) -> Result<Vec<&'static str>, zbus::Error> {
     use std::collections::HashSet;
 
     // Polkit `EnumerateActions` returns `a(ssssssuuua{ss})`: per action
@@ -203,8 +201,7 @@ pub async fn missing_actions(
     .await?;
 
     // The single argument is a locale; "" asks polkit for the default.
-    let registered: Vec<ActionDescription> =
-        proxy.call("EnumerateActions", &("",)).await?;
+    let registered: Vec<ActionDescription> = proxy.call("EnumerateActions", &("",)).await?;
     let known: HashSet<&str> = registered.iter().map(|a| a.0.as_str()).collect();
 
     Ok(PolkitAction::ALL
@@ -217,8 +214,6 @@ pub async fn missing_actions(
 /// Simulator builds bypass polkit entirely (session bus, no authority),
 /// so there is nothing to verify — report every action as registered.
 #[cfg(feature = "simulator")]
-pub async fn missing_actions(
-    _conn: &zbus::Connection,
-) -> Result<Vec<&'static str>, zbus::Error> {
+pub async fn missing_actions(_conn: &zbus::Connection) -> Result<Vec<&'static str>, zbus::Error> {
     Ok(Vec::new())
 }

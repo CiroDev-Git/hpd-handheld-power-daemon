@@ -232,9 +232,7 @@ async fn main() {
                 "If the polkit policy isn't installed (common with a hand-copied binary), run:"
             );
             eprintln!("    hpdctl fix-polkit");
-            eprintln!(
-                "Otherwise you may need an admin password, or to be in the `wheel` group."
-            );
+            eprintln!("Otherwise you may need an admin password, or to be in the `wheel` group.");
         } else {
             eprintln!("Error executing command: {}", e);
         }
