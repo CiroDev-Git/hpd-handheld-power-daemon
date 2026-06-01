@@ -11,7 +11,41 @@ not part of the published repository.
 
 ---
 
-## [Unreleased]
+## [2.1.0] — 2026-05-31
+
+### Added
+
+- **polkit registration self-check.** The daemon now verifies at startup
+  that every `dev.cirodev.hpd.*` action is registered with polkit
+  (`EnumerateActions`) and logs a loud, actionable warning if any is
+  missing — the tell-tale of a partial install (binary copied without
+  `package/polkit/*`), which otherwise surfaces only as an opaque
+  `AuthFailed` on every privileged command. The daemon keeps running so
+  telemetry stays available and the grant returns the moment the policy
+  is installed.
+- New D-Bus method `GetDiagnostics() → (b polkit_ok, as missing_action_ids)`
+  on `dev.cirodev.hpd.PowerDaemon1`, exposing the same check live so
+  `hpdctl status` and the Decky plugin can show the user *why* commands
+  are denied and how to fix it.
+- **`hpdctl fix-polkit`** — one-command recovery that installs the polkit
+  policy + rules and reloads polkit. The canonical files are embedded in
+  the binary (`include_str!`), so it works without the source tree; an
+  unprivileged run re-execs itself through `pkexec` (falling back to
+  `sudo`), both of which rely on polkit's always-registered core
+  `org.freedesktop.policykit.exec` action.
+- `hpdctl status` now warns when the polkit policy is missing and, when
+  run interactively, **offers to install it on the spot** (`Install it
+  now? [Y/n]`) instead of printing a script to copy elsewhere. `hpdctl`'s
+  generic error path special-cases `AuthFailed` and points at
+  `hpdctl fix-polkit`.
+- `install.sh` gained a post-install verification step (step 5) that
+  reloads polkit and confirms every hpd action registered via `pkaction`.
+
+### Changed
+
+- `hpd-dbus`'s polkit helper now special-cases polkit's "action is not
+  registered" error with a precise remediation message instead of the
+  generic fail-closed warning.
 
 ### Fixed
 

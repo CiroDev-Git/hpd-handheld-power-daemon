@@ -214,6 +214,31 @@ unconditionally returns `true` — session-bus runs on macOS / dev
 hosts have no polkit authority to talk to and gating every setter
 would make the simulator unusable.
 
+**Registration self-check.** A partial install (binary copied without
+`package/polkit/*`) leaves the action IDs unregistered, so polkit answers
+every `CheckAuthorization` with "action is not registered" and the daemon
+fail-closes — surfacing only as an opaque `AuthFailed` on every setter.
+To make the root cause obvious, `hpd_dbus::polkit::missing_actions`
+queries polkit's `EnumerateActions` and returns the subset of
+`PolkitAction::ALL` it does not know. The daemon runs this once at
+startup (loud warning naming the missing files + fix, then keeps running)
+and exposes it live over D-Bus via `get_diagnostics() -> (polkit_ok,
+missing_action_ids)`, which `hpdctl status` and the Decky plugin render.
+`install.sh` step 5 verifies the same thing post-install with `pkaction`.
+`PolkitAction::ALL` must list every variant — an exhaustiveness test in
+`hpd-dbus/src/actions.rs` flags drift.
+
+**One-command fix.** `hpdctl fix-polkit` (`hpd-cli/src/fix.rs`) installs
+the policy + rules and reloads polkit. The two files are embedded into
+`hpdctl` with `include_str!("../../../package/polkit/…")` so the fix needs
+no source tree; an unprivileged run re-execs `pkexec hpdctl fix-polkit
+--apply` (falling back to `sudo`) — both use polkit's core
+`org.freedesktop.policykit.exec` action, which is registered even when
+ours are not. `hpdctl status` offers to run it interactively. The daemon
+**cannot** self-heal here: `package/hpd.service` sets `ProtectSystem=strict`,
+so `/usr` is read-only to the daemon — the privileged write has to come
+from the user-side CLI.
+
 ### Configuration
 
 `DaemonConfig` (`hpd-daemon/src/config.rs`) is the on-disk
@@ -375,6 +400,8 @@ and exits cleanly rather than letting systemd `SIGKILL` it mid-write.
 | D-Bus method / property surface                   | `hpd-dbus/src/service.rs`                            |
 | Polkit action IDs                                 | `hpd-dbus/src/actions.rs`                            |
 | Polkit fail-closed contract                       | `hpd-dbus/src/polkit.rs`                             |
+| Polkit registration self-check                    | `hpd-dbus/src/polkit.rs::missing_actions` + `hpd-daemon/src/main.rs` startup check + `install.sh` step 5 |
+| Polkit one-command repair (`hpdctl fix-polkit`)   | `hpd-cli/src/fix.rs`                                 |
 | Config schema + reload behaviour                  | `hpd-daemon/src/config.rs`                           |
 | Composition root / signal wiring                  | `hpd-daemon/src/main.rs`                             |
 | Suspend/resume                                    | `hpd-daemon/src/suspend.rs`                          |

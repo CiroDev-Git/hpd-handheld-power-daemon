@@ -37,6 +37,20 @@ pub enum PolkitAction {
 }
 
 impl PolkitAction {
+    /// Every action the daemon registers, in declaration order.
+    ///
+    /// Used by the startup self-check and the `get_diagnostics` D-Bus
+    /// method to verify each action is registered with polkit. The
+    /// exhaustive match in this module's tests turns a newly-added enum
+    /// variant into a compile error here, prompting whoever adds it to
+    /// extend this array too.
+    pub const ALL: [PolkitAction; 4] = [
+        PolkitAction::SetTdp,
+        PolkitAction::SetCharge,
+        PolkitAction::SetProfile,
+        PolkitAction::SetFanCurve,
+    ];
+
     /// Polkit `action_id` string declared in the project's policy file.
     pub const fn as_id(self) -> &'static str {
         match self {
@@ -44,6 +58,42 @@ impl PolkitAction {
             PolkitAction::SetCharge => "dev.cirodev.hpd.set-charge",
             PolkitAction::SetProfile => "dev.cirodev.hpd.set-profile",
             PolkitAction::SetFanCurve => "dev.cirodev.hpd.set-fan-curve",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn all_ids_are_unique_and_namespaced() {
+        let ids: Vec<&str> = PolkitAction::ALL.iter().map(|a| a.as_id()).collect();
+        for id in &ids {
+            assert!(
+                id.starts_with("dev.cirodev.hpd."),
+                "action id {id} is outside the dev.cirodev.hpd.* namespace covered by 49-hpd.rules"
+            );
+        }
+        let unique: std::collections::HashSet<&&str> = ids.iter().collect();
+        assert_eq!(
+            unique.len(),
+            ids.len(),
+            "duplicate action id in PolkitAction::ALL"
+        );
+    }
+
+    #[test]
+    fn all_entries_match_a_known_variant() {
+        // The exhaustive match makes adding a new enum variant a compile
+        // error here, which is the prompt to also add it to ALL above.
+        for action in PolkitAction::ALL {
+            match action {
+                PolkitAction::SetTdp
+                | PolkitAction::SetCharge
+                | PolkitAction::SetProfile
+                | PolkitAction::SetFanCurve => {}
+            }
         }
     }
 }

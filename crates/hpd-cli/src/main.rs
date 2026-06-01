@@ -12,6 +12,7 @@
 //! considered stable under SemVer from `1.0.0` onward.
 
 mod dbus;
+mod fix;
 
 use clap::{Parser, Subcommand};
 use dbus::PowerDaemonProxy;
@@ -119,6 +120,18 @@ enum Commands {
         #[clap(subcommand)]
         action: CoolAction,
     },
+    /// Install the polkit policy so privileged commands work
+    ///
+    /// Fixes the "Permission denied / AuthFailed" you hit when the daemon
+    /// was deployed without its polkit policy (e.g. a hand-copied binary).
+    /// Prompts for administrator access (pkexec/sudo), writes the policy +
+    /// rules, and reloads polkit. Run once; the daemon does not need a
+    /// restart. Needs neither the daemon running nor D-Bus.
+    FixPolkit {
+        /// Internal: perform the writes (already elevated). Not for manual use.
+        #[arg(long, hide = true)]
+        apply: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -174,6 +187,13 @@ async fn main() {
     // Parsing args from terminal
     let cli = Cli::parse();
 
+    // `fix-polkit` repairs polkit itself and needs neither the daemon nor
+    // D-Bus — handle it before we touch the bus so it works even with hpd
+    // stopped or the policy missing.
+    if let Commands::FixPolkit { apply } = &cli.command {
+        process::exit(fix::run(*apply));
+    }
+
     // System bus in production; session bus only when HPD_SIMULATOR
     // is set (matches the daemon, which only binds to the session bus
     // when itself built with the `simulator` feature).
@@ -205,7 +225,17 @@ async fn main() {
 
     // Command dispatch
     if let Err(e) = execute_command(cli, proxy).await {
-        eprintln!("Error executing command: {}", e);
+        let msg = e.to_string();
+        if msg.contains("AuthFailed") || msg.contains("not authorized") {
+            eprintln!("Permission denied by polkit.");
+            eprintln!(
+                "If the polkit policy isn't installed (common with a hand-copied binary), run:"
+            );
+            eprintln!("    hpdctl fix-polkit");
+            eprintln!("Otherwise you may need an admin password, or to be in the `wheel` group.");
+        } else {
+            eprintln!("Error executing command: {}", e);
+        }
         process::exit(1);
     }
 }
@@ -256,6 +286,7 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
         }
         Commands::Status => {
             print_dashboard(&proxy).await?;
+            print_polkit_warning(&proxy).await;
         }
         Commands::Monitor => {
             println!("Starting real time monitor. Ctrl+C to exit...");
@@ -301,6 +332,12 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
                 render_curve("GPU fan  (temp → speed)", &gpu);
             }
         },
+        Commands::FixPolkit { apply } => {
+            // Normally intercepted in main() before the D-Bus setup; this
+            // arm keeps the match exhaustive and behaves identically if
+            // reached.
+            process::exit(fix::run(apply));
+        }
     }
     Ok(())
 }
@@ -386,4 +423,46 @@ async fn print_dashboard(proxy: &PowerDaemonProxy<'_>) -> zbus::Result<()> {
     println!("=======================================");
 
     Ok(())
+}
+
+/// Surface a partial-install polkit problem under `hpdctl status`.
+///
+/// Reads the daemon's `get_diagnostics`. If the polkit actions are not
+/// registered, every privileged command will be denied with `AuthFailed`,
+/// so print a prominent, actionable block (to stderr, keeping stdout's
+/// dashboard clean). Degrades silently against an older daemon that does
+/// not expose the method — that build simply has nothing extra to report.
+async fn print_polkit_warning(proxy: &PowerDaemonProxy<'_>) {
+    let (polkit_ok, missing) = match proxy.get_diagnostics().await {
+        Ok(diag) => diag,
+        Err(_) => return,
+    };
+    if polkit_ok {
+        return;
+    }
+    eprintln!();
+    eprintln!("⚠️  polkit policy not installed — privileged commands will be DENIED.");
+    if !missing.is_empty() {
+        eprintln!("    Unregistered actions: {}", missing.join(", "));
+    }
+
+    // Offer to fix it right here when run interactively, so the user never
+    // has to open another shell or type a long command. Outside a TTY
+    // (scripts, the Decky plugin shelling out) just name the one command.
+    use std::io::{IsTerminal, Write};
+    if std::io::stdin().is_terminal() && std::io::stderr().is_terminal() {
+        eprint!("    Install it now? [Y/n] ");
+        let _ = std::io::stderr().flush();
+        let mut answer = String::new();
+        if std::io::stdin().read_line(&mut answer).is_ok() {
+            let a = answer.trim().to_lowercase();
+            if a.is_empty() || a == "y" || a == "yes" {
+                fix::run(false);
+                return;
+            }
+        }
+        eprintln!("    Skipped. Run `hpdctl fix-polkit` later to install it.");
+    } else {
+        eprintln!("    Fix it now:  hpdctl fix-polkit");
+    }
 }

@@ -40,6 +40,7 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
 | `GetFanCurve` | `() → (a(uu) cpu, a(uu) gpu)` | The 8 `(temp_c, pwm)` points of each fan's active curve (pwm `0..=255`). Empty if firmware-only. **No signal.** | — (read) |
 | `GetHardwareLimits` | `() → (uuuu)` | `(spl_min, spl_max, sppt_max, fppt_max)` in watts — the valid TDP range. | — (read) |
 | `IsAcConnected` | `() → (b)` | Whether the charger is plugged in. | — (read) |
+| `GetDiagnostics` | `() → (b as)` | `(polkit_ok, missing_action_ids)`. `polkit_ok == false` ⇒ the polkit policy is not installed and **every** gated setter fails with `AuthFailed`. Live check; safe to poll. | — (read) |
 | `SetProfile` | `(s profile)` | **Advanced/raw.** ACPI platform profile (`power-saver`/`balanced`/`performance`) *without* moving the curve. Only meaningful with `fan_curve_follows_profile = false`. | `set-profile` |
 | `SetFanCurve` | `(s preset)` | **Advanced/raw.** Fan curve preset (`silent`/`balanced`/`aggressive`) *without* moving the profile. | `set-fan-curve` |
 
@@ -90,6 +91,15 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
 11. **Polkit-aware actions** — `wheel` members (Deck owner) are **not**
     prompted (passwordless via `49-hpd.rules`); non-`wheel` callers get a
     polkit prompt. Handle `AuthFailed` gracefully (toast, not a crash).
+    On load, call **`GetDiagnostics()`**: if `polkit_ok` is false the
+    daemon's polkit policy was never installed (common with a hand-copied
+    binary), so **every** privileged write will be denied — show a
+    "finish setup" banner instead of surfacing raw `AuthFailed` per
+    action. The banner's action button should run **`hpdctl fix-polkit`**
+    (it self-elevates via `pkexec`, installs the policy, reloads polkit —
+    no daemon restart). It's a live check, so re-poll `GetDiagnostics()`
+    afterward to clear the banner. **Full implementation brief:**
+    [`POLKIT-SETUP-PROMPT.md`](POLKIT-SETUP-PROMPT.md).
 
 ### 🟢 Opcionales / avanzadas
 

@@ -137,6 +137,21 @@ authenticate as an administrator (the `auth_admin` defaults in
 `package/polkit/dev.cirodev.hpd.policy`). Both files are installed by
 `install.sh`.
 
+> **`Permission denied` / `AuthFailed` on *every* write?** The polkit
+> policy isn't installed — common when only the binary was deployed (a
+> hand-copy, or a plugin) without `package/polkit/*`, so polkit doesn't
+> know the `dev.cirodev.hpd.*` actions. Recover in one command:
+>
+> ```bash
+> hpdctl fix-polkit          # installs the policy + rules, reloads polkit
+> ```
+>
+> It self-elevates (`pkexec`/`sudo`), needs no daemon restart, and works
+> even with the source tree gone (the files are embedded in the binary).
+> `hpdctl status` detects this and offers to run it for you; the daemon
+> also logs it loudly at startup. Programmatic clients read the
+> `GetDiagnostics()` D-Bus method (`(polkit_ok, missing_action_ids)`).
+
 ```bash
 # Read current state
 hpdctl status                  # power target, profile, fan curve, temps, RPM, charge, AC
