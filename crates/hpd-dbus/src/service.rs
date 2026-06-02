@@ -434,12 +434,127 @@ impl PowerDaemonInterface {
     /// These write the same TDP / platform-profile / charge surfaces hpd
     /// owns; running one alongside hpd makes the effective state flap. An
     /// empty list means hpd is the sole power owner. The repair is the
-    /// user-side `hpdctl doctor --fix` — the daemon is sandboxed and
-    /// cannot disable another service itself. See [`crate::conflicts`].
+    /// user-side `hpdctl doctor` run in fix mode (the `fix` subcommand
+    /// flag) — the daemon is sandboxed and cannot disable another service
+    /// itself. See [`crate::conflicts`].
+    //
+    // NOTE: keep this doc-comment free of `--` (two ASCII hyphens). zbus
+    // copies each `///` line verbatim into the introspection `<!-- ... -->`
+    // block, and XML forbids `--` inside a comment; a stray `--fix` here
+    // produced a malformed document that strict parsers (Python expat, used
+    // by the Decky plugin's dbus-next) rejected outright. The
+    // `introspection_xml_is_well_formed` regression test guards this.
     async fn get_power_conflicts(
         &self,
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> Vec<String> {
         crate::conflicts::power_conflicts(conn).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+    use hpd_capabilities::power::{PowerEnvelopeLimits, PowerEnvelopeTarget};
+    use hpd_capabilities::testing::MockBackend;
+    use hpd_capabilities::units::PowerMilliwatts;
+    use std::sync::Arc;
+    // Brings `introspect_to_writer` into scope — it's a method on the
+    // `Interface` trait the `#[interface]` macro implements for us.
+    use zbus::object_server::Interface;
+
+    fn sample_state() -> ProfileState {
+        ProfileState {
+            power_target: PowerEnvelopeTarget {
+                spl: PowerMilliwatts(15000),
+                sppt: PowerMilliwatts(17000),
+                fppt: Some(PowerMilliwatts(20000)),
+            },
+            active_profile: hpd_capabilities::profile::ProfileName::Balanced,
+            charge_end_threshold: 80,
+            fan_follows_tdp: true,
+            last_dc_target: None,
+            active_fan_curve: None,
+            is_ac_connected: false,
+        }
+    }
+
+    fn sample_limits() -> PowerEnvelopeLimits {
+        PowerEnvelopeLimits {
+            spl_min: PowerMilliwatts(7000),
+            spl_max: PowerMilliwatts(35000),
+            sppt_max: PowerMilliwatts(43000),
+            fppt_max: PowerMilliwatts(53000),
+        }
+    }
+
+    /// Render the introspection document for the exported object path exactly
+    /// as zbus' `ObjectServer` assembles it: the DOCTYPE + `<node>` envelope
+    /// wrapping our interface's `introspect_to_writer` output (the same
+    /// generation path `Introspectable.Introspect` serves at runtime). The
+    /// standard `Peer` / `Properties` / `Introspectable` interfaces zbus
+    /// injects carry no user doc-comments and are always well-formed, so our
+    /// own interface is the only regression surface that matters.
+    fn introspection_document() -> String {
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let (_state_tx, state_rx) = tokio::sync::watch::channel(sample_state());
+        let backend: Arc<dyn HwBackend> = Arc::new(MockBackend::new(
+            sample_state().power_target,
+            sample_limits(),
+        ));
+        let iface = PowerDaemonInterface::new(tx, state_rx, sample_limits(), backend);
+
+        let mut body = String::new();
+        iface.introspect_to_writer(&mut body, 2);
+
+        format!(
+            "<!DOCTYPE node PUBLIC \"-//freedesktop//DTD D-BUS Object Introspection 1.0//EN\"\n\
+             \x20\"http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd\">\n\
+             <node>\n{body}</node>\n"
+        )
+    }
+
+    /// The introspection XML for the exported object path must be well-formed
+    /// under a *strict* parser. A `///` doc-comment containing `--` slips past
+    /// lenient parsers (libxml2 / gdbus) but is rejected by Python's expat,
+    /// which broke the Decky plugin (panel stuck on "Daemon: unreachable").
+    #[test]
+    fn introspection_xml_is_well_formed() {
+        let xml = introspection_document();
+
+        let mut reader = quick_xml::Reader::from_str(&xml);
+        reader.config_mut().check_comments = true;
+
+        loop {
+            match reader.read_event() {
+                Ok(quick_xml::events::Event::Eof) => break,
+                Ok(_) => {}
+                Err(e) => panic!(
+                    "introspection XML is not well-formed under a strict parser: {e}\n\
+                     A `///` doc-comment on the D-Bus interface almost certainly contains \
+                     `--`, which XML forbids inside a comment. Document:\n{xml}"
+                ),
+            }
+        }
+    }
+
+    /// Belt-and-braces guard for the exact bug that shipped: `--` inside any
+    /// `<!-- ... -->` block. Independent of the parser's default config, so a
+    /// future `quick-xml` bump that changes comment handling can't silence it.
+    #[test]
+    fn introspection_comments_have_no_double_hyphen() {
+        let xml = introspection_document();
+        for (start, _) in xml.match_indices("<!--") {
+            let rest = &xml[start + 4..];
+            let end = rest
+                .find("-->")
+                .expect("every opened XML comment is closed");
+            let body = &rest[..end];
+            assert!(
+                !body.contains("--"),
+                "XML comment body contains `--`, which strict parsers reject:\n{body}"
+            );
+        }
     }
 }

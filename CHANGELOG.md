@@ -11,6 +11,26 @@ not part of the published repository.
 
 ---
 
+## [2.2.1] — 2026-06-01
+
+### Fixed
+
+- **Introspection XML is now well-formed under strict parsers.** zbus copies
+  each `///` doc-comment line verbatim into the introspection
+  `<!-- ... -->` block, and the `GetPowerConflicts` doc-comment contained
+  `hpdctl doctor --fix` — `--` (two ASCII hyphens) is forbidden inside an XML
+  comment. Lenient parsers (libxml2, gdbus) tolerated it, but Python's expat
+  (used by the Decky plugin's dbus-next) rejected the *entire* document with
+  `not well-formed (invalid token)`, leaving the plugin stuck on
+  "Daemon: unreachable". The doc-comment was reworded to drop the `--`
+  while keeping its meaning, and a regression test
+  (`introspection_xml_is_well_formed`) now validates the exported object
+  path's introspection XML under a strict parser (`quick-xml` with
+  `check_comments`) so this cannot regress. No D-Bus contract change — same
+  methods and signatures.
+
+---
+
 ## [2.2.0] — 2026-06-01
 
 ### Added
