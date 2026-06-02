@@ -24,5 +24,15 @@ zbus             = { workspace = true }
 tokio            = { workspace = true, features = ["sync"] }
 tracing          = { workspace = true }
 
+[dev-dependencies]
+# Strict XML parser for the introspection regression test. With
+# `check_comments` enabled it rejects `--` inside `<!-- ... -->`, the exact
+# rule Python's expat (used by the Decky plugin's dbus-next) enforces and
+# that lenient parsers like libxml2 / gdbus silently tolerate.
+quick-xml        = "0.36"
+# Pull in `testing::MockBackend` so a `PowerDaemonInterface` can be built in
+# the test and its introspection XML rendered.
+hpd-capabilities = { path = "../hpd-capabilities", features = ["testing"] }
+
 [lints]
 workspace = true
