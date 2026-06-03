@@ -11,6 +11,61 @@ not part of the published repository.
 
 ---
 
+## [2.3.0] — 2026-06-03
+
+### Added
+
+- **`hpdctl status` now ends with a "System health" section** — the same
+  checks `hpdctl doctor` runs, inlined into the everyday status command so
+  the user gets a one-shot answer to "is anything overriding hpd, or is it
+  all good?". The section reports, with an explicit all-clear when nothing
+  is wrong:
+  - **polkit** — installed (privileged commands work) or not (and which
+    action IDs are unregistered).
+  - **competing daemons** — whether a hard rival (`power-profiles-daemon`,
+    `steamos-manager`) is live on the bus and fighting hpd over
+    TDP / platform_profile / charge. A masked rival (e.g. PPD after the
+    v2.2.3 `post_install` mask) has no bus owner and correctly shows as
+    "none".
+  - **advisory tools** — whether a power-adjacent daemon that is *wanted*
+    (so reported, never masked) is live: Feral `gamemoded`, ASUS `asusd`
+    (it also drives the platform profile / fan / charge, but owns RGB / Aura
+    too, so masking it is the wrong call), or `auto-cpufreq`.
+  - **session** — a `gamescope` (Steam Game Mode) hint, detected
+    client-side from the session environment, noting `steamos-manager` is
+    the TDP backend in that context.
+- **Expanded competing-daemon coverage.** `get_power_conflicts` (hard
+  rivals, masked by `doctor --fix`) now also detects `tuned` (Fedora /
+  Bazzite's increasingly-default power tuner) and `hhd` (Handheld Daemon,
+  Bazzite's Ally default). Because `hhd` and `auto-cpufreq` own no
+  well-known D-Bus name, detection gained a second mechanism: a read-only
+  `org.freedesktop.systemd1` `ListUnitsByPatterns` query
+  (`hpd_dbus::conflicts::{RIVAL_UNITS, ADVISORY_UNITS}`) alongside the
+  existing `NameHasOwner` path. `hpdctl doctor --fix` masks `tuned.service`
+  and the templated `hhd@.service` (stopping live `hhd@<user>` instances
+  via the instance glob first).
+- **New D-Bus method `get_advisory_daemons() -> as`** on
+  `dev.cirodev.hpd.PowerDaemon1`, the advisory counterpart to
+  `get_power_conflicts` (`gamemoded`, `asusd`, `auto-cpufreq`). The hard-rival
+  and advisory lists are kept disjoint across both detection axes by a
+  regression test, so `doctor --fix` never masks a daemon it only meant to
+  report.
+
+### Known limitation
+
+- Tools that write TDP from **inside another process** — Decky plugins
+  (SimpleDeckyTDP, PowerControl) running in the plugin loader, or a manual
+  `ryzenadj` invocation — own no service or bus name and so cannot be
+  detected; the health section cannot warn about them.
+
+### Changed
+
+- `hpdctl doctor` and `hpdctl status` share one health renderer
+  (`doctor::print_health`), so the two never drift. `doctor` keeps its
+  banner; `status` wraps the block in the dashboard's frame.
+
+---
+
 ## [2.2.3] — 2026-06-03
 
 ### Fixed

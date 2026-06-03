@@ -28,11 +28,22 @@ use std::process::Command;
 use crate::dbus::PowerDaemonProxy;
 use crate::fix;
 
-/// Competing power daemons to neutralize. Mirrors
-/// `hpd_dbus::conflicts::RIVAL_POWER_DAEMONS` (the CLI deliberately does
-/// not depend on hpd-dbus). Each entry is the systemd unit stem; the unit
-/// masked is `<stem>.service`.
-const RIVAL_UNITS: &[&str] = &["power-profiles-daemon", "steamos-manager"];
+/// Systemd units `hpdctl doctor --fix` neutralizes (disable + mask). These
+/// are the **hard rivals** the daemon detects in
+/// `hpd_dbus::conflicts::{RIVAL_POWER_DAEMONS, RIVAL_UNITS}` — the CLI
+/// deliberately does not depend on hpd-dbus, so the list is mirrored here.
+/// Advisory daemons (asusd, gamemoded, auto-cpufreq) are intentionally
+/// absent: they are reported, never masked.
+///
+/// Each entry is a full unit name. A templated entry like `hhd@.service`
+/// masks the *template* (blocking every instance); its running instances
+/// are stopped via the `hhd@*.service` glob in [`neutralize_rivals_as_root`].
+const RIVAL_UNITS: &[&str] = &[
+    "power-profiles-daemon.service",
+    "steamos-manager.service",
+    "tuned.service",
+    "hhd@.service",
+];
 
 /// Entry point for `hpdctl doctor --fix`.
 ///
@@ -50,29 +61,74 @@ pub fn run_fix(apply: bool) -> i32 {
     elevate_and_reexec()
 }
 
-/// Read-only health report for `hpdctl doctor`. Queries the running
-/// daemon; degrades gracefully against an older daemon or a missing method.
+/// Read-only health report for `hpdctl doctor`. Prints the doctor banner
+/// and the shared health block ([`print_health`]).
 pub async fn report(proxy: &PowerDaemonProxy<'_>) {
-    let diagnostics = proxy.get_diagnostics().await;
-    let conflicts = proxy.get_power_conflicts().await;
-
     println!("🩺 hpd doctor — is hpd the sole power manager?");
     println!();
+    print_health(proxy).await;
+}
+
+/// A compact one-line health summary for `hpdctl monitor`, where the full
+/// [`print_health`] block would be too noisy to redraw every second. Reports
+/// the single most important fact, in priority order: a competing daemon
+/// fighting hpd, then a missing polkit policy, then an advisory daemon
+/// (GameMode), else the all-clear. The string already includes the
+/// `🩺 Health:` label's value (the caller supplies the label/padding).
+pub async fn health_summary(proxy: &PowerDaemonProxy<'_>) -> String {
+    // A polkit transport error is treated as "unknown, not broken" here:
+    // monitor refreshes once a second and we would rather not flash a red
+    // warning on a transient hiccup. Only a definite `false` is a problem.
+    let polkit_bad = matches!(proxy.get_diagnostics().await, Ok((false, _)));
+    let conflicts = proxy.get_power_conflicts().await.unwrap_or_default();
+    let advisory = proxy.get_advisory_daemons().await.unwrap_or_default();
+
+    if !conflicts.is_empty() {
+        format!(
+            "⚠️  {} fighting hpd — run `hpdctl doctor --fix`",
+            conflicts.join(", ")
+        )
+    } else if polkit_bad {
+        "⚠️  polkit not installed — run `hpdctl fix-polkit`".to_string()
+    } else if !advisory.is_empty() {
+        format!(
+            "ℹ️  {} active (governor may move) · hpd otherwise owns power",
+            advisory.join(", ")
+        )
+    } else {
+        "✅ all good — hpd is the sole power manager".to_string()
+    }
+}
+
+/// Render the shared "is hpd the sole power manager?" health block, used by
+/// both `hpdctl doctor` and `hpdctl status`. Queries the running daemon and
+/// prints four lines — polkit registration, competing power daemons (hard
+/// rivals), advisory daemons (GameMode), the gamescope session hint — then a
+/// one-line verdict.
+///
+/// Returns `true` when everything is healthy (nothing for the user to fix).
+/// Degrades gracefully against an older daemon: a missing `get_diagnostics`
+/// reads as "could not query", and a missing `get_advisory_daemons` simply
+/// omits the GameMode line rather than erroring.
+pub async fn print_health(proxy: &PowerDaemonProxy<'_>) -> bool {
+    let diagnostics = proxy.get_diagnostics().await;
+    let conflicts = proxy.get_power_conflicts().await;
+    let advisory = proxy.get_advisory_daemons().await;
 
     let polkit_bad = match &diagnostics {
         Ok((true, _)) => {
-            println!("  polkit policy:      ✅ installed (privileged commands work)");
+            println!("  polkit:             ✅ installed (privileged commands work)");
             false
         }
         Ok((false, missing)) => {
-            println!("  polkit policy:      ❌ NOT installed — privileged commands are denied");
+            println!("  polkit:             ❌ NOT installed — privileged commands are denied");
             if !missing.is_empty() {
                 println!("                      unregistered: {}", missing.join(", "));
             }
             true
         }
         Err(_) => {
-            println!("  polkit policy:      ❔ could not query the daemon (is hpd running?)");
+            println!("  polkit:             ❔ could not query the daemon (is hpd running?)");
             true
         }
     };
@@ -95,12 +151,47 @@ pub async fn report(proxy: &PowerDaemonProxy<'_>) {
         }
     };
 
-    println!();
-    if polkit_bad || conflicts_bad {
-        println!("→ Fix it in one step:  hpdctl doctor --fix");
-    } else {
-        println!("✅ All good — hpd is the sole power manager and polkit is installed.");
+    // Advisory daemons (GameMode, asusd, auto-cpufreq) are never a
+    // "problem" — they are legitimately wanted (asusd also drives RGB, etc.)
+    // — so they are reported but never flip the verdict or get masked.
+    match &advisory {
+        Ok(found) if found.is_empty() => {
+            println!("  advisory tools:     ✅ none touching power surfaces");
+        }
+        Ok(found) => {
+            println!(
+                "  advisory tools:     ℹ️  {} live — may also touch power (informational; not masked)",
+                found.join(", ")
+            );
+        }
+        // Older daemon without get_advisory_daemons: omit the line silently.
+        Err(_) => {}
     }
+
+    if gamescope_session() {
+        println!("  session:            🎮 gamescope (Steam Game Mode) — steamos-manager is the TDP backend here");
+    }
+
+    println!("---------------------------------------");
+    let healthy = !polkit_bad && !conflicts_bad;
+    if healthy {
+        println!("✅ All good — hpd is the sole power manager.");
+    } else {
+        println!("→ Fix it in one step:  hpdctl doctor --fix");
+    }
+    healthy
+}
+
+/// Best-effort detection that we are inside a Steam Game Mode (gamescope)
+/// session. Runs client-side because the CLI shares the user's session
+/// environment, which a root system daemon does not see — this is why the
+/// gamescope hint lives in `hpdctl` and not in `hpd_dbus::conflicts`.
+/// Purely informational context; never affects the health verdict.
+fn gamescope_session() -> bool {
+    std::env::var("GAMESCOPE_WAYLAND_DISPLAY").is_ok()
+        || std::env::var("XDG_CURRENT_DESKTOP")
+            .map(|d| d.to_ascii_lowercase().contains("gamescope"))
+            .unwrap_or(false)
 }
 
 /// Mask the competing system daemons and install the polkit policy. Must
@@ -131,16 +222,23 @@ fn apply_fixes_as_root() -> i32 {
 
 /// `systemctl disable --now` + `mask` each rival system unit. Masking
 /// (symlink to `/dev/null`) is what stops a D-Bus-activated rival like
-/// `steamos-manager` from being revived on demand. All best-effort and
-/// idempotent — a rival that is absent or already masked is fine.
+/// `steamos-manager`, or a template-instantiated one like `hhd@deck`, from
+/// being revived on demand. All best-effort and idempotent — a rival that
+/// is absent or already masked is fine.
 fn neutralize_rivals_as_root() {
-    for stem in RIVAL_UNITS {
-        let unit = format!("{stem}.service");
+    for unit in RIVAL_UNITS {
         let _ = Command::new("systemctl")
-            .args(["disable", "--now", &unit])
+            .args(["disable", "--now", unit])
             .status();
+        // `disable --now` does not stop running instances of a *template*
+        // unit (`hhd@.service` has no instance of its own), so stop them
+        // explicitly via the instance glob before masking the template.
+        if unit.contains('@') {
+            let glob = unit.replace("@.service", "@*.service");
+            let _ = Command::new("systemctl").args(["stop", &glob]).status();
+        }
         let masked = matches!(
-            Command::new("systemctl").args(["mask", &unit]).status(),
+            Command::new("systemctl").args(["mask", unit]).status(),
             Ok(status) if status.success()
         );
         if masked {

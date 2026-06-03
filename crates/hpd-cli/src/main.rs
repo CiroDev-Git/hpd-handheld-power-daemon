@@ -101,7 +101,12 @@ enum Commands {
     /// Show a one-shot status dashboard
     ///
     /// Prints current TDP, cooling profile, cooling mode (auto/manual),
-    /// AC/battery state, and the battery charge limit, then exits.
+    /// AC/battery state, and the battery charge limit, followed by a
+    /// "System health" section (the same checks as `hpdctl doctor`):
+    /// whether polkit is installed, whether any competing power daemon
+    /// (power-profiles-daemon, steamos-manager) is fighting hpd, whether
+    /// GameMode is live, and whether you are in a gamescope session — then
+    /// exits. It gives the all-clear when nothing is wrong.
     Status,
     /// Live status dashboard, refreshes every second
     ///
@@ -314,15 +319,28 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
         }
         Commands::Status => {
             print_dashboard(&proxy).await?;
-            print_polkit_warning(&proxy).await;
+            print_health_section(&proxy).await;
+            offer_polkit_fix_if_broken(&proxy).await;
         }
         Commands::Monitor => {
             println!("Starting real time monitor. Ctrl+C to exit...");
+            // Health (polkit / competing daemons) changes rarely and its
+            // poll hits polkit's EnumerateActions, so refresh it every ~5
+            // frames rather than every second; the telemetry above is what
+            // actually moves at 1 Hz.
+            let mut health_line = String::new();
+            let mut tick: u32 = 0;
             loop {
                 print!("\x1B[2J\x1B[1;1H");
 
                 print_dashboard(&proxy).await?;
 
+                if tick % 5 == 0 {
+                    health_line = doctor::health_summary(&proxy).await;
+                }
+                println!("  🩺 Health:           {health_line}");
+
+                tick = tick.wrapping_add(1);
                 // Sleep 1 second
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
@@ -462,33 +480,41 @@ async fn print_dashboard(proxy: &PowerDaemonProxy<'_>) -> zbus::Result<()> {
     Ok(())
 }
 
-/// Surface a partial-install polkit problem under `hpdctl status`.
-///
-/// Reads the daemon's `get_diagnostics`. If the polkit actions are not
-/// registered, every privileged command will be denied with `AuthFailed`,
-/// so print a prominent, actionable block (to stderr, keeping stdout's
-/// dashboard clean). Degrades silently against an older daemon that does
-/// not expose the method — that build simply has nothing extra to report.
-async fn print_polkit_warning(proxy: &PowerDaemonProxy<'_>) {
-    let (polkit_ok, missing) = match proxy.get_diagnostics().await {
+/// Print the "System health" section under `hpdctl status`: a banner in the
+/// dashboard's style wrapping the shared health block ([`doctor::print_health`]),
+/// which reports polkit, competing daemons, GameMode, and the gamescope
+/// session — and gives the all-clear when nothing is wrong.
+async fn print_health_section(proxy: &PowerDaemonProxy<'_>) {
+    println!();
+    println!("=======================================");
+    println!("  🩺 System health  ");
+    println!("=======================================");
+    doctor::print_health(proxy).await;
+    println!("=======================================");
+}
+
+/// When a partial install left the polkit actions unregistered, offer to
+/// install the policy right here in an interactive terminal — the one
+/// keystroke fix. The health section above already explained the problem on
+/// stdout; this only adds the interactive prompt (to stderr, keeping
+/// stdout's dashboard clean). Degrades silently against an older daemon that
+/// does not expose `get_diagnostics`.
+async fn offer_polkit_fix_if_broken(proxy: &PowerDaemonProxy<'_>) {
+    let (polkit_ok, _missing) = match proxy.get_diagnostics().await {
         Ok(diag) => diag,
         Err(_) => return,
     };
     if polkit_ok {
         return;
     }
-    eprintln!();
-    eprintln!("⚠️  polkit policy not installed — privileged commands will be DENIED.");
-    if !missing.is_empty() {
-        eprintln!("    Unregistered actions: {}", missing.join(", "));
-    }
 
     // Offer to fix it right here when run interactively, so the user never
     // has to open another shell or type a long command. Outside a TTY
-    // (scripts, the Decky plugin shelling out) just name the one command.
+    // (scripts, the Decky plugin shelling out) the health block already
+    // named the fix, so stay quiet.
     use std::io::{IsTerminal, Write};
     if std::io::stdin().is_terminal() && std::io::stderr().is_terminal() {
-        eprint!("    Install it now? [Y/n] ");
+        eprint!("Install the polkit policy now? [Y/n] ");
         let _ = std::io::stderr().flush();
         let mut answer = String::new();
         if std::io::stdin().read_line(&mut answer).is_ok() {
@@ -498,8 +524,6 @@ async fn print_polkit_warning(proxy: &PowerDaemonProxy<'_>) {
                 return;
             }
         }
-        eprintln!("    Skipped. Run `hpdctl fix-polkit` later to install it.");
-    } else {
-        eprintln!("    Fix it now:  hpdctl fix-polkit");
+        eprintln!("Skipped. Run `hpdctl fix-polkit` (or `hpdctl doctor --fix`) later.");
     }
 }
