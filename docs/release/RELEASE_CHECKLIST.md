@@ -6,6 +6,12 @@
 >
 > Only maintainers should follow this. If you're a contributor,
 > stop here and read [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md).
+>
+> **`main` is branch-protected.** Every change — including the version
+> bump — lands through a pull request (CI green → squash-merge), never a
+> direct `git push origin main`. Annotated **tags** are *not* protected
+> and are still pushed straight to `origin` (§4), which is what triggers
+> `release.yml`.
 
 ---
 
@@ -151,8 +157,8 @@ cargo audit
 cargo deny check
 ```
 
-If anything is yellow or red: **stop**. Fix on `main` first, then
-restart from the top of §1.
+If anything is yellow or red: **stop**. Fix it (via a PR into `main`),
+then restart from the top of §1 once `main` is green again.
 
 ---
 
@@ -219,9 +225,15 @@ If this is a stable release that has gone through one or more RCs,
 also merge any RC-only sections into the stable section (consumers
 don't want to read three separate sections for the same release).
 
-### 3d. Commit
+### 3d. Commit on a release branch and open the PR
+
+`main` is protected, so the bump lands through a pull request like any
+other change. Commit on a branch, push the branch, open the PR — don't
+tag yet.
 
 ```bash
+release_branch="release/v${new_version}"
+git checkout -b "${release_branch}"
 git add Cargo.toml Cargo.lock CHANGELOG.md
 git commit -m "Bump to ${new_version}
 
@@ -229,20 +241,46 @@ Promotes [Unreleased] → [${new_version}] in CHANGELOG.md. See that
 section for the full breaking-change inventory and the audit lote
 references.
 "
+git push -u origin "${release_branch}"
+gh pr create --base main --head "${release_branch}" \
+    --title "Bump to ${new_version}" \
+    --body "Release bump for v${new_version} — see the CHANGELOG section for the inventory."
 ```
 
-Push the commit to `main` first; don't tag yet.
+> A release PR may bundle the feature work *and* the bump (one PR), or
+> bump a series of already-merged feature PRs (bump-only). Either is
+> fine; the CHANGELOG section just has to be finalised before the tag.
+
+Wait for the PR's CI to go green, then **squash-merge** it (the house
+style — merged commits carry the `(#NN)` PR suffix) and delete the
+branch:
 
 ```bash
-git push origin main
+gh pr checks --watch          # blocks until every check finishes
+gh pr merge --squash --delete-branch
 ```
 
-Wait for CI to go green on `main`. If anything fails, fix it as a
-follow-up commit on `main` and re-run.
+If CI fails, push a follow-up commit to the same branch and let the
+checks re-run — never tag a red PR.
+
+Finally, fast-forward local `main` to the squash-merge commit; the tag
+in §4 must point at **that** commit, not at your pre-merge branch HEAD:
+
+```bash
+git checkout main
+git pull --ff-only origin main
+git rev-parse --short HEAD      # note it — this is what v${new_version} will tag
+```
 
 ---
 
 ## 4. Tag and trigger the release workflow
+
+> **Precondition:** the §3d bump PR is merged and your local `main` is
+> fast-forwarded onto it — `git rev-parse HEAD` must equal
+> `git rev-parse origin/main`. You are tagging that merged commit.
+> (Tags bypass branch protection, so the `git push origin "v…"` below
+> works as a direct push.)
 
 ### 4a. Create the annotated tag
 
@@ -369,15 +407,23 @@ is a no-op (the script detects "no changes to push").
 
 ## 6. Post-release housekeeping
 
-### 6a. Open a new `[Unreleased]` section
+### 6a. Re-open an `[Unreleased]` section (optional)
+
+In practice this repo lands each release's CHANGELOG entry **inside the
+§3d release PR** (a dated `## [X.Y.Z]` section, no floating
+`[Unreleased]`), so there is usually nothing to do here. Skip unless you
+deliberately keep an `[Unreleased]` heading for contributors to target.
+
+If you do, it goes through a PR like any other `main` change — never a
+direct push:
 
 ```bash
 git checkout main
 git pull --ff-only origin main          # picks up the bump commit + tag
+git checkout -b chore/reopen-unreleased
 ```
 
-Add a fresh top section to `CHANGELOG.md` so future contributors
-have a place to land their entries:
+Add a fresh top section to `CHANGELOG.md`:
 
 ```markdown
 ## [Unreleased]
@@ -393,7 +439,9 @@ have a place to land their entries:
 ```bash
 git add CHANGELOG.md
 git commit -m "Open [Unreleased] section for the next release cycle"
-git push origin main
+git push -u origin chore/reopen-unreleased
+gh pr create --base main --fill
+gh pr merge --squash --delete-branch
 ```
 
 ### 6b. Announce
@@ -428,15 +476,16 @@ broken release — see [`PIPELINE.md` §7](PIPELINE.md#7-rollback-policy).
 The annotated tag exists on `origin` but no GitHub Release was
 created. Two options:
 
-1. Fix-forward: push a follow-up commit to `main`, delete the tag,
-   re-tag the new HEAD, push:
+1. Fix-forward: delete the tag, land the fix on `main` through a PR,
+   then re-tag the new `main` HEAD and push:
 
    ```bash
    git tag -d "v${new_version}"
    git push --delete origin "v${new_version}"
-   # fix the issue, commit, push
+   # fix the issue on a branch, open a PR, squash-merge, then:
+   git checkout main && git pull --ff-only origin main
    git tag -a "v${new_version}" -m "..."
-   git push origin "v${new_version}"
+   git push origin "v${new_version}"        # tag push bypasses protection
    ```
 
 2. Bump to the next patch: skip the broken number entirely.
@@ -470,8 +519,8 @@ gh release upload "v${new_version}" SHA256SUMS.asc
 | Step                                    | Approx. time        |
 |-----------------------------------------|---------------------|
 | §1 Pre-release sanity                   | 5-10 min            |
-| §2-§3 Bump + CHANGELOG + commit + push  | 10 min              |
-| (Wait for `main` CI to go green)        | 8-12 min            |
+| §2-§3 Bump + CHANGELOG + branch + PR    | 10 min              |
+| (Wait for PR CI green + squash-merge)   | 8-12 min            |
 | §4 Tag + push + `release.yml` to finish | 10-15 min           |
 | §5 AUR update (manual)                  | 5 min if scripted   |
 | §6a Re-open [Unreleased] + push         | 2 min               |
@@ -483,4 +532,5 @@ average closer to 30 minutes once the muscle memory is in place.
 
 ---
 
-*Last updated: 2026-05-24 (Phase 5 — Lote 49).*
+*Last updated: 2026-06-03 — release flow moved to PR + squash-merge
+(main is branch-protected); tags still push directly.*
