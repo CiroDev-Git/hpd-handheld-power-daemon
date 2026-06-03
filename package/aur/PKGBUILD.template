@@ -16,6 +16,7 @@ url="https://github.com/CiroDev-Git/hpd-handheld-power-daemon"
 license=('GPL-3.0-or-later')
 depends=('dbus' 'polkit' 'systemd')
 makedepends=('rust' 'cargo' 'pkgconf' 'systemd-libs')
+conflicts=('power-profiles-daemon')
 backup=('etc/hpd/config.toml.example')
 install="hpd.install"
 options=(!debug)

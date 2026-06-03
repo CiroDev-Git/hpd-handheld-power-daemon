@@ -11,6 +11,30 @@ not part of the published repository.
 
 ---
 
+## [2.2.3] — 2026-06-03
+
+### Fixed
+
+- **`hpd.service` reliably survives boot on images that ship
+  `power-profiles-daemon` (CachyOS, SteamOS-based).** The v2.2.2 fix
+  (`After=power-profiles-daemon.service`) solved the systemd startup race
+  but not the D-Bus activation path: KDE Plasma / Gamescope request
+  `net.hadess.PowerProfiles` one second into the user session, which
+  D-Bus-activates PPD; the symmetric `Conflicts=` then kills hpd. The
+  fix is to *mask* PPD — masking blocks both systemd and D-Bus activation.
+  The AUR `post_install` and `post_upgrade` hooks now call
+  `_neutralize_ppd()` which runs `systemctl disable --now` + `mask`
+  when the unit exists, automatically and without user intervention.
+  Both PKGBUILDs also declare `conflicts=('power-profiles-daemon')` so
+  pacman prevents co-installation at the package-manager level.
+  The detect-and-warn block added in v2.2.2 is removed — action
+  supersedes warning. The `hpdctl doctor --fix` reference in the
+  install message is narrowed to steamos-manager, which still requires
+  it. `After=` + `Conflicts=` in `hpd.service` are kept as a safety
+  net for `install.sh` deployments that do not run pacman hooks.
+
+---
+
 ## [2.2.2] — 2026-06-03
 
 ### Fixed
