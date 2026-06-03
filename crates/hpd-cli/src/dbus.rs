@@ -73,4 +73,10 @@ trait PowerDaemon {
     /// The call errors against a daemon predating this method; callers
     /// degrade to "unknown / update hpd".
     fn get_power_conflicts(&self) -> zbus::Result<Vec<String>>;
+
+    /// Friendly names of power-adjacent advisory daemons currently live on
+    /// the bus (today Feral `gamemoded`). Reported, never masked. Empty when
+    /// none is live. The call errors against a daemon predating this method;
+    /// callers degrade to "unknown / update hpd".
+    fn get_advisory_daemons(&self) -> zbus::Result<Vec<String>>;
 }

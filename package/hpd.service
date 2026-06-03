@@ -10,6 +10,19 @@ Wants=dbus.service
 # The AUR post_install hook masks PPD (blocks both systemd and D-Bus
 # activation). After= + Conflicts= remain here as a safety net for
 # manual installs (install.sh) that do not run the pacman hooks.
+#
+# DELIBERATELY scoped to PPD only — do NOT add tuned or hhd here, even
+# though hpd detects them as hard rivals (hpd_dbus::conflicts):
+#   * Conflicts= is symmetric, so it only helps against a rival that is
+#     ALSO masked. tuned is D-Bus-activatable (Type=dbus,
+#     BusName=com.redhat.tuned): an unmasked `Conflicts=tuned.service`
+#     lets the bus revive tuned and kill *hpd* — the exact v2.2.2
+#     regression. With a mask it is redundant.
+#   * hhd cannot be targeted at all: it runs as the templated
+#     hhd@<user>.service whose instance name is unknown at package time.
+#   * Unlike PPD (a headless service safe to mask silently), tuned and hhd
+#     are user-chosen stacks. Neutralizing them is opt-in and informed via
+#     `hpdctl doctor --fix`, never an automatic unit Conflicts= or hook.
 Conflicts=power-profiles-daemon.service
 
 [Service]

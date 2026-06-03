@@ -241,33 +241,73 @@ from the user-side CLI.
 
 ### Competing power daemons
 
-hpd expects to be the **sole** manager of the platform power knobs. Two
-system daemons seen on handheld images write the *same* surfaces and so
-fight it: `power-profiles-daemon` (owns `platform_profile` + EPP) and
-Valve's `steamos-manager` (the TDP / charge / fan backend behind Steam
-Game Mode's performance panel). Co-running either makes the last writer
-win and the effective state flap.
+hpd expects to be the **sole** manager of the platform power knobs.
+Several daemons seen on handheld images write the *same* surfaces and so
+fight it; co-running any makes the last writer win and the effective state
+flap. They split two ways:
+
+- **Hard rivals** (must not co-run — `doctor --fix` masks them):
+  `power-profiles-daemon` (`platform_profile` + EPP), Valve's
+  `steamos-manager` (TDP / charge / fan behind Game Mode), `tuned`
+  (Fedora/Bazzite's default tuner; its `tuned-ppd` shim also claims the PPD
+  name), and `hhd` (Handheld Daemon — Bazzite's Ally default).
+- **Advisory** (wanted, so reported but *never* masked): Feral `gamemoded`
+  (governor boost during games), `asusd` (also drives platform profile /
+  fan / charge on ASUS, **but** owns keyboard RGB / Aura so masking it is
+  the wrong call), and `auto-cpufreq` (governor / EPP only).
 
 Same split as polkit — **the daemon detects, the CLI repairs, the package
 only informs:**
 
-- **Detect.** `hpd_dbus::conflicts::power_conflicts` (single source of
-  truth for the rival list in `hpd-dbus/src/conflicts.rs`) asks the bus
-  `NameHasOwner` for each rival's well-known name — which does **not**
-  D-Bus-activate, so checking never revives a masked rival. The daemon
-  runs this at startup (loud warning) and exposes it live over D-Bus via
-  `get_power_conflicts() -> Vec<String>`.
-- **Repair.** `hpdctl doctor` (`hpd-cli/src/doctor.rs`) reports both the
-  polkit and conflict health; `hpdctl doctor --fix` `disable --now` +
+- **Detect.** `hpd_dbus::conflicts` is the single source of truth, with two
+  detection mechanisms because not every rival owns a bus name:
+  - **By D-Bus name** (`RIVAL_POWER_DAEMONS`, `ADVISORY_POWER_DAEMONS`):
+    `NameHasOwner`, which does **not** D-Bus-activate, so checking never
+    revives a masked rival.
+  - **By active systemd unit** (`RIVAL_UNITS`, `ADVISORY_UNITS`): for
+    daemons with no bus name (`hhd`, `auto-cpufreq`), a read-only
+    `org.freedesktop.systemd1` `ListUnitsByPatterns` query (allowed under
+    `ProtectSystem=strict`; it inspects, never starts, a unit).
+
+  `power_conflicts()` (hard rivals) and `advisory_daemons()` each union both
+  mechanisms. The daemon runs `power_conflicts` at startup (loud warning)
+  and exposes both live over D-Bus via `get_power_conflicts() -> Vec<String>`
+  and `get_advisory_daemons() -> Vec<String>`. The rival and advisory lists
+  are kept disjoint across **both** axes by a regression test, so
+  `doctor --fix` never masks a daemon it only meant to report.
+
+  **Undetectable by design:** a tool that writes TDP from inside another
+  process — a Decky plugin (SimpleDeckyTDP, PowerControl) in the plugin
+  loader, or a manual `ryzenadj` — owns no service or bus name, so neither
+  mechanism sees it.
+- **Repair.** `hpdctl doctor` (`hpd-cli/src/doctor.rs`) reports the polkit,
+  conflict, advisory (GameMode) and gamescope-session health via the shared
+  `doctor::print_health` renderer; `hpdctl doctor --fix` `disable --now` +
   `mask`s the rival system units and installs the polkit policy (reusing
   `fix.rs`) in one elevated step — a superset of `fix-polkit`. The
   per-user `steamos-manager` proxy is masked as the invoking user before
   elevating (a root `pkexec` child can't target `systemctl --user`
   cleanly). The daemon **cannot** do this itself (`ProtectSystem=strict`).
+  `hpdctl status` ends with the **same** `print_health` block (wrapped in
+  the dashboard frame) so the everyday status command answers "is anything
+  overriding hpd?" with an explicit all-clear. The gamescope-session hint
+  is detected client-side in the CLI (the daemon, a root system service,
+  does not see the user's session env).
 - **Inform.** `package/hpd.service` declares
   `Conflicts=power-profiles-daemon.service` (starting hpd stops PPD; the
   D-Bus-activated `steamos-manager` is left to `doctor --fix`), and the
-  AUR `post_install` points at `hpdctl doctor --fix`.
+  AUR `post_install` points at `hpdctl doctor --fix`. The unit-level
+  `Conflicts=`/`After=` and the `post_install` mask are **PPD-only by
+  design** — they are *not* extended to the newer hard rivals `tuned` and
+  `hhd`. `Conflicts=` is symmetric, so it only helps against an
+  already-masked rival; a D-Bus-activatable one like `tuned` would
+  otherwise be revived by the bus and kill *hpd* (the v2.2.2 regression),
+  and `hhd`'s templated `hhd@<user>.service` cannot be named at package
+  time at all. PPD uniquely earns automatic neutralization (a headless,
+  ubiquitous, boot-race-proven service safe to mask silently); `tuned` and
+  `hhd` are user-chosen stacks, so their neutralization stays opt-in via
+  `hpdctl doctor --fix`. The header comment in `package/hpd.service`
+  records this so it is not "helpfully" re-added.
 
 ### Configuration
 
@@ -432,8 +472,8 @@ and exits cleanly rather than letting systemd `SIGKILL` it mid-write.
 | Polkit fail-closed contract                       | `hpd-dbus/src/polkit.rs`                             |
 | Polkit registration self-check                    | `hpd-dbus/src/polkit.rs::missing_actions` + `hpd-daemon/src/main.rs` startup check + `install.sh` step 5 |
 | Polkit one-command repair (`hpdctl fix-polkit`)   | `hpd-cli/src/fix.rs`                                 |
-| Competing power-daemon detection                  | `hpd-dbus/src/conflicts.rs` + `hpd-daemon/src/main.rs` startup check + `get_power_conflicts` in `hpd-dbus/src/service.rs` |
-| Power-ownership repair (`hpdctl doctor`)          | `hpd-cli/src/doctor.rs`                              |
+| Competing power-daemon detection                  | `hpd-dbus/src/conflicts.rs` + `hpd-daemon/src/main.rs` startup check + `get_power_conflicts` / `get_advisory_daemons` in `hpd-dbus/src/service.rs` |
+| Power-ownership repair + shared health block      | `hpd-cli/src/doctor.rs` (`doctor::print_health`, reused by `hpdctl status`) |
 | Config schema + reload behaviour                  | `hpd-daemon/src/config.rs`                           |
 | Composition root / signal wiring                  | `hpd-daemon/src/main.rs`                             |
 | Suspend/resume                                    | `hpd-daemon/src/suspend.rs`                          |

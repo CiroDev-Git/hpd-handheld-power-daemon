@@ -450,6 +450,26 @@ impl PowerDaemonInterface {
     ) -> Vec<String> {
         crate::conflicts::power_conflicts(conn).await
     }
+
+    /// Friendly names of power-adjacent advisory daemons currently live on
+    /// the bus (today Feral `gamemoded`, activated by Steam / Lutris around
+    /// a running game).
+    ///
+    /// Unlike `get_power_conflicts`, these are not rivals to neutralize:
+    /// they may raise the CPU governor while a game runs, which is wanted,
+    /// so `hpdctl doctor` in fix mode reports them but never masks them. An
+    /// empty list means no advisory daemon is live. The call errors against a
+    /// daemon predating this method; callers degrade to "unknown". See
+    /// [`crate::conflicts`].
+    //
+    // NOTE: keep this doc-comment free of `--` (two ASCII hyphens) for the
+    // same XML-introspection reason documented on `get_power_conflicts`.
+    async fn get_advisory_daemons(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+    ) -> Vec<String> {
+        crate::conflicts::advisory_daemons(conn).await
+    }
 }
 
 #[cfg(test)]
