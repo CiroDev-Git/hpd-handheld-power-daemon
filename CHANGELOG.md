@@ -11,6 +11,29 @@ not part of the published repository.
 
 ---
 
+## [2.2.2] — 2026-06-03
+
+### Fixed
+
+- **`hpd.service` now reliably wins the boot-time conflict with
+  `power-profiles-daemon`.** Both units are `WantedBy=multi-user.target`
+  and systemd starts them in parallel; without an explicit ordering,
+  whichever finishes starting *last* stops the other (systemd `Conflicts=`
+  is symmetric). On CachyOS and similar distributions that ship
+  `power-profiles-daemon` enabled by default, PPD frequently won the race
+  and killed hpd — the daemon would disappear after every reboot, and
+  D-Bus callers would receive `org.freedesktop.DBus.Error.ServiceUnknown`
+  ("name is not activatable"). The fix adds
+  `After=power-profiles-daemon.service` to `[Unit]`, pairing it with the
+  existing `Conflicts=` as the systemd documentation recommends. hpd now
+  always starts after PPD and deterministically stops it via the conflict,
+  regardless of whether the user has run `hpdctl doctor --fix`. The
+  `post_install` hook also now emits a prominent warning when
+  `power-profiles-daemon` is detected active at install time. Regression
+  introduced in v2.2.0 when `Conflicts=` was added without `After=`.
+
+---
+
 ## [2.2.1] — 2026-06-01
 
 ### Fixed
