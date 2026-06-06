@@ -229,7 +229,9 @@ See [`docs/fan-curves.md`](docs/fan-curves.md) for the thermal rationale
 and [`docs/dev/FAN_CURVE_TESTING.md`](docs/dev/FAN_CURVE_TESTING.md) for
 the on-device validation plan. A plain-language explainer in Spanish
 (the power↔cooling decouple, auto vs manual, what changed and why) lives
-in [`docs/COOLING-es.md`](docs/COOLING-es.md).
+in [`docs/COOLING-es.md`](docs/COOLING-es.md). For a **visual** walkthrough
+(diagrams of the daemon, the Decky plugin, and how they talk — every
+combination, for dummies) see [`docs/DIAGRAMS-es.md`](docs/DIAGRAMS-es.md).
 
 ---
 

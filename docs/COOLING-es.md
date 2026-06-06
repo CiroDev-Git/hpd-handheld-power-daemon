@@ -6,6 +6,10 @@ Guía en español, sin tecnicismos, de cómo `hpd` maneja la **potencia** y el
 **enfriamiento** de tu consola. Si te perdiste entre "perfil", "modo",
 "curva", "EPP", "auto" — esto es para vos.
 
+> 🖼️ **¿Preferís verlo en diagramas?** Toda esta info en imágenes (el
+> daemon, el plugin y cómo se comunican, con todas las combinaciones) está
+> en [`DIAGRAMS-es.md`](DIAGRAMS-es.md).
+
 > **¿Cambió algo importante?** Sí. Antes el nivel de cooling **también
 > decidía cuánta potencia usaba el chip** (estaban pegados). Eso confundía:
 > ponías "TDP 25W" pero el chip a veces usaba 13W y no entendías por qué.

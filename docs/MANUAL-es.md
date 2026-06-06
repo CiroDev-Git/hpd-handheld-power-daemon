@@ -3,7 +3,8 @@
 # hpd — Manual de usuario 🇪🇸
 
 Todo lo que hace `hpd` hasta hoy, en un solo lugar y explicado simple.
-Versión en inglés: [`MANUAL.md`](MANUAL.md).
+Versión en inglés: [`MANUAL.md`](MANUAL.md). ¿Lo querés en **diagramas**?
+[`DIAGRAMS-es.md`](DIAGRAMS-es.md) (visual, para dummies).
 
 - [Qué es hpd](#qué-es-hpd)
 - [Las dos perillas: Potencia y Enfriamiento](#las-dos-perillas)
