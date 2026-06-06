@@ -12,6 +12,9 @@ pub type CurvePoints = Vec<(u32, u32)>;
 )]
 trait PowerDaemon {
     fn is_ac_connected(&self) -> zbus::Result<bool>;
+    /// The daemon's own version string (`CARGO_PKG_VERSION`). Errors
+    /// against a daemon predating this method → caller shows "unknown".
+    fn get_version(&self) -> zbus::Result<String>;
     fn get_hardware_limits(&self) -> zbus::Result<(u32, u32, u32, u32)>;
     async fn set_preset(&self, preset_name: &str) -> zbus::Result<()>;
     async fn set_spl(&self, watts: u32) -> zbus::Result<()>;
