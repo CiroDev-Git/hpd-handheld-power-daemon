@@ -203,33 +203,43 @@ hpdctl status                        # fans sane, not pinned at max
 
 ---
 
-## 6. Profile ↔ curve coupling (the default)
+## 6. Power ↔ cooling are decoupled
 
-`fan_curve_follows_profile` is **on by default**, so a cooling level
-moves the platform profile and the fan curve together. Verify both move:
+> **Model change.** Power and cooling are now independent. `cool set`
+> drives the **fan curve only** and must **not** move the
+> `platform_profile`; auto-cooling infers the *fan curve* from TDP, not the
+> profile. The profile defaults to `performance` (config
+> `default_platform_profile`). `fan_curve_follows_profile` is a no-op. See
+> [`../fan-curves.md` §6](../fan-curves.md#6-decoupling-power-from-cooling).
 
 ```bash
-# `cool set` moves both at once:
-hpdctl cool set silent     ; cat /sys/firmware/acpi/platform_profile ; hpdctl cool get  # power-saver / silent
-hpdctl cool set aggressive ; cat /sys/firmware/acpi/platform_profile ; hpdctl cool get  # performance / aggressive
+# `cool set` changes the curve but NOT the platform_profile:
+cat /sys/firmware/acpi/platform_profile                                # performance (boot default)
+hpdctl cool set silent     ; cat /sys/firmware/acpi/platform_profile ; hpdctl cool get  # STILL performance / silent
+hpdctl cool set aggressive ; cat /sys/firmware/acpi/platform_profile ; hpdctl cool get  # STILL performance / aggressive
 
-# auto mode: the curve follows the TDP-inferred profile
+# auto mode: the curve follows TDP; the profile stays put:
 hpdctl cool auto
-hpdctl tdp set 8  ; sleep 1 ; cat /sys/firmware/acpi/platform_profile ; hpdctl cool get  # low  → power-saver / silent
-hpdctl tdp set 30 ; sleep 1 ; cat /sys/firmware/acpi/platform_profile ; hpdctl cool get  # high → performance / aggressive
+hpdctl tdp set 8  ; sleep 1 ; cat /sys/firmware/acpi/platform_profile ; hpdctl cool get  # performance / silent
+hpdctl tdp set 30 ; sleep 1 ; cat /sys/firmware/acpi/platform_profile ; hpdctl cool get  # performance / aggressive
+
+# the power lever is separate (and decoupled from cooling):
+hpdctl --help | grep -i profile   # or via D-Bus set_profile
 ```
 
 | Check | Expect |
 |---|---|
-| 6.1 | `cool set <level>` moves both the `platform_profile` and the curve |
-| 6.2 | in auto mode, a TDP change that crosses a threshold re-infers the profile *and* the curve together |
-| 6.3 (advanced) | with `fan_curve_follows_profile = false` (config), a raw D-Bus `set_profile` leaves the curve unchanged |
+| 6.1 | `cool set <level>` moves the curve but leaves `platform_profile` unchanged (`performance`) |
+| 6.2 | in auto mode, a TDP change re-infers the **fan curve** only; the profile does not move |
+| 6.3 | `set_profile` (D-Bus) changes the profile without moving the curve; it does **not** flip `auto_cooling` |
 
 ---
 
 ## 7. AC plug/unplug chain
 
-With auto-cooling + follows on, plugging AC ramps TDP→max→performance→aggressive.
+With auto-cooling on, plugging AC ramps the TDP→max and the **fan curve**
+follows it to aggressive. The `platform_profile` stays at its default
+(`performance`) — it is not part of the AC chain any more.
 
 | Step | Action | Expect |
 |---|---|---|
@@ -289,12 +299,16 @@ the ACPI `platform_profile` (driven by **amd_pmf**) might be redundant —
 or it might silently **gate** the real power the chip is allowed to draw.
 This isolation test settles it.
 
-> **Result on ROG Xbox Ally X (RC73XA), 2026-05-29 — DECISIVE: keep it.**
-> Same all-core load, same `hpdctl tdp set 30`, same fan curve, only the
-> profile changed: `power-saver` → CPU **59 °C**, `performance` → CPU
-> **95 °C** (a **36 °C** swing). The profile gates the real power draw, so
-> it is the dominant performance/thermal lever — **not** removable. `hpd`
-> couples it to the fan curve under `cool`.
+> **Result on ROG Xbox Ally X (RC73XA) — the profile gates power.**
+> Same all-core load, same SPL, same fan curve, only the profile changed:
+> `power-saver` drew far less power (much cooler) than `performance`. The
+> profile is the dominant power lever — **not** removable.
+>
+> **Decision (updated): keep it, but DECOUPLE it from cooling.** Because a
+> quiet cooling level was silently throttling the chip, the profile is no
+> longer tied to `cool`. It defaults to `performance` (so the SPL is the
+> real limit) and is changed only via `set_profile`. See
+> [`../fan-curves.md` §6](../fan-curves.md#6-decoupling-power-from-cooling).
 
 No config change is needed — Test B varies the profile directly and the
 fan curve is irrelevant to the power measurement.
@@ -342,8 +356,9 @@ echo performance | sudo tee /sys/firmware/acpi/platform_profile >/dev/null;  sle
 
 - **performance clearly hotter / higher-power** than power-saver under
   identical load + fans → the profile **gates** the real power → **keep
-  it**; the daemon couples it to `cool` and must never remove it.
-  *(This is what RC73XA showed: 59 °C vs 95 °C.)*
+  it as a decoupled power lever** (default `performance`, set via
+  `set_profile`), **not** tied to `cool`. *(This is what RC73XA showed,
+  and why power and cooling were decoupled.)*
 - **identical under both** → the profile is vestigial once TDP + curve are
   controlled → remove the `PlatformProfile` capability + `SetProfile`.
 

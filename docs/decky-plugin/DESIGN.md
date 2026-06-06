@@ -168,10 +168,12 @@ mirrored from `crates/hpd-dbus/src/service.rs` and
 
 > **Mind the asymmetry.** `SetFanAuto` is a one-shot re-enable
 > (takes no args; reducer flips `fan_follows_tdp = true`). To turn
-> auto-cooling *off* the operator calls `SetProfile` with an explicit
-> profile — that flips `fan_follows_tdp = false` as a side effect.
-> There is no `SetFanAuto(false)`; the plugin's toggle UI maps "off"
-> to "the user must pick a manual profile".
+> auto-cooling *off* the operator calls `SetCoolingLevel` with an
+> explicit level — that flips `fan_follows_tdp = false` as a side
+> effect. There is no `SetFanAuto(false)`; the plugin's toggle UI maps
+> "off" to "the user picks a manual cooling level". (Post-decouple,
+> `SetProfile` is the **power** lever and no longer touches
+> `fan_follows_tdp`.)
 
 > **Reducer rejections are silent on the wire.** The D-Bus method
 > returns `Ok` as soon as the `Transition` is enqueued. If the
@@ -188,7 +190,7 @@ mirrored from `crates/hpd-dbus/src/service.rs` and
 | `CurrentSpl`          | `u`  | **W**    | Reflects last successful `SetSpl` (whole watts). |
 | `ActiveProfile`       | `s`  | opaque   | Daemon's canonical names are `power-saver` / `balanced` / `performance` (plus arbitrary `Custom(s)` vendor strings — `ProfileName::FromStr` accepts ACPI aliases `quiet` / `low-power` but `Display` normalises to `power-saver`). The plugin **must** treat the value as an opaque string — never branch on it. |
 | `ChargeEndThreshold`  | `y`  | %        | 20–100 (daemon-enforced). |
-| `AutoCooling`         | `b`  | —        | Mirrors `fan_follows_tdp` — `true` while the daemon is inferring the cooling profile from the TDP envelope. |
+| `AutoCooling`         | `b`  | —        | Mirrors `fan_follows_tdp` — `true` while the daemon is inferring the **fan curve** from the TDP envelope (decoupled from power; it does not change the platform profile). |
 
 > **`is_ac_connected` is NOT a `PropertiesChanged`-emitting property.**
 > It is a regular `IsAcConnected()` method — `current_spl`,
@@ -198,7 +200,10 @@ mirrored from `crates/hpd-dbus/src/service.rs` and
 > reach the daemon via the udev netlink monitor (the reducer
 > updates `ProfileState::is_ac_connected`) but no signal is emitted
 > on D-Bus. The plugin therefore has three honest options (§14):
-> 1. Poll `IsAcConnected()` on a low cadence (e.g. 5 s).
+> 1. Poll `IsAcConnected()` on a low cadence (e.g. 5 s). *(The daemon's
+>    `AC0`-node fix makes this polled value correct on the Xbox Ally X —
+>    it previously always read "battery" because the daemon probed the
+>    wrong sysfs node.)*
 > 2. Hide the AC indicator until a daemon-side signal lands.
 > 3. Push for a daemon patch adding `is_ac_connected` to the
 >    emitter (cheap; tracked in §27).

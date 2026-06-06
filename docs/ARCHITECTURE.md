@@ -115,7 +115,7 @@ calling backend methods directly from D-Bus handlers or monitors.
    │              +---------------------------+
    │              |      reduce()  PURE       |
    │              |   - validates invariants  |
-   │              |   - infers auto-profile   |
+   │              |   - infers auto fan curve |
    │              |   - returns (state', fx)  |
    │              +-------------┬-------------+
    │                            │ Vec<Effect>
@@ -142,21 +142,32 @@ calling backend methods directly from D-Bus handlers or monitors.
    Tracing inside `reduce()` is allowed but only via structured
    `tracing::info!` fields.
 2. **All side-effects via `Effect`.** Today: `ApplyPowerEnvelope`,
-   `ApplyPlatformProfile`, `ApplyChargeThreshold`, `PersistState`.
-   The Executor is the only thing that dispatches them.
+   `ApplyPlatformProfile`, `ApplyChargeThreshold`, `ApplyFanCurve`,
+   `ResetFanCurve`, `PersistState`. The Executor is the only thing that
+   dispatches them.
 3. **`ConfigReload` is intercepted *before* `reduce()` is called.**
    The Executor atomically swaps its `RuntimeConfig`. The next
    transition uses the new values. The reducer treats `ConfigReload`
    as a no-op so calling it in isolation in unit tests is harmless.
 
-### Auto-profile inference
+### Auto fan-curve inference (power/cooling decoupled)
 
-When `RuntimeConfig::fan_follows_tdp == true` and a TDP change comes
-through, `reduce()` infers the matching platform profile (via
-`inference::infer_profile_from_target`) and emits an
-`ApplyPlatformProfile` effect *in the same batch* as the
-`ApplyPowerEnvelope`. The executor does **not** re-inject any
-transition for this — single source of truth, no feedback loop.
+Power and cooling are independent levers. When
+`ProfileState::fan_follows_tdp == true` and a TDP change comes through,
+`reduce()` infers the matching **fan-curve preset** (via
+`inference::infer_fan_curve_from_spl`) and emits an `ApplyFanCurve` effect
+*in the same batch* as the `ApplyPowerEnvelope`. The executor does **not**
+re-inject any transition for this — single source of truth, no feedback
+loop.
+
+The ACPI `platform_profile` is **never** inferred from TDP: it is a
+decoupled power/EPP lever, programmed at boot from
+`DaemonConfig::default_platform_profile` (default `Performance`, so the SPL
+is the real usable limit) and only changed by the explicit `SetProfile`
+transition. `SetCoolingLevel` (`hpdctl cool set`) likewise drives the fan
+curve only. This replaced the pre-decouple behaviour where the cooling
+level and the TDP auto-follow both drove the platform profile, whose EPP
+silently clamped the SoC below the configured SPL.
 
 ### Rollback contract
 

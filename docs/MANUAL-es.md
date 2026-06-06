@@ -45,30 +45,35 @@ hpdctl preset eco|balanced|max   # atajos: min / medio / máximo
 
 ### 🧊 Enfriamiento (nivel + modo)
 
-Cuán fuerte enfría. **Importante:** el nivel de enfriamiento no es solo la
-velocidad del ventilador — también define **cuánta potencia real puede
-usar el chip** (ver [el gateo](fan-curves.md)). Una sola palanca, tres
-niveles:
+Cuán fuerte trabaja el **ventilador** — puro trade entre **ruido y
+temperatura**. El enfriamiento es **independiente de la potencia**: no
+cambia cuántos watts usa el chip (eso es el TDP, arriba). Una palanca,
+tres niveles:
 
-| Nivel | Ventilador | Potencia real |
+| Nivel | Ventilador | Efecto |
 |---|---|---|
-| `silent` | silencioso | baja (el chip queda limitado) |
-| `balanced` *(default)* | moderado | media |
-| `aggressive` | fuerte | full |
+| `silent` | silencioso | más tibio, casi sin ruido |
+| `balanced` *(default)* | moderado | el punto medio de siempre |
+| `aggressive` | fuerte | lo más fresco, lo más ruidoso |
 
 ```
-hpdctl cool set silent|balanced|aggressive   # elegí nivel (manual)
-hpdctl cool auto       # que hpd elija el nivel según el TDP
+hpdctl cool set silent|balanced|aggressive   # elegí nivel de fan (manual)
+hpdctl cool auto       # que hpd elija la curva según el TDP
 hpdctl cool reset      # devolver el ventilador al firmware
 hpdctl cool get        # ver nivel y modo
 hpdctl cool curve      # dibujar la curva activa
 ```
 
 **Auto vs manual:**
-- **Auto** (default): hpd elige el nivel según tu TDP. Poco TDP →
-  silencioso y fresco; mucho TDP → potencia full y ventiladores fuertes.
-  Todo queda coherente solo.
-- **Manual**: fijás un nivel y no se mueve, pase lo que pase con el TDP.
+- **Auto** (default): hpd elige la **curva del ventilador** según tu TDP.
+  Poco TDP → curva silenciosa; mucho TDP → curva agresiva. El ventilador
+  acompaña cuánto calor vas a generar, sin tocar nunca tu potencia.
+- **Manual**: fijás un nivel de fan y no se mueve, pase lo que pase con el TDP.
+
+> **Esto cambió en el desacople potencia↔cooling.** Antes el cooling
+> también capaba la potencia real (un nivel bajo frenaba el chip). Ya no —
+> `tdp set` es ahora la única palanca de potencia. La historia completa en
+> [el explicador del desacople](COOLING-es.md).
 
 ### 🔋 Límite de carga de batería (una tercera perilla, aparte)
 
@@ -102,46 +107,49 @@ SSH; a otros usuarios se les pide autenticarse.
 
 ## Qué hace cada combinación
 
-Las dos perillas interactúan. El panorama completo:
+Las dos perillas ahora son **independientes** — la potencia es potencia, el
+cooling es ventilador. Cualquier combinación es válida:
 
 | Hacés | En cooling **auto** | En cooling **manual** |
 |---|---|---|
-| `tdp set` bajo | hpd baja el nivel (silencioso, fresco) | el TDP aplica dentro de tu nivel fijo |
-| `tdp set` alto | hpd sube el nivel (potencia full, fans fuertes) | **solo aplica del todo si tu nivel es `aggressive`** |
-| `cool set <nivel>` | pasa a manual en ese nivel | setea ese nivel |
+| `tdp set` bajo | hpd elige una curva silenciosa | la potencia aplica; tu nivel de fan fijo queda |
+| `tdp set` alto | hpd elige una curva agresiva | la potencia aplica completa; tu nivel de fan fijo queda |
+| `cool set <nivel>` | pasa a manual en ese nivel de fan | setea ese nivel de fan |
 | `cool auto` | (ya está en auto) | vuelve a auto |
 
-**La única combinación a tener en cuenta:** *manual `silent` + un TDP
-alto.* Es contradictoria — "limitá mi potencia para estar silencioso" y
-"dame mucha potencia" al mismo tiempo. Gana el nivel de enfriamiento: el
-chip queda limitado y el TDP alto **no tiene efecto** (queda guardado pero
-inerte). Si querés que un TDP alto funcione de verdad, usá `cool auto` o
-`cool set aggressive`. **En modo auto esto nunca pasa**, porque el nivel
-siempre coincide con el TDP.
+**Ya no hay combinaciones contradictorias.** *Manual `silent` + un TDP
+alto* antes era una trampa (el nivel bajo capaba la potencia). Ahora
+significa exactamente lo que dice: **"usá todo el TDP, pero con el
+ventilador suave".** Los watts aplican completos; el chip simplemente
+corre más caliente porque trabaja fuerte con poco aire. Es tu decisión y
+hpd la respeta.
 
-## Cómo se asigna el cooling (vos nunca seteás el profile directo)
+## Cómo se relacionan cooling y potencia (están desacoplados)
 
-Por debajo, un nivel de cooling son *dos* cosas que se escriben juntas: el
-**platform profile** ACPI (que gatea la potencia real) y la **curva del
-ventilador**. Vos nunca seteás el profile a mano; el daemon asigna las dos,
-siempre juntas, en estos momentos:
+Cooling y potencia son dos palancas separadas:
+
+- **Potencia** = el TDP/SPL que ponés, más el **platform profile** ACPI
+  (EPP). El profile arranca en `performance` para que tu TDP sea el límite
+  real y usable — **no** se deriva de nada que hagas con el cooling.
+- **Cooling** = solo la **curva del ventilador** (ruido ↔ temperatura).
+
+El daemon escribe la **curva del ventilador** en estos momentos:
 
 | Cuándo | Qué setea el daemon |
 |---|---|
-| Corrés `cool set <nivel>` | Profile **y** curva → ese nivel (y pasa a manual). |
-| Corrés `cool auto` | Pasa a auto; el nivel se deriva del TDP actual. |
-| En **auto**, cambiás el TDP (`tdp set` / `preset`) | El nivel se re-deriva según dónde cae el TDP en el rango de tu hardware — `< 33 %` → silent, `33–67 %` → balanced, `> 67 %` → aggressive — y si cruza una franja, profile + curva se actualizan juntos. |
-| Volver de suspensión | Se re-aplican el profile + la curva activos (el firmware los puede perder al dormir). |
-| Enchufar AC | El TDP sube; en auto, el nivel lo sigue. |
-| Arranque | Se restaura tu último cooling guardado. |
+| Corrés `cool set <nivel>` | La curva → ese nivel (y pasa a manual). La potencia no se toca. |
+| Corrés `cool auto` | Pasa a auto; la curva se deriva del TDP actual. |
+| En **auto**, cambiás el TDP (`tdp set` / `preset`) | La curva se re-deriva según dónde cae el TDP en el rango — `< 33 %` → silent, `33–67 %` → balanced, `> 67 %` → aggressive. El platform profile **no** se toca. |
+| Volver de suspensión | Se re-aplican la curva (y el profile) activos (el firmware los puede perder al dormir). |
+| Enchufar AC | El TDP sube; en auto, la curva lo sigue. |
+| Arranque | El platform profile se pone en el default configurado (`performance`); tu última curva guardada se restaura. |
 
-O sea, el platform profile **sí** es importante — es la palanca dominante
-de potencia (a un TDP fijo, el chip consume mucho menos en `silent` que en
-`aggressive`). Pero lo manejás a través del **nivel de cooling**, nunca
-directo. Ya no es un comando del CLI a propósito; la única forma de tocar el
-profile crudo *decoplado* de la curva es el método D-Bus avanzado
-`set_profile` con `fan_curve_follows_profile = false` — que el 99 % de los
-usuarios nunca necesita.
+El **platform profile** es la palanca de potencia/EPP. Arranca en
+`performance` (para que tu TDP sea totalmente usable) y nunca se deriva del
+cooling ni del TDP. Los usuarios avanzados pueden cambiarlo en
+`/etc/hpd/config.toml` (`default_platform_profile = "balanced"` /
+`"power-saver"`) o en vivo por D-Bus (`set_profile`) para sesgar la
+eficiencia — el 99 % lo deja como está.
 
 ## Configuraciones recomendadas
 
@@ -158,22 +166,23 @@ usuarios nunca necesita.
 
 | Objetivo | Setup | Resultado |
 |---|---|---|
-| **Que funcione solo (recomendado)** | `cool auto` + `preset balanced` (o dejar los defaults) | El cooling siempre coincide con la potencia; no hay que vigilar nada. |
-| **Máximo rendimiento** (dock / enchufado) | `cool set aggressive` + `preset max` (o `tdp set <alto>`) | Potencia full, fans al máximo, lo más fresco que el chip puede estar a tope (~95 °C). Ruidoso. |
-| **Silencioso y mucha batería** (lectura, video, emulación liviana) | `cool set silent` + `preset eco` | Poca potencia, silencioso, fresco, mucha batería. |
-| **Equilibrado de todos los días** | `cool auto` (el default) | El daemon elige el nivel según tu TDP. |
+| **Que funcione solo (recomendado)** | `cool auto` + `preset balanced` (o dejar los defaults) | La curva del ventilador siempre acompaña tu potencia; no hay que vigilar nada. |
+| **Máximo rendimiento** (dock / enchufado) | `preset max` (o `tdp set <alto>`) + `cool set aggressive` | Potencia full, fans al máximo — lo más fresco a tope. Ruidoso. |
+| **Silencioso y mucha batería** (lectura, video, emulación liviana) | `preset eco` + `cool set silent` | Poca potencia (fresco y mucha batería) con fans casi mudos. |
+| **Potencia full pero silencioso** | `tdp set <alto>` + `cool set silent` | Los watts aplican completos; los fans quedan suaves, así que el chip corre más caliente. Ahora es una opción válida. |
+| **Equilibrado de todos los días** | `cool auto` (el default) | El daemon elige la curva según tu TDP. |
 
 ### Checklist de "config perfecta"
 
 1. **Batería:** corré `hpdctl charge set 80` una vez — lo más importante
    para la salud de la batería a largo plazo.
-2. **Dejá `cool auto`** salvo que tengas un motivo para fijar un nivel.
-3. Usá **`preset`** para cambios rápidos, **`tdp set`** para un wattaje exacto.
+2. Usá **`tdp set`** (o `preset`) como tu única palanca de **potencia** — el
+   valor que pongas es el límite real ahora.
+3. **Dejá `cool auto`** salvo que quieras fijar los fans más fuertes o más suaves.
 4. Mirá `hpdctl status`: la línea **Power** muestra el consumo real al lado
    de tu tope, así ves si estás limitado por potencia.
-5. **Evitá** manual `silent` + un TDP alto — es contradictorio (el nivel
-   bajo capa la potencia, así que el TDP alto no hace nada). Usá `cool auto`
-   o `cool set aggressive` cuando querés que los watts realmente apliquen.
+5. ¿Querés **potencia full con fans suaves** (o al revés)? Dale — las dos
+   perillas son independientes ahora, así que ninguna combinación está "mal".
 
 ## Leer el tablero (status)
 
@@ -189,9 +198,12 @@ usuarios nunca necesita.
 - **Power** = los watts que el chip está usando *ahora mismo*, al lado del
   tope (TDP) que pusiste. En reposo está bajo; bajo carga sube hacia el
   tope (y puede pasarlo un instante, por el boost). Si "now" se queda muy
-  por debajo del tope bajo carga pesada, algo más te está limitando (por
-  ejemplo un nivel de cooling bajo — ver [combinaciones](#qué-hace-cada-combinación)).
-- **Cooling `(auto)`** = el nivel sigue al TDP. `(manual)` = lo fijaste vos.
+  por debajo del tope en un juego pesado de GPU, ese juego simplemente no
+  usa todo el presupuesto — el cooling ya no limita la potencia. (Si
+  ponés un platform profile `power-saver`, *eso* sí lo mantendría por
+  debajo de tu TDP — pero el default `performance` no.)
+- **Cooling `(auto)`** = la curva del ventilador sigue al TDP. `(manual)` =
+  fijaste un nivel de fan.
 - **Temps / Fans** son lecturas en vivo, directo del hardware.
 
 ## Dibujar la curva del ventilador
@@ -232,12 +244,15 @@ fuertes significan que el enfriamiento funciona, no que falla.**
 |---|---|
 | 40–70 °C | Fresco. Reposo o uso liviano. |
 | 70–90 °C | Tibio. Totalmente normal bajo carga. |
-| 90–100 °C | Caliente pero **dentro de especificación** — estos APU aguantan ~100 °C. Normal a potencia full (`aggressive`). Si los fans trabajan fuerte, el enfriamiento está haciendo su trabajo. |
-| 100 °C sostenido con tirones | El chip está *throttleando* (bajando solo) para protegerse — no se daña, pero perdés rendimiento. Bajá el nivel de cooling o el TDP, o revisá si hay polvo / rejillas tapadas. |
+| 90–100 °C | Caliente pero **dentro de especificación** — estos APU aguantan ~100 °C. Normal con un TDP alto en un juego pesado. Si los fans trabajan fuerte, el enfriamiento está haciendo su trabajo. |
+| 100 °C sostenido con tirones | El chip está *throttleando* (bajando solo) para protegerse — no se daña, pero perdés rendimiento. Bajá el **TDP** (menos calor) y/o subí el nivel de **cooling** (más aire), o revisá si hay polvo / rejillas tapadas. |
 
-✅ **Normal:** 95 °C en `aggressive` con los fans al máximo — es el chip a
-potencia full. Elegí `balanced` (≈68 °C) o `silent` (≈58 °C) si lo querés
-más fresco.
+La temperatura ahora sigue tu **TDP** (cuán fuerte trabaja el chip), y el
+nivel de **cooling** cambia ruido del fan por unos grados a esa potencia:
+
+✅ **Normal:** ~78 °C en un juego de 40 W con fans `aggressive` (medido en
+el Xbox Ally X). ¿Lo querés más fresco? **Bajá el TDP.** ¿Más silencioso?
+**Bajá el nivel de cooling** (correrá un poco más caliente).
 
 ⚠️ **Para prestar atención:** temperatura alta (85 °C+) con los fans
 **lentos** — eso significa que los fans *no* están subiendo (un fan
@@ -267,9 +282,9 @@ ruido de traqueteo/rozamiento (problema físico).
 
 ## Comportamiento con AC, batería y al despertar
 
-- **Enchufar AC:** hpd sube la potencia (y, en cooling auto, el nivel con
-  ella), y restaura tu config de batería al desenchufar.
-- **Volver de suspensión:** hpd re-aplica tu potencia, perfil de cooling,
+- **Enchufar AC:** hpd sube la potencia (y, en cooling auto, la curva del
+  ventilador la sigue), y restaura tu config de batería al desenchufar.
+- **Volver de suspensión:** hpd re-aplica tu potencia, platform profile,
   tope de carga y curva de ventilador — arreglando el bug donde los fans
   arrancaban a tope al despertar.
 - **Reinicio:** tus últimos ajustes se restauran del disco.
@@ -282,8 +297,8 @@ debería reflejar eso: un control de cooling, no tres.
 
 | Método / propiedad | Uso |
 |---|---|
-| `SetCoolingLevel(s)` | El control principal: `silent`/`balanced`/`aggressive` → perfil + curva juntos. |
-| `SetFanAuto()` | El cooling sigue al TDP (modo auto). |
+| `SetCoolingLevel(s)` | El control de cooling: `silent`/`balanced`/`aggressive` → **solo la curva** (la potencia no se toca). |
+| `SetFanAuto()` | La curva sigue al TDP (modo auto). |
 | `ResetFanCurve()` | Fans al firmware. |
 | `GetThermalStatus() → (i,i,i,i)` | En vivo `(cpu_temp, gpu_temp, cpu_rpm, gpu_rpm)`; `i32::MIN` = sensor ausente. |
 | `GetFanCurve() → (a(uu), a(uu))` | Los 8 puntos `(temp,pwm)` de las curvas CPU y GPU, para dibujar el gráfico. |
@@ -291,19 +306,26 @@ debería reflejar eso: un control de cooling, no tres.
 | `auto_cooling` (prop) | `true` = auto, `false` = manual. |
 | `current_spl`, `active_profile`, `charge_end_threshold`, `is_ac_connected` | Estado de potencia / perfil / batería / AC. |
 | `SetSpl(u)`, `SetPreset(s)`, `SetChargeThreshold(y)` | Setters de potencia y batería. |
-| `SetProfile(s)`, `SetFanCurve(s)` | Controles crudos y decoplados (avanzado; solo tienen sentido con `fan_curve_follows_profile = false`). |
+| `SetProfile(s)` | La palanca de potencia (`performance`/`balanced`/`power-saver`), decoplada del cooling. |
+| `SetFanCurve(s)` | Set crudo de la curva (avanzado). |
 
-**UI sugerida:**
+**UI sugerida (post-desacople):**
+- Un slider de **TDP** — *este es el control de potencia* (`current_spl` /
+  `SetSpl`, rango desde `GetHardwareLimits`).
 - Un selector de **Cooling**: Silent / Balanced / Aggressive + un toggle
-  **Auto**. (Nivel desde `fan_curve`, modo desde `auto_cooling`.)
-- Un slider de **TDP** (`current_spl` / `SetSpl`, rango desde
-  `GetHardwareLimits`).
+  **Auto**, etiquetado como control **solo de ventilador** (ruido ↔
+  temperatura), no de potencia. (Nivel desde `fan_curve`, modo desde
+  `auto_cooling`.)
+- **Opcional, "Modo de energía" avanzado** (`active_profile` /
+  `SetProfile`): Performance / Balanced / Eco, claramente separado de
+  Cooling. Default Performance; se puede ocultar para la mayoría.
 - **Lecturas en vivo** desde `GetThermalStatus` (temps + RPM) y un gráfico
   opcional de la curva desde `GetFanCurve`.
 - Un control de **tope de batería** (`charge_end_threshold` /
   `SetChargeThreshold`).
-- Mostrá un aviso suave si el usuario fija un nivel de cooling bajo
-  mientras pide un TDP alto (ver "la única combinación a tener en cuenta").
+- **Indicador de AC:** polleá `is_ac_connected` (el daemon no emite
+  `PropertiesChanged` para esto). El fix del nodo `AC0` hace que el valor
+  polleado sea correcto en el Xbox Ally X.
 
 Para el razonamiento térmico y los datos detrás de todo esto, ver
 [`fan-curves.md`](fan-curves.md).
