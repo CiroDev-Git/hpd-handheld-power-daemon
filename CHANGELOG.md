@@ -11,6 +11,24 @@ not part of the published repository.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Reported state could diverge from the hardware after a cold boot.**
+  The daemon only re-applied the platform profile and fan curve at boot
+  and trusted the persisted `power_target` / `charge_end_threshold`
+  without writing them — but a cold boot resets several firmware knobs to
+  their defaults (e.g. `platform_profile` → `balanced`, charge limit →
+  100%). The daemon then reported a value the device no longer had (a
+  user's 80% charge limit was silently lost yet still shown as 80%), and
+  the chip could sit at `balanced` clamping power below the user's TDP.
+  Boot now **re-asserts the full intended state** (envelope + profile +
+  charge + fan curve) onto the hardware unconditionally — the same path
+  resume uses — so what the daemon (and the Decky plugin) report always
+  matches the device, and the user's TDP / charge / cooling are restored
+  after a firmware reset. Found + verified on-device on the Xbox Ally X.
+
 ## [2.4.0] — 2026-06-06
 
 ### Added
