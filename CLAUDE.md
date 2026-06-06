@@ -348,6 +348,7 @@ to override defaults; existing `config.toml` is never overwritten by
 
 | Signal     | Source                       | Daemon response                                                                 |
 |------------|------------------------------|---------------------------------------------------------------------------------|
+| Boot       | daemon startup               | Build the initial state (re-reading AC + platform profile from hardware, overriding `active_profile` to the configured default), then push `Transition::SystemResumed` to **re-assert the full intended state** (envelope + profile + charge + fan curve) onto the hardware — so the reported state matches the device even after a cold boot reset firmware knobs (profile → balanced, charge → 100 %, …) to their defaults. |
 | SIGINT     | Ctrl+C in a terminal         | `Transition::Shutdown` → reducer emits `PersistState` → executor drains and exits → daemon closes D-Bus → process returns. |
 | SIGTERM    | systemd `stop` / `restart`   | Same as SIGINT.                                                                 |
 | SIGHUP     | `systemctl reload` / manual  | Reload `/etc/hpd/config.toml`; push `ConfigReload(new.to_runtime())`. Daemon keeps running. |
@@ -449,6 +450,14 @@ and exits cleanly rather than letting systemd `SIGKILL` it mid-write.
   `!Send`.
 - `is_ac_connected` is `#[serde(skip)]` in `ProfileState` — re-read
   from hardware on every boot rather than trusting stale state.
+- **Boot re-uses `Transition::SystemResumed`.** The composition root
+  sends it once at startup to re-assert the full intended state
+  (envelope + profile + charge + fan curve) onto the hardware
+  unconditionally — a cold boot resets firmware knobs to their defaults,
+  so trusting the persisted values without re-applying would make the
+  daemon report state the device no longer has. Same path as resume; the
+  reducer log says "boot/resume". This is why the boot does **not** send
+  separate `SetProfile`/`SetFanCurve` transitions any more.
 - `Transition::SetSpl` derives SPPT and FPPT from SPL via fixed
   multipliers (1.15× and 1.25× by default, tunable through
   `RuntimeConfig::sppt_factor`/`fppt_factor`), capped at hw limits.

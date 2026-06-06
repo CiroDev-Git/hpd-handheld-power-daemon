@@ -131,8 +131,8 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    BOOT["🟢 Arranque"] --> B1["Pone platform_profile = performance<br/>(default; migra equipos viejos)"]
-    B1 --> B2["Programa la curva de ventilador guardada"]
+    BOOT["🟢 Arranque"] --> B1["Re-asienta TODO el estado guardado al hardware<br/>(TDP + perfil→default performance + charge + curva)"]
+    B1 --> B2["= exactamente lo que reporta el daemon, aunque un<br/>boot en frío haya reseteado el firmware a defaults"]
 
     AC["🔌 Enchufás cargador"] --> AC1["udev → AcPowerChanged(true)"]
     AC1 --> AC2["Guarda tu TDP de batería,<br/>sube a máximo"]
