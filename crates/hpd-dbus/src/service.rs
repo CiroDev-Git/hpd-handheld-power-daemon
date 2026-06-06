@@ -232,9 +232,10 @@ impl PowerDaemonInterface {
         Ok(())
     }
 
-    /// Unified cooling lever: set the cooling level (`silent`,
-    /// `balanced`, `aggressive`), which programs the matching platform
-    /// profile *and* fan curve together and latches manual cooling.
+    /// Cooling lever: set the fan-curve level (`silent`, `balanced`,
+    /// `aggressive`) and latch manual cooling. Decoupled from power — it
+    /// programs the fan curve only and does **not** touch the platform
+    /// profile / power envelope (use `set_spl` / `set_profile` for those).
     ///
     /// This is the front-end for `hpdctl cool set`. The raw `set_profile`
     /// and `set_fan_curve` methods remain for advanced callers.

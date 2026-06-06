@@ -4,15 +4,15 @@
 
 use tracing::info;
 
-use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
+use hpd_capabilities::fan_curve::FanCurveSelection;
 use hpd_capabilities::power::PowerEnvelopeLimits;
 use hpd_capabilities::power::PowerEnvelopeTarget;
-use hpd_capabilities::profile::{ProfileName, RuntimeConfig, TdpPreset};
+use hpd_capabilities::profile::{RuntimeConfig, TdpPreset};
 use hpd_capabilities::units::PowerMilliwatts;
 use hpd_error::HpdError;
 
 use crate::effect::Effect;
-use crate::inference::infer_profile_from_spl;
+use crate::inference::infer_fan_curve_from_spl;
 use crate::invariants::validate_power_envelope;
 use crate::state::ProfileState;
 use crate::transition::Transition;
@@ -105,29 +105,25 @@ pub fn reduce(
         }
 
         Transition::SetProfile(new_profile) => {
+            // Manual power lever (ACPI platform_profile / EPP), decoupled
+            // from cooling: it does NOT touch the fan curve selection or
+            // the auto-cooling flag. We still re-assert the active fan
+            // curve afterwards because writing platform_profile can make
+            // the EC drop the custom curve back to firmware auto.
             if new_state.active_profile != new_profile {
                 new_state.active_profile = new_profile.clone();
-                new_state.fan_follows_tdp = false;
-
                 effects.push(Effect::ApplyPlatformProfile(new_profile));
-                // Hybrid: when the curve tracks the profile, swap it too.
-                reassert_curve_after_profile(&mut new_state, &mut effects, config);
+                reassert_curve_after_profile(&mut new_state, &mut effects);
                 effects.push(Effect::PersistState);
             }
         }
 
         Transition::SetCoolingLevel(preset) => {
-            // Unified lever: drive the platform profile and the fan curve
-            // together to the requested level, and latch manual mode.
-            let profile = profile_for_cooling(preset);
+            // Cooling lever = fan curve only (decoupled from power). Set
+            // the requested curve and latch manual mode; the platform
+            // profile / power envelope are untouched.
             let selection = FanCurveSelection::Preset(preset);
             new_state.fan_follows_tdp = false;
-            if new_state.active_profile != profile {
-                new_state.active_profile = profile.clone();
-                effects.push(Effect::ApplyPlatformProfile(profile));
-            }
-            // Always (re)apply the curve — after the profile write, which
-            // can reset the EC — so the two never drift apart.
             new_state.active_fan_curve = Some(selection);
             effects.push(Effect::ApplyFanCurve(selection));
             effects.push(Effect::PersistState);
@@ -297,17 +293,19 @@ fn apply_target_and_profile(
         new_state.power_target = new_target.clone();
         effects.push(Effect::ApplyPowerEnvelope(new_target.clone()));
 
-        // Auto-Profile
+        // Auto-cooling: the fan curve (not the platform_profile) follows
+        // the TDP. The platform_profile is a decoupled power lever that
+        // defaults to Performance, so the SPL just written is the real
+        // usable limit — we never clamp it down by inferring a PowerSaver
+        // EPP here.
         if new_state.fan_follows_tdp {
-            let inferred_profile =
-                infer_profile_from_spl(&new_target, device_limits, &config.profile_thresholds);
+            let inferred_curve =
+                infer_fan_curve_from_spl(&new_target, device_limits, &config.profile_thresholds);
+            let selection = FanCurveSelection::Preset(inferred_curve);
 
-            if new_state.active_profile != inferred_profile {
-                new_state.active_profile = inferred_profile.clone();
-                effects.push(Effect::ApplyPlatformProfile(inferred_profile));
-                // Hybrid: keep the fan curve in lock-step with the
-                // inferred cooling profile when the operator opted in.
-                reassert_curve_after_profile(&mut new_state, &mut effects, config);
+            if new_state.active_fan_curve != Some(selection) {
+                new_state.active_fan_curve = Some(selection);
+                effects.push(Effect::ApplyFanCurve(selection));
             }
         }
 
@@ -317,61 +315,18 @@ fn apply_target_and_profile(
     Ok(ReducerOutput { new_state, effects })
 }
 
-/// Map a unified cooling level (expressed as a fan-curve preset) to the
-/// platform profile it pairs with. Inverse of
-/// [`curve_preset_for_profile`] over the three canonical levels.
-fn profile_for_cooling(preset: FanCurvePreset) -> ProfileName {
-    match preset {
-        FanCurvePreset::Silent => ProfileName::PowerSaver,
-        FanCurvePreset::Balanced => ProfileName::Balanced,
-        FanCurvePreset::Aggressive => ProfileName::Performance,
-    }
-}
-
-/// Map a platform profile to its companion fan-curve preset. `Custom`
-/// vendor profiles have no canonical curve, so they leave the fan curve
-/// untouched.
-fn curve_preset_for_profile(profile: &ProfileName) -> Option<FanCurvePreset> {
-    match profile {
-        ProfileName::PowerSaver => Some(FanCurvePreset::Silent),
-        ProfileName::Balanced => Some(FanCurvePreset::Balanced),
-        ProfileName::Performance => Some(FanCurvePreset::Aggressive),
-        ProfileName::Custom(_) => None,
-    }
-}
-
-/// Re-assert the fan curve after a platform-profile change. Call this
-/// whenever an `ApplyPlatformProfile` effect was just emitted.
-///
-/// Two jobs, both ending in an unconditional `ApplyFanCurve`:
-///
-/// * **Follow** (`fan_curve_follows_profile` on) — switch the active
-///   curve to the preset matching the new profile and re-apply it.
-/// * **Preserve** (the default) — re-apply the *currently active* curve
-///   unchanged. Writing the ACPI `platform_profile` can make the EC drop
-///   the custom curve back to its automatic mode (the same failure mode
-///   as suspend/resume), so we must re-write our curve afterwards or it
-///   is silently lost. A no-op when no curve is managed (`None`).
+/// Re-assert the *currently active* fan curve after a platform-profile
+/// change. Call this whenever an `ApplyPlatformProfile` effect was just
+/// emitted: writing the ACPI `platform_profile` can make the EC drop the
+/// custom curve back to its automatic mode (the same failure mode as
+/// suspend/resume), so we must re-write our curve afterwards or it is
+/// silently lost.
 ///
 /// The re-apply is intentionally unconditional (not gated on "selection
 /// changed") precisely because the EC may have reset a curve that is, by
-/// our bookkeeping, unchanged. The caller owns the surrounding
-/// `PersistState`.
-fn reassert_curve_after_profile(
-    new_state: &mut ProfileState,
-    effects: &mut Vec<Effect>,
-    config: &RuntimeConfig,
-) {
-    if config.fan_curve_follows_profile {
-        if let Some(preset) = curve_preset_for_profile(&new_state.active_profile) {
-            let selection = FanCurveSelection::Preset(preset);
-            new_state.active_fan_curve = Some(selection);
-            effects.push(Effect::ApplyFanCurve(selection));
-            return;
-        }
-        // Custom vendor profile has no companion preset — fall through
-        // and preserve whatever curve is currently active.
-    }
+/// our bookkeeping, unchanged. A no-op when no curve is managed (`None`).
+/// The caller owns the surrounding `PersistState`.
+fn reassert_curve_after_profile(new_state: &mut ProfileState, effects: &mut Vec<Effect>) {
     if let Some(selection) = new_state.active_fan_curve {
         effects.push(Effect::ApplyFanCurve(selection));
     }
@@ -435,8 +390,9 @@ mod tests {
     }
 
     #[test]
-    fn test_profile_inference() {
-        let state = setup_state();
+    fn test_fan_curve_inference_follows_tdp() {
+        use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
+        let state = setup_state(); // fan_follows_tdp = true, curve = None
         let limits = PowerEnvelopeLimits {
             spl_min: PowerMilliwatts(7000),
             spl_max: PowerMilliwatts(35000),
@@ -445,7 +401,8 @@ mod tests {
         };
         let config = RuntimeConfig::DEFAULT;
 
-        // Trying to increase to 30W (almost max capability), should infer Performance
+        // ~30W is high in the 7..35 range (~82%), so auto-cooling selects
+        // the Aggressive FAN CURVE.
         let high_target = PowerEnvelopeTarget {
             spl: PowerMilliwatts(30000),
             sppt: PowerMilliwatts(30000),
@@ -460,10 +417,15 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(output.new_state.active_profile, ProfileName::Performance);
-        assert!(output
+        let aggressive = FanCurveSelection::Preset(FanCurvePreset::Aggressive);
+        assert_eq!(output.new_state.active_fan_curve, Some(aggressive));
+        assert!(output.effects.contains(&Effect::ApplyFanCurve(aggressive)));
+        // Decoupled: the platform_profile is NOT inferred from TDP.
+        assert_eq!(output.new_state.active_profile, state.active_profile);
+        assert!(!output
             .effects
-            .contains(&Effect::ApplyPlatformProfile(ProfileName::Performance)));
+            .iter()
+            .any(|e| matches!(e, Effect::ApplyPlatformProfile(_))));
     }
 
     #[test]
@@ -988,11 +950,15 @@ mod tests {
     }
 
     #[test]
-    fn test_set_profile_follows_curve_when_enabled() {
-        use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
+    fn test_set_profile_is_decoupled_from_fan_curve() {
+        // Decoupled model: SetProfile changes only the platform_profile.
+        // It never switches the fan curve to a "matching" preset, even
+        // with the legacy fan_curve_follows_profile flag set (now a
+        // no-op), and it must not flip the auto-cooling mode. With no
+        // managed curve there is nothing to re-assert.
         let state = setup_state(); // active_profile = Balanced, curve = None
         let mut config = setup_config();
-        config.fan_curve_follows_profile = true;
+        config.fan_curve_follows_profile = true; // legacy flag, now ignored
 
         let out = reduce(
             &state,
@@ -1004,14 +970,17 @@ mod tests {
 
         assert_eq!(out.new_state.active_profile, ProfileName::Performance);
         assert_eq!(
-            out.new_state.active_fan_curve,
-            Some(FanCurveSelection::Preset(FanCurvePreset::Aggressive))
+            out.new_state.active_fan_curve, None,
+            "SetProfile must not touch the fan curve"
         );
-        assert!(out
+        assert_eq!(
+            out.new_state.fan_follows_tdp, state.fan_follows_tdp,
+            "SetProfile must not flip auto-cooling"
+        );
+        assert!(!out
             .effects
-            .contains(&Effect::ApplyFanCurve(FanCurveSelection::Preset(
-                FanCurvePreset::Aggressive
-            ))));
+            .iter()
+            .any(|e| matches!(e, Effect::ApplyFanCurve(_))));
     }
 
     #[test]
@@ -1036,7 +1005,7 @@ mod tests {
     }
 
     #[test]
-    fn test_set_cooling_level_sets_profile_and_curve_together() {
+    fn test_set_cooling_level_sets_fan_curve_only() {
         use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
         let mut state = setup_state(); // Balanced profile, fan_follows_tdp = true
         state.fan_follows_tdp = true;
@@ -1047,8 +1016,7 @@ mod tests {
             &setup_config(),
         )
         .unwrap();
-        // Profile + curve both move to the aggressive level, and mode latches manual.
-        assert_eq!(out.new_state.active_profile, ProfileName::Performance);
+        // Cooling lever = fan curve only; mode latches manual.
         assert_eq!(
             out.new_state.active_fan_curve,
             Some(FanCurveSelection::Preset(FanCurvePreset::Aggressive))
@@ -1056,24 +1024,15 @@ mod tests {
         assert!(!out.new_state.fan_follows_tdp);
         assert!(out
             .effects
-            .contains(&Effect::ApplyPlatformProfile(ProfileName::Performance)));
-        assert!(out
-            .effects
             .contains(&Effect::ApplyFanCurve(FanCurveSelection::Preset(
                 FanCurvePreset::Aggressive
             ))));
-        // Curve write comes AFTER the profile write.
-        let p = out
+        // Power is decoupled: the platform profile is left untouched.
+        assert_eq!(out.new_state.active_profile, ProfileName::Balanced);
+        assert!(!out
             .effects
             .iter()
-            .position(|e| matches!(e, Effect::ApplyPlatformProfile(_)))
-            .unwrap();
-        let c = out
-            .effects
-            .iter()
-            .position(|e| matches!(e, Effect::ApplyFanCurve(_)))
-            .unwrap();
-        assert!(c > p);
+            .any(|e| matches!(e, Effect::ApplyPlatformProfile(_))));
     }
 
     #[test]

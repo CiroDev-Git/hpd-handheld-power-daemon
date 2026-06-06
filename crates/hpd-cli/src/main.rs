@@ -66,8 +66,10 @@ enum Commands {
     /// battery. `tdp set` adjusts the sustained limit (SPL); the daemon
     /// derives the boost limits (SPPT/FPPT) from it automatically.
     ///
-    /// With auto-cooling on, changing the TDP also moves the cooling
-    /// profile to match. Use `hpdctl limits` to see the valid range.
+    /// With auto-cooling on, changing the TDP also moves the fan curve to
+    /// match (quieter at low TDP, cooler at high). Power and cooling are
+    /// decoupled — the SPL you set here is the real limit. Use
+    /// `hpdctl limits` to see the valid range.
     Tdp {
         #[command(subcommand)]
         action: TdpAction,
@@ -113,17 +115,19 @@ enum Commands {
     /// Same dashboard as `status` but redrawn once per second. Press
     /// Ctrl+C to exit.
     Monitor,
-    /// Cooling: pick how hard the device cools (the one lever)
+    /// Cooling: pick how hard the fans work (independent of power)
     ///
-    /// `cool set <level>` programs the platform profile AND the fan curve
-    /// together — one knob instead of three. `cool auto` lets the daemon
-    /// pick the level from the current TDP; `cool reset` hands the fans
-    /// back to firmware control. Levels, quietest → coolest: `silent`,
-    /// `balanced`, `aggressive`.
+    /// `cool set <level>` sets the **fan curve** only — it does not change
+    /// power. Cooling and power are decoupled: `tdp set` is the single
+    /// power lever (the SPL you set is the real limit), and `cool` just
+    /// trades noise for temperature. `cool auto` lets the daemon pick the
+    /// fan curve from the current TDP; `cool reset` hands the fans back to
+    /// firmware control. Levels, quietest → coolest: `silent`, `balanced`,
+    /// `aggressive`.
     ///
-    /// (The raw platform profile and fan curve remain available over
-    /// D-Bus for advanced/decoupled use; they are intentionally off the
-    /// CLI to keep cooling a single concept.)
+    /// (The ACPI platform profile / EPP is a separate power knob that
+    /// defaults to `performance`; it stays available over D-Bus for
+    /// advanced use.)
     Cool {
         #[clap(subcommand)]
         action: CoolAction,

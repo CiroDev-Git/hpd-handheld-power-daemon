@@ -11,6 +11,60 @@ not part of the published repository.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`default_platform_profile` config key** (startup-only, default
+  `performance`). Programs the ACPI `platform_profile` / EPP at every
+  boot. Accepts `performance` / `balanced` / `power-saver`
+  (case-insensitive, plus the ACPI aliases `quiet` / `low-power`).
+
+### Changed
+
+- **Power and cooling are now decoupled.** Previously the "cooling level"
+  (`silent` / `balanced` / `aggressive`) and the TDP auto-follow both
+  drove the ACPI `platform_profile`, whose EPP silently clamped the APU
+  far below the configured SPL — so a 25 W TDP could run at ~13 W just
+  because auto-follow had selected `PowerSaver`. Now:
+  - **`tdp set` is the single power lever** — the SPL you set is the real
+    usable limit. The `platform_profile` defaults to `performance`
+    (configurable via `default_platform_profile`) and is **no longer
+    inferred from TDP**, so it never throttles your SPL.
+  - **`cool set` / auto-cooling controls the fan curve only** (noise vs
+    temperature), with zero effect on power. Auto-cooling (`fan_follows_tdp`)
+    now infers the *fan curve* preset from TDP instead of the profile.
+  - `set_profile` remains the manual power-profile lever over D-Bus,
+    decoupled from cooling. The boot-time apply also migrates a device
+    left in a throttling profile by an older hpd back to `performance`.
+  - `fan_curve_follows_profile` is now a **no-op** (kept only so existing
+    configs still parse).
+
+### Fixed
+
+- **AC charger detection on the Xbox Ally X.** `AsusChargeBackend::is_ac_connected`
+  probed only `AC`, `ACAD`, `ADP0` and `ADP1`, but the ROG Xbox Ally X
+  (RC73XA) exposes its mains node as **`AC0`**. None matched, so the read
+  always fell through to the fail-safe `false` — the daemon reported
+  "Battery (DC)" even while physically plugged (most visibly when booted on
+  the charger, where no udev edge later corrects it). The probe list now
+  includes `AC0`/`AC1` ahead of the legacy names. Regression tests cover
+  the `AC0` node, the unplugged read, and the absent-node fail-safe.
+
+### Changed
+
+- **Fan-curve presets retuned (cooling-first) from on-device telemetry.**
+  `Silent` / `Balanced` / `Aggressive` were recalibrated against the Xbox
+  Ally X (RC73XA) using in-game captures (real GPU load, not synthetic).
+  The unit's fans have a hard ~3700 RPM floor and a ~8400 RPM ceiling, and
+  airflow saturates by duty ~220, so the curves now reach near-max airflow
+  earlier in temperature instead of chasing a floor the fan can't undercut.
+  `Aggressive` holds ~78 °C under a sustained 40 W Performance game load;
+  `Balanced` keeps the chip in the low 60s °C; `Silent` rides the fan floor
+  while the PowerSaver profile keeps the APU at ~13 W. New tuning helper:
+  `scripts/fan-tune.sh` (apply a candidate curve to the EC + live monitor)
+  and `scripts/fan-characterize.sh` (PWM→RPM sweep).
+
 ## [2.3.0] — 2026-06-03
 
 ### Added
