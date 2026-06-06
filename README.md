@@ -231,7 +231,8 @@ the on-device validation plan. A plain-language explainer in Spanish
 (the power↔cooling decouple, auto vs manual, what changed and why) lives
 in [`docs/COOLING-es.md`](docs/COOLING-es.md). For a **visual** walkthrough
 (diagrams of the daemon, the Decky plugin, and how they talk — every
-combination, for dummies) see [`docs/DIAGRAMS-es.md`](docs/DIAGRAMS-es.md).
+combination, for dummies) see [`docs/DIAGRAMS.md`](docs/DIAGRAMS.md)
+(English) / [`docs/DIAGRAMS-es.md`](docs/DIAGRAMS-es.md) (Spanish).
 
 ---
 

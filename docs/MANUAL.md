@@ -4,8 +4,8 @@
 
 Everything `hpd` does today, in one place, explained for everyday users.
 A Spanish version is at [`MANUAL-es.md`](MANUAL-es.md). Prefer diagrams?
-A visual walkthrough (Spanish, but the diagrams speak for themselves) is at
-[`DIAGRAMS-es.md`](DIAGRAMS-es.md).
+A visual walkthrough is at [`DIAGRAMS.md`](DIAGRAMS.md) (English) /
+[`DIAGRAMS-es.md`](DIAGRAMS-es.md) (Spanish).
 
 - [What hpd is](#what-hpd-is)
 - [The two knobs: Power and Cooling](#the-two-knobs)

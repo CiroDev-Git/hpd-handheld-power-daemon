@@ -4,7 +4,8 @@
 
 Los manuales en imágenes. Una imagen dice más que mil palabras, así que
 acá está **cómo funciona el daemon**, **cómo funciona el plugin de Decky**,
-y **cómo se comunican** — con todas las combinaciones posibles.
+y **cómo se comunican** — con todas las combinaciones posibles. English
+version: [`DIAGRAMS.md`](DIAGRAMS.md).
 
 > Los diagramas son [Mermaid](https://mermaid.js.org): se ven solos en
 > GitHub y en la mayoría de editores Markdown.
