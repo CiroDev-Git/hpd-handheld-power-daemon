@@ -340,46 +340,42 @@ where
         }
     };
 
-    // Decide which fan curve to program at boot: a persisted selection
-    // wins; otherwise fall back to the config's first-boot default. We
-    // then force the in-memory selection to `None` so the SetFanCurve
-    // transition enqueued below registers as a *change* and actually
-    // writes the curve to the EC (a cold boot leaves the EC on its
-    // conservative firmware default).
-    let boot_fan_curve = initial_state.active_fan_curve.or_else(|| {
+    // Build the *intended* boot state, then re-assert it onto the
+    // hardware so what the daemon reports always matches the device from
+    // t=0. Two fields are overridden from their persisted values:
+    //
+    //   * `active_profile` ← the configured default (Performance). The
+    //     platform profile is a decoupled power lever; pinning it on every
+    //     boot keeps the SPL fully usable and migrates a device left in a
+    //     throttling profile by an older hpd.
+    //   * `active_fan_curve` ← the persisted selection, else the config's
+    //     first-boot default. (`power_target` and `charge_end_threshold`
+    //     keep their persisted values — the user's choices.)
+    //
+    // A cold boot resets several firmware knobs to their defaults
+    // (platform_profile → balanced, charge limit → 100%, …) which the
+    // daemon does NOT otherwise re-apply — so it would report a persisted
+    // value the hardware no longer has. Sending `SystemResumed` below
+    // re-applies envelope + profile + charge + curve **unconditionally**
+    // (the same path resume uses), closing that drift in one shot.
+    initial_state.active_fan_curve = initial_state.active_fan_curve.or_else(|| {
         daemon_config
             .default_fan_curve
             .map(FanCurveSelection::Preset)
     });
-    initial_state.active_fan_curve = None;
+    initial_state.active_profile = daemon_config.default_platform_profile.clone();
 
     // 6. Create communication channels
     let (tx, rx) = mpsc::channel::<Transition>(daemon_config.channel_capacity);
     let internal_tx = tx.clone(); // For rollback
 
-    // Program the configured platform_profile (default Performance) at
-    // boot. The platform profile is a power lever decoupled from cooling:
-    // pinning it here means the SPL the user sets is the real usable
-    // ceiling, and a device left in a throttling profile (e.g. PowerSaver)
-    // by an older hpd is migrated forward. Sent BEFORE the fan curve
-    // because writing platform_profile can reset the EC's custom curve,
-    // and the buffered SetFanCurve below re-programs it afterwards.
-    if tx
-        .send(Transition::SetProfile(
-            daemon_config.default_platform_profile.clone(),
-        ))
-        .await
-        .is_err()
-    {
-        warn!("Executor channel closed before boot platform profile could be applied");
-    }
-
-    // Program the boot fan curve, if any. The channel buffers this until
-    // the executor starts draining it, so ordering here is irrelevant.
-    if let Some(selection) = boot_fan_curve {
-        if tx.send(Transition::SetFanCurve(selection)).await.is_err() {
-            warn!("Executor channel closed before boot fan curve could be applied");
-        }
+    // Re-assert the full intended state onto the hardware at boot (see
+    // above). `SystemResumed` applies envelope → profile → charge → curve
+    // in that order (curve last, since writing the profile can reset the
+    // EC's custom curve). The channel buffers this until the executor
+    // starts draining it.
+    if tx.send(Transition::SystemResumed).await.is_err() {
+        warn!("Executor channel closed before boot state could be applied");
     }
 
     // SIGHUP reloads the config file and pushes a ConfigReload transition.

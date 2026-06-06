@@ -215,7 +215,10 @@ pub fn reduce(
         }
 
         Transition::SystemResumed => {
-            info!("System resumed: reapplying last known config");
+            // Used by both resume-from-suspend and the daemon's boot
+            // re-assert: re-apply the full intended state to hardware so
+            // the reported state always matches the device.
+            info!("Re-applying full power/cooling state to hardware (boot/resume)");
             let mut effects = vec![
                 Effect::ApplyPowerEnvelope(state.power_target.clone()),
                 Effect::ApplyPlatformProfile(state.active_profile.clone()),
@@ -622,6 +625,53 @@ mod tests {
         assert!(out
             .effects
             .contains(&Effect::ApplyChargeThreshold(state.charge_end_threshold)));
+    }
+
+    #[test]
+    fn test_system_resumed_reasserts_all_four_unconditionally_in_order() {
+        // Boot-reassert contract: the daemon re-applies its whole state at
+        // boot by sending SystemResumed, so it MUST push every knob to
+        // hardware regardless of whether state already "has" the value (a
+        // cold boot resets platform_profile/charge to firmware defaults
+        // that the daemon would otherwise misreport), and the fan curve
+        // MUST be applied after the platform profile (writing the profile
+        // can reset the EC's custom curve).
+        use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
+        let mut state = setup_state();
+        let sel = FanCurveSelection::Preset(FanCurvePreset::Balanced);
+        state.active_fan_curve = Some(sel);
+        let out = reduce(
+            &state,
+            Transition::SystemResumed,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert_eq!(out.new_state, state, "SystemResumed must not mutate state");
+        assert!(out
+            .effects
+            .contains(&Effect::ApplyPowerEnvelope(state.power_target.clone())));
+        assert!(out
+            .effects
+            .contains(&Effect::ApplyPlatformProfile(state.active_profile.clone())));
+        assert!(out
+            .effects
+            .contains(&Effect::ApplyChargeThreshold(state.charge_end_threshold)));
+        assert!(out.effects.contains(&Effect::ApplyFanCurve(sel)));
+        let prof = out
+            .effects
+            .iter()
+            .position(|e| matches!(e, Effect::ApplyPlatformProfile(_)))
+            .unwrap();
+        let curve = out
+            .effects
+            .iter()
+            .position(|e| matches!(e, Effect::ApplyFanCurve(_)))
+            .unwrap();
+        assert!(
+            curve > prof,
+            "fan curve must be re-applied after the platform profile"
+        );
     }
 
     // ---------- EnableFanAuto ----------

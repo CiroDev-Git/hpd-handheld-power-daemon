@@ -52,7 +52,7 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
 | `FanCurve` | `s` | Active cooling level: `silent` / `balanced` / `aggressive` / `custom` / `auto` (`auto` = firmware curve, daemon not managing it). |
 | `AutoCooling` | `b` | `true` = auto (follows TDP), `false` = manual. |
 | `ChargeEndThreshold` | `y` | Battery charge cap (%). |
-| `ActiveProfile` | `s` | The power-profile / EPP (`power-saver`/`balanced`/`performance`/custom). Defaults to `performance`. This is the **power** lever now (not cooling); surface it as an optional "Power mode" control, separate from Cooling. |
+| `ActiveProfile` | `s` | The power-profile / EPP (`power-saver`/`balanced`/`performance`/custom). Defaults to `performance`. This is the **power** lever now (not cooling); surfaced as the first-class **Power mode** control (Performance/Balanced/Eco), separate from Cooling. |
 | `AcConnected` | `b` | Charger plugged in (daemon ≥ 2.4.0). **Emits `PropertiesChanged`** — subscribe instead of polling `IsAcConnected()`. Falls back to the method on older daemons. |
 
 ## Feature → UI mapping, by priority
@@ -66,8 +66,8 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
    - Auto → `SetFanAuto()`.
    - ⚠️ Label it clearly as **fans only** (noise ↔ temperature). Cooling no
      longer changes power, so drop any "Silent caps power / Aggressive
-     unlocks the TDP" copy. Power is the TDP slider (#2); the optional
-     power-profile lever is separate (#12).
+     unlocks the TDP" copy. Power is the TDP slider (#2); the **Power mode**
+     lever is its own first-class control (#5).
 2. **TDP control** — a slider in watts.
    - Read **`CurrentSpl`**; range = `GetHardwareLimits()` (`spl_min..spl_max`).
    - Set → `SetSpl(watts)`.
@@ -77,6 +77,13 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
      `CurrentSpl`), CPU/GPU °C, CPU/GPU RPM. Render `i32::MIN` as "n/a".
 4. **Battery charge cap** — read **`ChargeEndThreshold`**, set
    `SetChargeThreshold(%)`. The single biggest lever for battery longevity.
+5. **Power mode** — a first-class control: `Performance / Balanced / Eco`
+   (`SetProfile` + `ActiveProfile`; `Eco` = `power-saver`). The power/EPP
+   lever, separate from TDP and Cooling, default `Performance`. When the
+   user picks `Balanced`/`Eco`, show an **informative** note that real
+   power is held below the TDP (don't disable the slider — the real
+   ceiling is workload-dependent). Implemented in the plugin's Power
+   section.
 
 ### 🟡 Importantes (muy recomendadas)
 
@@ -104,20 +111,20 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
     afterward to clear the banner. **Full implementation brief:**
     [`POLKIT-SETUP-PROMPT.md`](POLKIT-SETUP-PROMPT.md).
 
+> **Note:** Power mode (#5) was promoted from this "optional/advanced"
+> tier to a first-class control. The Power-mode hint below is now folded
+> into that control (an informative note shown when Balanced/Eco is
+> active). The only thing left genuinely advanced is the *raw* fan curve.
+
 ### 🟢 Opcionales / avanzadas
 
-12. **Power mode (platform profile)** — `SetProfile` + `ActiveProfile`
-    (`Performance` / `Balanced` / `Eco`). This is the EPP power lever,
-    decoupled from cooling and defaulting to `Performance`. Surface it as
-    an optional "Power mode" control (separate from Cooling), or hide it —
-    most users leave it on Performance so their TDP is fully usable.
-13. **Raw curve** — `SetFanCurve` (set a fan-curve preset directly;
-    `SetCoolingLevel` is the normal path). "Advanced" caveat.
-14. **Power-mode hint** — if, under load, `soc_power_mw` stays well below
-    the `CurrentSpl` cap **and** `ActiveProfile` is `power-saver`, surface
-    a gentle hint: "Eco power mode is limiting the chip below your TDP;
-    switch to Performance for the full TDP." (Cooling level no longer
-    limits power — only the platform profile does.)
+12. **Raw curve** — `SetFanCurve` (set a fan-curve preset directly;
+    `SetCoolingLevel` is the normal path). Genuinely advanced and rarely
+    needed; collapsed behind the Advanced panel.
+13. **Power-mode hint (folded into #5)** — when `ActiveProfile` is
+    `balanced`/`power-saver`, the Power mode control shows an informative
+    note that real power is held below the TDP, with the current TDP
+    value. (Cooling never limits power — only the platform profile does.)
 15. **Reassurance copy** — temp/RPM "normal vs. worry" tooltips (e.g. high
     temps under a heavy game with fans maxed are normal; temperature
     tracks your **TDP** now, and cooling just trades fan noise for a few

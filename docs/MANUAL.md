@@ -144,7 +144,7 @@ The daemon writes the **fan curve** at these moments:
 | In **auto**, you change the TDP (`tdp set` / `preset`) | The fan curve is re-derived from where the TDP sits in your hardware range — `< 33 %` → silent, `33–67 %` → balanced, `> 67 %` → aggressive. The platform profile is **not** touched. |
 | Resume from suspend | The active fan curve (and the profile) are re-applied (the firmware can drop them across sleep). |
 | Plug in AC | The TDP ramps up; in auto, the fan curve follows it. |
-| Boot | The platform profile is set to the configured default (`performance`); your last saved fan curve is restored. |
+| Boot | The daemon re-applies your **full saved state** (TDP, power mode → configured default, charge limit, fan curve) to the hardware — so it matches the device even after a cold boot reset the firmware to its defaults. |
 
 The **platform profile** is the power/EPP lever. It defaults to
 `performance` (so your TDP is fully usable) and is never inferred from
@@ -287,7 +287,10 @@ or a rattling/grinding noise (physical issue).
 - **Resume from suspend:** hpd re-applies your power, platform profile,
   charge limit and fan curve — fixing the bug where fans could blast at
   full speed after waking.
-- **Reboot:** your last settings are restored from disk.
+- **Reboot:** the daemon re-applies your full saved state (TDP, power
+  mode, charge limit, fan curve) to the hardware on startup, so what it
+  reports always matches the device — even if a cold boot reset the
+  firmware's defaults underneath it.
 
 ## For developers: the Decky / D-Bus surface
 
@@ -315,9 +318,11 @@ that: one cooling control, not three.
 - One **Cooling** selector: Silent / Balanced / Aggressive + an **Auto**
   toggle, labelled as a **fans-only** noise↔temperature control (not
   power). (Level from `fan_curve`, mode from `auto_cooling`.)
-- **Optional advanced "Power mode"** (`active_profile` / `SetProfile`):
-  Performance / Balanced / Eco, clearly separate from Cooling. Default
-  Performance; safe to hide for most users.
+- A first-class **"Power mode"** control (`active_profile` / `SetProfile`):
+  Performance / Balanced / Eco, in the Power section, clearly separate from
+  Cooling. Default Performance; show an informative note when Balanced/Eco
+  hold power below the TDP (don't disable the slider — the real ceiling is
+  workload-dependent).
 - **Live readouts** from `GetThermalStatus` (temps + RPM) and an optional
   curve graph from `GetFanCurve`.
 - A **Battery cap** control (`charge_end_threshold` / `SetChargeThreshold`).

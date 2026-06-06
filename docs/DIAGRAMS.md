@@ -131,8 +131,8 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    BOOT["🟢 Boot"] --> B1["Sets platform_profile = performance<br/>(default; migrates old devices)"]
-    B1 --> B2["Programs the saved fan curve"]
+    BOOT["🟢 Boot"] --> B1["Re-asserts the FULL saved state to hardware<br/>(TDP + profile→default performance + charge + fan curve)"]
+    B1 --> B2["= exactly what the daemon reports, even after a<br/>cold boot reset firmware knobs to defaults"]
 
     AC["🔌 Plug in charger"] --> AC1["udev → AcPowerChanged(true)"]
     AC1 --> AC2["Saves your battery TDP,<br/>ramps to max"]

@@ -267,6 +267,27 @@ grep -i fan /var/lib/hpd/state.toml  # active_fan_curve persisted
 | 8.3 first-boot default | wipe state (`sudo rm /var/lib/hpd/state.toml`), restart → curve = `balanced` (the configured default) applied to the EC |
 | 8.4 | set `default_fan_curve = ""` in config, wipe state, restart → curve = `auto` (firmware), nothing written |
 
+### 8b. State ↔ hardware consistency after a cold boot (the boot re-assert)
+
+A cold boot resets several firmware knobs to their defaults
+(`platform_profile` → `balanced`, charge limit → 100%, sometimes SPL).
+The daemon must re-assert its full saved state on startup so what it
+reports always matches the device. After a **full reboot** (not just a
+daemon restart), compare daemon-reported vs sysfs for every knob:
+
+```bash
+A=/sys/class/firmware-attributes/asus-armoury/attributes
+echo "TDP    daemon=$(hpdctl tdp get)     sysfs=$(cat $A/ppt_pl1_spl/current_value)W"
+echo "power  daemon=$(hpdctl power get)   sysfs=$(cat /sys/firmware/acpi/platform_profile)"
+echo "charge daemon=$(hpdctl charge get)  sysfs=$(cat /sys/class/power_supply/BAT0/charge_control_end_threshold)%"
+```
+
+| Check | Expect |
+|---|---|
+| 8b.1 | after a cold reboot, **every** field above matches between daemon and sysfs (no `power get` says performance while sysfs says balanced; no charge 80% vs 100%) — without any manual command |
+| 8b.2 | the user's pre-reboot TDP / charge / cooling are actually back on the hardware (not just reported) |
+| 8b.3 journal | `Re-applying full power/cooling state to hardware (boot/resume)` appears once at startup |
+
 ---
 
 ## 9. Authorization (polkit)
