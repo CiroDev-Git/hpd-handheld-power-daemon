@@ -434,12 +434,12 @@ What the same thing is called on each side (it all ends at the daemon):
 | **Cooling (fans)** | `cool set <level>` | `SetCoolingLevel(s)` | Cooling selector | `set-profile` |
 | Auto cooling | `cool auto` | `SetFanAuto()` | Auto toggle | `set-profile` |
 | Cooling to firmware | `cool reset` | `ResetFanCurve()` | Reset button | `set-fan-curve` |
-| **Power mode (advanced)** | — | `SetProfile(s)` | Advanced → Power mode | `set-profile` |
+| **Power mode (advanced)** | `power set <mode>` | `SetProfile(s)` | Advanced → Power mode | `set-profile` |
 | **Battery** | `charge set <%>` | `SetChargeThreshold(y)` | battery control | `set-charge` |
 | See temps/RPM/W | `status` / `monitor` | `GetThermalStatus()` | telemetry (poll) | — |
 | See curve | `cool curve` | `GetFanCurve()` | graph | — |
 | See HW range | `limits` | `GetHardwareLimits()` | slider range | — |
-| See AC | `status` | `IsAcConnected()` | indicator (poll) | — |
+| See AC | `status` | `AcConnected` (prop) / `IsAcConnected()` | indicator (reactive) | — |
 | Health / polkit | `doctor` | `GetDiagnostics()` | Setup banner | — |
 | Rivals | `doctor` | `GetPowerConflicts()` | Conflict banner | — |
 

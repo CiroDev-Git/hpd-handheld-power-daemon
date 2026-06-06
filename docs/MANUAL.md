@@ -101,6 +101,7 @@ hpdctl charge get
 | `hpdctl cool reset` | Fans back to firmware control |
 | `hpdctl cool get` | Show cooling level + mode |
 | `hpdctl cool curve` | Draw the active fan curve |
+| `hpdctl power set <mode>` / `power get` | Power mode (advanced): `performance` / `balanced` / `eco` |
 | `hpdctl charge set <%>` / `charge get` | Battery charge cap |
 
 Reading commands need no password. Changing things needs no password if
@@ -320,9 +321,10 @@ that: one cooling control, not three.
 - **Live readouts** from `GetThermalStatus` (temps + RPM) and an optional
   curve graph from `GetFanCurve`.
 - A **Battery cap** control (`charge_end_threshold` / `SetChargeThreshold`).
-- **AC indicator:** poll `is_ac_connected` (the daemon doesn't emit a
-  `PropertiesChanged` for it). The `AC0`-node fix makes the polled value
-  correct on the Xbox Ally X.
+- **AC indicator:** subscribe to the `AcConnected` property (emits
+  `PropertiesChanged`; daemon ≥ 2.4.0) — or poll `is_ac_connected()` on
+  older daemons. The `AC0`-node fix makes the value correct on the Xbox
+  Ally X.
 
 For the thermal rationale and the data behind all this, see
 [`fan-curves.md`](fan-curves.md).

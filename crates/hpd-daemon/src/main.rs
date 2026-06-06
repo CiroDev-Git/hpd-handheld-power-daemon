@@ -662,6 +662,11 @@ async fn spawn_properties_changed_emitter(
                 error!(error = %e, "Failed to emit fan_curve PropertiesChanged");
             }
         }
+        if new.is_ac_connected != last.is_ac_connected {
+            if let Err(e) = iface.ac_connected_changed(ctx).await {
+                error!(error = %e, "Failed to emit ac_connected PropertiesChanged");
+            }
+        }
 
         last = new;
     }

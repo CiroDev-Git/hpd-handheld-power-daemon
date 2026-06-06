@@ -53,6 +53,7 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
 | `AutoCooling` | `b` | `true` = auto (follows TDP), `false` = manual. |
 | `ChargeEndThreshold` | `y` | Battery charge cap (%). |
 | `ActiveProfile` | `s` | The power-profile / EPP (`power-saver`/`balanced`/`performance`/custom). Defaults to `performance`. This is the **power** lever now (not cooling); surface it as an optional "Power mode" control, separate from Cooling. |
+| `AcConnected` | `b` | Charger plugged in (daemon ≥ 2.4.0). **Emits `PropertiesChanged`** — subscribe instead of polling `IsAcConnected()`. Falls back to the method on older daemons. |
 
 ## Feature → UI mapping, by priority
 

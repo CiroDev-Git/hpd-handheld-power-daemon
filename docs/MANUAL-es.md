@@ -100,6 +100,7 @@ hpdctl charge get
 | `hpdctl cool reset` | Ventilador al firmware |
 | `hpdctl cool get` | Ver nivel + modo |
 | `hpdctl cool curve` | Dibujar la curva activa |
+| `hpdctl power set <modo>` / `power get` | Modo de potencia (avanzado): `performance` / `balanced` / `eco` |
 | `hpdctl charge set <%>` / `charge get` | Tope de carga de batería |
 
 Los comandos de lectura no piden contraseña. Cambiar cosas no pide
@@ -324,9 +325,10 @@ debería reflejar eso: un control de cooling, no tres.
   opcional de la curva desde `GetFanCurve`.
 - Un control de **tope de batería** (`charge_end_threshold` /
   `SetChargeThreshold`).
-- **Indicador de AC:** polleá `is_ac_connected` (el daemon no emite
-  `PropertiesChanged` para esto). El fix del nodo `AC0` hace que el valor
-  polleado sea correcto en el Xbox Ally X.
+- **Indicador de AC:** suscribite a la propiedad `AcConnected` (emite
+  `PropertiesChanged`; daemon ≥ 2.4.0) — o polleá `is_ac_connected()` en
+  daemons viejos. El fix del nodo `AC0` hace que el valor sea correcto en
+  el Xbox Ally X.
 
 Para el razonamiento térmico y los datos detrás de todo esto, ver
 [`fan-curves.md`](fan-curves.md).

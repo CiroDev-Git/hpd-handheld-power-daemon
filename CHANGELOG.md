@@ -19,6 +19,13 @@ not part of the published repository.
   `performance`). Programs the ACPI `platform_profile` / EPP at every
   boot. Accepts `performance` / `balanced` / `power-saver`
   (case-insensitive, plus the ACPI aliases `quiet` / `low-power`).
+- **`hpdctl power <performance|balanced|eco>`** — the power-mode lever on
+  the CLI (previously `set_profile` was D-Bus only). `eco` maps to
+  `power-saver`. `power get` prints the current mode. Independent of `tdp`
+  (watts) and `cool` (fans).
+- **`AcConnected` D-Bus property** — emits `PropertiesChanged` on every AC
+  plug/unplug edge, so clients (the Decky plugin) can drop their AC poll.
+  The `is_ac_connected()` method is kept for backwards compatibility.
 
 ### Changed
 

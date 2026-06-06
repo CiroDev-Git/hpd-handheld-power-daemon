@@ -132,6 +132,16 @@ enum Commands {
         #[clap(subcommand)]
         action: CoolAction,
     },
+    /// Power mode (EPP / platform profile) — the advanced power lever
+    ///
+    /// Separate from `tdp` (the watt limit) and from `cool` (fans only).
+    /// `performance` (the default) lets your TDP apply in full; `balanced`
+    /// and `eco` bias efficiency by letting the firmware clamp power below
+    /// your TDP. Most users leave this on `performance`.
+    Power {
+        #[clap(subcommand)]
+        action: PowerAction,
+    },
     /// Install the polkit policy so privileged commands work
     ///
     /// Fixes the "Permission denied / AuthFailed" you hit when the daemon
@@ -192,11 +202,26 @@ enum ChargeAction {
 }
 
 #[derive(Subcommand)]
+enum PowerAction {
+    /// Set the power mode: performance, balanced, or eco
+    ///
+    /// Maps to the ACPI platform profile (`eco` = power-saver). This is the
+    /// power/EPP lever, independent of cooling. `performance` keeps your TDP
+    /// fully usable; `balanced`/`eco` let the firmware clamp power lower.
+    Set {
+        #[arg(help = "Power mode: performance (full TDP), balanced, or eco (max efficiency)")]
+        mode: String,
+    },
+    /// Print the current power mode
+    Get,
+}
+
+#[derive(Subcommand)]
 enum CoolAction {
     /// Set the cooling level: silent, balanced, or aggressive
     ///
-    /// Programs the matching platform profile and fan curve together and
-    /// switches to manual cooling (until `cool auto`).
+    /// Sets the fan curve only (noise vs temperature) and switches to
+    /// manual cooling (until `cool auto`). Does not change power.
     Set {
         #[arg(help = "Cooling level: silent (quietest), balanced, or aggressive (coolest)")]
         level: String,
@@ -380,6 +405,38 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
                 println!("🌀 Fan curve: {}", level);
                 render_curve("CPU fan  (temp → speed)", &cpu);
                 render_curve("GPU fan  (temp → speed)", &gpu);
+            }
+        },
+        Commands::Power { action } => match action {
+            PowerAction::Set { mode } => {
+                // Friendly names → ACPI platform profile. `eco` is the
+                // user-facing name for `power-saver`.
+                let profile = match mode.to_lowercase().as_str() {
+                    "performance" | "perf" => "performance",
+                    "balanced" => "balanced",
+                    "eco" | "power-saver" | "powersave" | "power_saver" => "power-saver",
+                    other => {
+                        eprintln!(
+                            "❌ Unknown power mode '{}'. Use: performance, balanced, or eco.",
+                            other
+                        );
+                        process::exit(2);
+                    }
+                };
+                if let Err(e) = proxy.set_profile(profile).await {
+                    eprintln!("❌ Error setting power mode: {}", e);
+                } else {
+                    println!("🔧 Power mode set to: {} ({})", mode.to_lowercase(), profile);
+                }
+            }
+            PowerAction::Get => {
+                let profile = proxy.active_profile().await?;
+                // Map the daemon's canonical name back to the friendly one.
+                let friendly = match profile.as_str() {
+                    "power-saver" => "eco",
+                    other => other,
+                };
+                println!("🔧 Power mode: {} ({})", friendly, profile);
             }
         },
         Commands::FixPolkit { apply } => {
