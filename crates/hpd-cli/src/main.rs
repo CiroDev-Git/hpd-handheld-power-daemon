@@ -44,7 +44,8 @@ use std::process;
         hpdctl tdp set 15             Set the power envelope to 15 W\n  \
         hpdctl preset eco             Apply the lowest-power preset\n  \
         hpdctl charge set 80          Stop charging the battery at 80%\n  \
-        hpdctl cool set aggressive    Cool harder (profile + fan curve)\n  \
+        hpdctl cool set aggressive    Cool harder (fans only)\n  \
+        hpdctl power set performance  Power mode (EPP): full TDP\n  \
         hpdctl cool auto              Let the daemon pick cooling from TDP\n  \
         hpdctl cool get               Show current cooling level + mode\n  \
         hpdctl doctor                 Check that hpd is the sole power manager\n  \
@@ -89,8 +90,8 @@ enum Commands {
     /// `eco` = minimum SPL, `balanced` = midpoint, `max` = maximum SPL.
     ///
     /// This is NOT the same as the cooling level (see `hpdctl cool`).
-    /// With auto-cooling enabled the cooling profile follows the preset's
-    /// TDP automatically.
+    /// With auto-cooling enabled the fan curve follows the preset's TDP
+    /// automatically; power is unaffected by cooling.
     Preset {
         #[arg(help = "Preset name: eco (min SPL), balanced (midpoint), or max (max SPL)")]
         name: String,
@@ -426,7 +427,11 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
                 if let Err(e) = proxy.set_profile(profile).await {
                     eprintln!("❌ Error setting power mode: {}", e);
                 } else {
-                    println!("🔧 Power mode set to: {} ({})", mode.to_lowercase(), profile);
+                    println!(
+                        "🔧 Power mode set to: {} ({})",
+                        mode.to_lowercase(),
+                        profile
+                    );
                 }
             }
             PowerAction::Get => {
