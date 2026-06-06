@@ -136,13 +136,20 @@ handlers or monitors.
    via the receiver) and dispatches each `Effect`
    (`ApplyPowerEnvelope`, `ApplyPlatformProfile`,
    `ApplyChargeThreshold`, `PersistState`) to the backend.
-5. **Auto-profile-follow.** When `fan_follows_tdp` is on and a TDP
-   change comes through, the reducer's `apply_target_and_profile`
-   infers the matching platform profile and emits a single
-   `ApplyPlatformProfile` effect *in the same batch* as the
-   `ApplyPowerEnvelope`. The executor does **not** re-inject any
-   transition for this — the inference lives entirely inside the
-   reducer, single source of truth (see `hpd-core/src/inference.rs`).
+5. **Auto-fan-curve-follow (power/cooling decoupled).** Power and
+   cooling are independent levers. When `fan_follows_tdp` is on and a
+   TDP change comes through, the reducer's `apply_target_and_profile`
+   infers the matching **fan-curve preset** (not the platform profile)
+   via `infer_fan_curve_from_spl` and emits a single `ApplyFanCurve`
+   effect *in the same batch* as the `ApplyPowerEnvelope`. The ACPI
+   `platform_profile` is **never** inferred from TDP — it is a separate
+   power lever programmed at boot from `DaemonConfig::default_platform_profile`
+   (default `Performance`, so the SPL you set is the real usable limit;
+   a `PowerSaver` EPP would otherwise clamp the APU well below it). The
+   inference lives entirely inside the reducer (see
+   `hpd-core/src/inference.rs`). `cool set` (`SetCoolingLevel`) likewise
+   programs the fan curve only; `set_profile` is the manual power-profile
+   lever and stays decoupled from cooling.
 6. **Rollback on hardware-write failure.** Today only
    `ApplyPowerEnvelope` rolls back: on failure the executor reads the
    real hardware state and re-injects `SyncPowerTarget`. The other two

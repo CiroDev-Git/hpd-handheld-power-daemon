@@ -1,137 +1,187 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 
-# Enfriamiento y potencia en hpd — explicado simple 🇪🇸
+# Potencia y enfriamiento en hpd — explicado simple 🇪🇸
 
-Guía en español, sin tecnicismos, de cómo `hpd` maneja la potencia y el
-enfriamiento de tu consola. Si te perdiste entre "perfil", "modo",
-"curva", "clamp", "auto" — esto es para vos.
+Guía en español, sin tecnicismos, de cómo `hpd` maneja la **potencia** y el
+**enfriamiento** de tu consola. Si te perdiste entre "perfil", "modo",
+"curva", "EPP", "auto" — esto es para vos.
 
-## Las dos cosas que controlás
+> 🖼️ **¿Preferís verlo en diagramas?** Toda esta info en imágenes (el
+> daemon, el plugin y cómo se comunican, con todas las combinaciones) está
+> en [`DIAGRAMS-es.md`](DIAGRAMS-es.md).
 
-Solo hay **dos perillas** que importan:
+> **¿Cambió algo importante?** Sí. Antes el nivel de cooling **también
+> decidía cuánta potencia usaba el chip** (estaban pegados). Eso confundía:
+> ponías "TDP 25W" pero el chip a veces usaba 13W y no entendías por qué.
+> **Ahora están separados.** Más abajo está el por qué y cómo funciona.
+
+---
+
+## Las dos perillas (ahora de verdad independientes)
 
 ### 1. ⚡ TDP — cuánta potencia puede pedir el chip
 
-`hpdctl tdp set 20` = "dejá que el APU use hasta 20 watts".
-Más watts = más rendimiento y más calor. Menos = más fresco y más batería.
+```
+hpdctl tdp set 20      # "el APU puede usar hasta 20 watts"
+```
 
-### 2. 🧊 Cooling — cuán fuerte enfría (y cuánta potencia REAL permite)
+Más watts = más rendimiento y más calor. Menos watts = más fresco y más
+batería. **El TDP que pongas es el límite real.** Si pedís 20W, el chip
+puede llegar a 20W (no se queda corto por culpa del cooling).
 
-`hpdctl cool set <nivel>`, con tres niveles:
+### 2. 🧊 Cooling — cuán fuerte trabaja el ventilador
 
-| Nivel | Ventilador | Potencia real |
+```
+hpdctl cool set aggressive   # ventilador a tope (más frío, más ruido)
+hpdctl cool set balanced     # equilibrio
+hpdctl cool set silent       # ventilador suave (más silencio)
+hpdctl cool auto             # que hpd elija la curva según el TDP
+hpdctl cool reset            # ventilador como de fábrica (firmware)
+hpdctl cool get              # ver nivel + modo actual
+```
+
+El cooling **solo controla el ventilador** (ruido ↔ temperatura). **No
+toca la potencia.** Podés tener "potencia alta + ventilador silencioso" o
+"potencia baja + ventilador fuerte" — cualquier combinación es válida.
+
+---
+
+## 💡 La razón del cambio (lo que descubrimos midiendo)
+
+Medimos en la consola, mismo juego, mismo `tdp set` alto, cambiando solo el
+nivel de cooling, y vimos algo que no se ve a simple vista:
+
+| Nivel viejo | Potencia REAL del chip | Temperatura |
 |---|---|---|
-| `silent` | Silencioso | **Baja** (el chip queda limitado) |
-| `balanced` | Moderado | Media |
-| `aggressive` | Fuerte | **Full** (el chip puede usar todo) |
+| `silent` | **~13 W** | ~54 °C |
+| `balanced` | **~17–21 W** | ~62 °C |
+| `aggressive` | **~40 W** | ~78 °C |
 
-Y dos comandos más:
-- `hpdctl cool auto` → que `hpd` elija el nivel solo, según el TDP.
-- `hpdctl cool reset` → devolverle el ventilador al firmware (como de fábrica).
-- `hpdctl cool get` → ver el nivel y el modo actual.
+¿Por qué con el **mismo TDP** el consumo era tan distinto? Porque el viejo
+nivel de cooling, por debajo, cambiaba el **`platform_profile`** del sistema
+(un ajuste del firmware/EPP que decide qué tan agresivo va el chip). En
+`silent` ese perfil **capaba** la potencia muy por debajo de tu TDP. O sea:
+`silent` no enfriaba por el ventilador — **enfriaba porque frenaba el
+chip.**
 
-## 💡 Lo importante (y lo que descubrimos midiendo)
+**El problema:** eso hacía que "TDP 25W" no significara 25W. Tu número de
+potencia quedaba pisado por el nivel de cooling, sin que fuera obvio.
 
-Acá está la clave que sorprende: **el nivel de cooling NO es solo la
-velocidad del ventilador.** También define **cuánta potencia real puede
-sacar el chip.** No es solo ruido — es rendimiento.
+**La solución (este cambio):** **separamos las dos cosas.**
 
-Lo medimos en la consola, mismo juego/carga, mismo `tdp set 30`:
+- El **TDP** es ahora la **única** perilla de potencia. Lo que pongas, eso
+  manda.
+- El **cooling** es **solo el ventilador**. Más fuerte = más frío y más
+  ruido; más suave = más silencio. Nada más.
+- El `platform_profile` quedó fijo en **`performance`** por defecto (la
+  perilla de potencia "abierta"), así tu TDP siempre se aplica de verdad.
 
-- En **silent** (silencioso) → CPU se quedó en **59 °C**
-- En **aggressive** (performance) → CPU llegó a **95 °C**
+---
 
-¿Por qué tanta diferencia con el mismo TDP? Porque en `silent` el firmware
-**capa** (limita, "clampea") la potencia real muy por debajo de lo que
-pediste, para mantenerse fresco y callado. En `aggressive` deja pasar
-toda la potencia.
+## 🔁 Auto vs Manual del cooling
 
-👉 **Por eso `cool` mueve el perfil Y la curva juntos: son la misma
-decisión.** "Quiero potencia full y enfriar fuerte" = `aggressive`.
-"Quiero silencio y poca potencia" = `silent`.
+### Auto (`cool auto`) — el modo por defecto
 
-## 🔁 Auto vs Manual — cuál usar
+`hpd` elige la **curva del ventilador** según el TDP que tengas: poco TDP →
+curva silenciosa; mucho TDP → curva agresiva. Ya no toca la potencia, solo
+ajusta el ventilador a cuánto calor esperás generar. No tenés que pensar.
 
-### Auto (`cool auto`) — el modo por defecto, el recomendado
+### Manual (`cool set <nivel>`) — para fijar el ventilador
 
-`hpd` elige el nivel de cooling según el TDP que tengas. Si pedís poco
-TDP, baja el nivel (silencioso); si pedís mucho, lo sube (full). **Todo
-queda coherente solo.** No tenés que pensar.
+Fijás un nivel de ventilador y no se mueve, pase lo que pase con el TDP.
 
-### Manual (`cool set <nivel>`) — para cuando querés fijar algo
+---
 
-Fijás un nivel y no se mueve, pase lo que pase con el TDP. Útil para:
-- **`cool set aggressive`** jugando algo exigente: querés máximo
-  rendimiento + máximo enfriamiento, sin que nada lo baje.
-- **`cool set silent`** leyendo, viendo video o emulando algo liviano:
-  querés silencio total y no te importa el rendimiento.
+## ✅ La combinación que antes "no tenía sentido" — ahora SÍ funciona
 
-## ⚠️ La combinación que NO tiene sentido (y por qué)
+Antes, `silent` + `tdp set 30` era contradictorio (el silent te frenaba la
+potencia). **Ya no.** Ahora significa exactamente lo que parece:
 
-**Manual `silent` + `tdp set 30`** (o cualquier "poco enfriamiento + mucho
-TDP").
+> **"Quiero 30W de potencia, pero con el ventilador suave."**
 
-Es una contradicción: estás diciendo *"limitá la potencia para estar
-silencioso"* y al mismo tiempo *"dame 30 watts de potencia"*. No se puede
-tener las dos. Lo que gana es el nivel de cooling: **el chip queda
-clampeado en silent, y esos 30W no se usan de verdad.** El número de TDP
-queda "guardado", pero no tiene efecto hasta que subas el nivel de
-cooling.
+El chip usará hasta 30W *de verdad*, y el ventilador irá tranquilo —
+probablemente el chip se ponga más caliente (porque trabaja a 30W con poco
+aire), pero es **tu** decisión y se respeta. Sin sorpresas, sin números
+"guardados que no hacen nada".
 
-**Recomendación:** si querés que un TDP alto realmente funcione, usá
-`cool auto` (que sube el nivel solo) o `cool set aggressive`. En `silent`,
-el TDP alto no hace nada.
+---
 
-> Nota: en una versión próxima, si intentás esta combinación contradictoria
-> en modo manual, `hpd` te va a **avisar** ("este nivel limita la potencia,
-> tu TDP no se va a aplicar del todo") pero igual te deja hacerlo — no te
-> bloquea ni te pide confirmación, solo te informa. La idea es no tratarte
-> como tonto, solo avisarte de algo que no es obvio.
+## 🎛️ La perilla avanzada: `platform_profile` (potencia/EPP)
+
+Para el 99% de la gente: **no la toques, dejala en `performance`.** Es la
+que hace que tu TDP se aplique al máximo.
+
+Si sos usuario avanzado y querés sesgar la eficiencia (gastar un poco menos
+a igual carga, a costa de pico de rendimiento), podés bajarla:
+
+```
+# por D-Bus (no hay subcomando dedicado en el CLI todavía)
+# o en /etc/hpd/config.toml:
+default_platform_profile = "balanced"   # o "power-saver"
+```
+
+`performance` / `balanced` / `power-saver` (acepta también los alias ACPI
+`quiet` / `low-power`). Por defecto: `performance`.
+
+---
 
 ## 📋 Resumen de comandos
 
 ```fish
-hpdctl tdp set 18              # potencia: hasta 18W
-hpdctl cool set aggressive     # enfriar full (perfil + curva)
-hpdctl cool auto               # que hpd elija el cooling según el TDP
+hpdctl tdp set 18              # POTENCIA: hasta 18W reales
+hpdctl cool set aggressive     # VENTILADOR: a tope (frío + ruidoso)
+hpdctl cool set silent         # VENTILADOR: suave (silencioso)
+hpdctl cool auto               # ventilador que sigue al TDP
 hpdctl cool reset              # ventilador como de fábrica
-hpdctl cool get                # ver nivel + modo
 hpdctl status                  # tablero: TDP, cooling, temps, RPM, batería
 ```
+
+Regla mental:
+- **¿Querés más/menos rendimiento o batería?** → `tdp`.
+- **¿Querés más/menos ruido?** → `cool`.
 
 ---
 
 ## Para desarrolladores (Decky plugin, otros clientes D-Bus)
 
-Lo que cambió de cara a un cliente externo:
+### Qué cambió a nivel de comportamiento
 
-### CLI
-- **Se eliminó el namespace `fan`** del CLI (`fan set`, `fan auto`,
-  `fan profile`, `fan curve …` ya no existen).
-- Todo el enfriamiento vive bajo **`cool`**: `set <silent|balanced|aggressive>`,
-  `auto`, `reset`, `get`.
+1. **`SetCoolingLevel` ya NO cambia la potencia.** Solo programa la curva
+   de ventilador + fija modo manual. El `platform_profile` no se toca.
+2. **El auto-follow (`fan_follows_tdp`) infiere la CURVA**, no el perfil.
+3. **El `platform_profile` arranca en `performance`** (config
+   `default_platform_profile`) y ya no se deduce del TDP.
+4. `SetProfile` queda como la perilla manual de potencia (decoplada del
+   cooling). `fan_curve_follows_profile` quedó sin efecto (no-op).
 
 ### D-Bus (interfaz `dev.cirodev.hpd.PowerDaemon1`)
-La superficie cruda sigue disponible para clientes/GUIs avanzados:
 
-| Método / propiedad | Qué hace |
+| Método / propiedad | Qué hace ahora |
 |---|---|
-| `SetCoolingLevel(level: s)` | **El de alto nivel.** `silent`/`balanced`/`aggressive` → setea perfil + curva juntos. Es lo que llama `cool set`. |
-| `SetFanAuto()` | Cooling sigue al TDP (lo que llama `cool auto`). |
-| `ResetFanCurve()` | Ventilador a firmware (lo que llama `cool reset`). |
-| `SetProfile(profile: s)` | Crudo: solo el ACPI platform_profile (`power-saver`/`balanced`/`performance`). |
-| `SetFanCurve(preset: s)` | Crudo: solo la curva, sin tocar el perfil. |
-| `GetThermalStatus() → (i,i,i,i)` | `(cpu_temp, gpu_temp, cpu_rpm, gpu_rpm)`; `i32::MIN` si un sensor no existe. |
-| `fan_curve` (prop) | Nivel/curva activa: `silent`/`balanced`/`aggressive`/`custom`/`auto`. |
-| `auto_cooling` (prop) | `true` = modo auto (sigue TDP), `false` = manual. |
-| `current_spl`, `active_profile`, `charge_end_threshold`, `is_ac_connected` | Estado, como antes. |
+| `SetSpl(w)` / `SetEnvelope(...)` | **La perilla de potencia.** El SPL es el límite real. |
+| `SetCoolingLevel(level: s)` | **Solo ventilador**: `silent`/`balanced`/`aggressive`. Lo que llama `cool set`. |
+| `SetFanAuto()` | La curva sigue al TDP (`cool auto`). |
+| `ResetFanCurve()` | Ventilador a firmware (`cool reset`). |
+| `SetProfile(profile: s)` | Perilla de potencia manual: `performance`/`balanced`/`power-saver`. |
+| `GetThermalStatus() → (i,i,i,i)` | `(cpu_temp, gpu_temp, cpu_rpm, gpu_rpm)`; `i32::MIN` si falta un sensor. |
+| `fan_curve` (prop) | Curva activa: `silent`/`balanced`/`aggressive`/`custom`/`auto`. |
+| `auto_cooling` (prop) | `true` = auto (sigue TDP), `false` = manual. |
+| `current_spl`, `active_profile`, `charge_end_threshold`, `is_ac_connected` | Estado. |
 
-### Recomendación para el plugin
-Mostrá **un solo control de cooling** (silent/balanced/aggressive + un
-toggle auto), no tres. Para "nivel actual" usá la propiedad `fan_curve`;
-para el modo, `auto_cooling`. Para temps/RPM en vivo, `GetThermalStatus`.
-Si necesitás el control crudo decoplado (perfil ≠ curva), está en
-`SetProfile`/`SetFanCurve` + `fan_curve_follows_profile = false` en la
-config, pero para el 99% de los usuarios `SetCoolingLevel` es todo.
+### Qué debería hacer el plugin (para que el cambio se entienda)
 
-Detalle técnico completo: [`docs/fan-curves.md`](fan-curves.md).
+- **Separar visualmente las dos perillas.** El control de "Cooling" debe
+  decir que ajusta **solo el ventilador** (ruido ↔ temperatura), **no** la
+  potencia. El texto viejo tipo *"Silent caps power / Aggressive unlocks
+  the full TDP"* ya no aplica y confunde — hay que cambiarlo.
+- **El TDP es la perilla de potencia**, sola y suficiente.
+- **(Opcional) Exponer `platform_profile`** como un control avanzado de
+  "modo de energía" (Performance/Balanced/Eco) usando `SetProfile`, claramente
+  separado de "Cooling". Para la mayoría, dejarlo en Performance y ocultarlo
+  está bien.
+- **AC en vivo:** el plugin ya pollea `is_ac_connected`; con el fix del nodo
+  `AC0` ese valor ahora es correcto en el Xbox Ally X (antes devolvía
+  siempre "batería").
+
+Detalle técnico completo: [`docs/fan-curves.md`](fan-curves.md) y la guía de
+integración del plugin en [`docs/decky-plugin/`](decky-plugin/).

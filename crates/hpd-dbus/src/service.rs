@@ -201,8 +201,22 @@ impl PowerDaemonInterface {
 
     /// Whether the charger is currently plugged in. Re-queried at boot
     /// and updated live from the netlink monitor.
+    ///
+    /// Kept as a method for backwards compatibility; prefer the
+    /// [`ac_connected`](Self::ac_connected) property, which emits
+    /// `PropertiesChanged` so clients can react without polling.
     async fn is_ac_connected(&self) -> zbus::fdo::Result<bool> {
         Ok(self.state_rx.borrow().is_ac_connected)
+    }
+
+    /// Whether the charger is currently plugged in — as a **property**, so
+    /// it emits `PropertiesChanged` on every AC plug/unplug edge (the
+    /// `is_ac_connected()` method above does not). Lets clients (the Decky
+    /// plugin) drop their AC poll. Re-queried at boot, updated live from
+    /// the netlink monitor.
+    #[zbus(property)]
+    async fn ac_connected(&self) -> bool {
+        self.state_rx.borrow().is_ac_connected
     }
 
     /// Set the ACPI platform/cooling profile manually
@@ -232,9 +246,10 @@ impl PowerDaemonInterface {
         Ok(())
     }
 
-    /// Unified cooling lever: set the cooling level (`silent`,
-    /// `balanced`, `aggressive`), which programs the matching platform
-    /// profile *and* fan curve together and latches manual cooling.
+    /// Cooling lever: set the fan-curve level (`silent`, `balanced`,
+    /// `aggressive`) and latch manual cooling. Decoupled from power — it
+    /// programs the fan curve only and does **not** touch the platform
+    /// profile / power envelope (use `set_spl` / `set_profile` for those).
     ///
     /// This is the front-end for `hpdctl cool set`. The raw `set_profile`
     /// and `set_fan_curve` methods remain for advanced callers.

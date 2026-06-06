@@ -31,6 +31,10 @@ a calibrated *starting point*, not a final tune — see
 - It is done safely: we hand the EC *auto-points*, never raw PWM, so the
   fans keep following the last curve even if `hpd` dies; and every write
   is read back and fails closed if the EC rejected it.
+- The presets were later **retuned cooling-first from in-game telemetry**
+  and the cooling level was **decoupled from power** (it had been secretly
+  clamping the chip) — see [§5](#5-cooling-is-a-fans-only-lever-decoupled-from-power)
+  and [§6](#6-decoupling-power-from-cooling).
 
 ## What the cooling stack did before
 
@@ -109,24 +113,24 @@ monotonic ramp, instead of letting the firmware flat-line at 62 °C. Every
 preset raises duty in each band and, critically, **keeps climbing past
 62 °C** where the firmware gave up.
 
-The three presets (CPU `pwm1`; the GPU `pwm2` shares the same temp→duty
-shape and naturally spins less because the GPU runs cooler):
+The three presets, **retuned cooling-first from in-game telemetry**
+(`pwm1` CPU; `pwm2` GPU shares the same temp→duty shape and naturally
+spins less because the GPU runs cooler). Each curve's eight
+`temperature → duty` points:
 
-| ≈°C | `silent` | `balanced` (default) | `aggressive` |
-|----:|---------:|---------------------:|-------------:|
-| 45–48 | 8 (3 %)  | 15 (6 %)   | 26 (10 %) |
-| 54    | 20 (8 %) | 33 (13 %)  | 64 (25 %) |
-| 59–62 | 38 (15 %)| 64 (25 %)  | 102 (40 %) |
-| 65–70 | 64 (25 %)| 102 (40 %) | 140 (55 %) |
-| 76–77 | 102 (40 %)| 140 (55 %)| 178 (70 %) |
-| 82–83 | 140 (55 %)| 178 (70 %)| 210 (82 %) |
-| 87–88 | 190 (75 %)| 216 (85 %)| 240 (94 %) |
-| 91–93 | 230 (90 %)| 255 (100 %)| 255 (100 %) |
+| Preset | Points (°C → duty %) |
+|---|---|
+| `silent` | 50→6 · 58→11 · 65→22 · 72→37 · 78→59 · 83→78 · 88→92 · 93→100 |
+| `balanced` *(default)* | 45→8 · 54→20 · 62→37 · 69→57 · 75→75 · 80→88 · 85→100 · 92→100 |
+| `aggressive` | 40→18 · 48→35 · 55→53 · 62→71 · 68→86 · 74→100 · 82→100 · 90→100 |
 
-Even `silent` beats the firmware default at high temperature, because the
-firmware simply has no defined behaviour there. `balanced` is the
-shipped default (`default_fan_curve = "balanced"`), applied on first
-boot.
+The design principle is **reach near-max airflow early in temperature**:
+the unit's fans saturate at duty ~220 (any higher buys almost no extra
+RPM), so the curves climb hard through the mid range and pin to 100 % by
+~74–85 °C instead of crawling to 100 % at 92 °C. Even `silent` beats the
+firmware default at high temperature, because the firmware has no defined
+behaviour there. `balanced` is the shipped default
+(`default_fan_curve = "balanced"`), applied on first boot.
 
 ### 2. Re-apply the curve on resume from suspend
 
@@ -157,39 +161,88 @@ purely additive at the capability layer: a backend without a
 programmable curve simply returns `None` and the daemon treats fan-curve
 effects as no-ops.
 
-### 5. One user-facing lever
+### 5. Cooling is a fans-only lever (decoupled from power)
 
-Cooling is presented as a single concept so users don't have to juggle
-"profile" vs "curve" vs "mode":
+Cooling controls **only the fan curve** — noise vs temperature. It is
+independent of power (see [the decouple](#6-decoupling-power-from-cooling)):
 
-- **`hpdctl cool set <silent|balanced|aggressive>`** sets the platform
-  profile *and* the matching fan curve together (manual cooling).
-- **`hpdctl cool auto`** lets the daemon infer the level from the TDP.
-- `fan_curve_follows_profile` defaults **on**, which is what keeps the
-  profile and curve in lock-step (for both the `cool` command and
-  auto-cooling). Advanced users set it `false` and drive the raw
-  raw platform-profile / fan-curve controls independently over D-Bus
-  (`set_profile` / `set_fan_curve`).
+- **`hpdctl cool set <silent|balanced|aggressive>`** sets the fan curve
+  (manual cooling). It does **not** touch the platform profile / power.
+- **`hpdctl cool auto`** lets the daemon infer the fan-curve preset from
+  the TDP (low TDP → silent curve, high TDP → aggressive curve).
+- The raw fan curve is also available over D-Bus (`set_fan_curve`) for
+  advanced clients. `fan_curve_follows_profile` is now a **no-op** (kept
+  only so old configs still parse).
+
+### 6. Decoupling power from cooling
+
+The original design coupled the cooling level to the ACPI
+`platform_profile` (silent→power-saver, aggressive→performance). We
+measured that the profile's EPP **clamps real power** (below), so that
+coupling meant the cooling level secretly throttled the chip: a `tdp set 25`
+could run at ~13 W just because auto-cooling had picked `silent`/PowerSaver.
+"TDP didn't mean TDP," which was confusing.
+
+So power and cooling are now **separate levers**:
+
+- **TDP/SPL** (`tdp set`) is the sole power knob — the value you set is the
+  real, usable ceiling.
+- The **platform profile** is an independent power lever, defaulting to
+  `performance` (config `default_platform_profile`, applied at boot) so it
+  never clamps your SPL. `set_profile` over D-Bus changes it for advanced
+  efficiency tuning.
+- **Cooling** (`cool set` / auto) drives the fan curve only.
+
+Auto-cooling (`fan_follows_tdp`) therefore now infers the *fan curve* from
+the TDP (`infer_fan_curve_from_spl`), not the platform profile.
 
 ## Calibration
 
-The presets were **validated on the ROG Xbox Ally X (RC73XA)** under a
-sustained all-core load (`yes` ×8). Each cooling level couples the fan
-curve with the power-gating platform profile, so the measured peaks
-reflect the combined behaviour a user actually gets:
+Two measurement passes on the ROG Xbox Ally X (RC73XA): one that exposed
+the **profile-gates-power** behaviour (motivating the decouple), and one
+that **validated the retuned curves in a real game**.
 
-| Level | Peak CPU | Peak GPU | CPU fan | GPU fan |
-|---|---|---|---|---|
-| `silent` | 58 °C | 54 °C | ~3700 rpm | ~3900 rpm |
-| `balanced` (default) | 68 °C | 58 °C | ~5300 rpm | ~5300 rpm |
-| `aggressive` | 95 °C | 72 °C | ~8100 rpm (max) | ~8100 rpm (max) |
+### Pass 1 — the coupling finding (why we decoupled)
 
-Reading: `balanced` holds the CPU at **68 °C** vs the firmware default's
-**~87 °C** — the original "hot screen / quiet fans" complaint is solved.
-`aggressive` runs at **95 °C with the fans already maxed**: that is the
-chip at full power (the profile lets it draw everything), and 95 °C is
-its normal full-tilt temperature, not a cooling failure — pick a lower
-level for a cooler/quieter chip. These values are the shipped defaults.
+Same `tdp set 25`, identical all-core load, only the cooling *level*
+changed. Because each old level also set the platform profile, the real
+SoC power swung wildly:
+
+| Old level → profile | SoC power (real) | Tctl |
+|---|---|---|
+| `silent` → PowerSaver | **~13 W** | 54 °C |
+| `balanced` → Balanced | **~17–21 W** | 66 °C |
+| `aggressive` → Performance | **~29 W** | 75 °C |
+
+`silent` wasn't cool because of the fan — it was cool because the profile
+**throttled the chip to 13 W**. With SPL set to 25 W. That hidden gating
+is exactly what the decouple removes.
+
+### Pass 2 — in-game validation of the retuned curves
+
+Real GPU-heavy game, platform profile pinned to `performance` (so the
+fans, not the power, are what's under test), each candidate curve pushed
+to the EC live and held to steady state:
+
+| Curve (profile / power) | Tctl / edge | CPU fan | GPU fan |
+|---|---|---|---|
+| `aggressive` (Performance, ~40 W) | ~78 °C / ~78 °C | ~8000 rpm | ~8000 rpm |
+| `balanced` (Balanced, ~17 W) | ~62 °C / ~60 °C | ~5100 rpm | ~5100 rpm |
+| `silent` (PowerSaver, ~13 W) | ~60 °C / ~57 °C | ~3800 rpm | ~3800 rpm |
+
+Key facts learned in-game (these drove the curve shapes):
+
+- **Real power ≈ 40 W** under a game (CPU+GPU), well above the ~29 W a
+  CPU-only synthetic load showed.
+- **Fan floor ~3700 RPM, ceiling ~8400 RPM** — higher than the ~6600 a
+  synthetic load reached; the EC drives the fans harder under real
+  thermal demand.
+- The `aggressive` curve holds the chip at **~78 °C at a sustained 40 W**
+  with the fans pinned near the ceiling — plenty of headroom.
+
+Reproduce with the tuning helpers: `scripts/fan-tune.sh` (push a candidate
+curve to the EC + live monitor) and `scripts/fan-characterize.sh`
+(PWM→RPM sweep).
 
 ### Remaining caveats
 
@@ -199,9 +252,6 @@ level for a cooler/quieter chip. These values are the shipped defaults.
 2. **Other models** — the presets are shared across the ASUS handheld
    family but only measured on the Xbox Ally X (`RC73XA`). Per-model
    tuning lands when captures from the Ally / Ally X exist.
-3. **GPU curve under GPU load** — calibration used a CPU-bound load, so
-   `pwm2` (GPU) was not heavily exercised; a real game would stress it,
-   but the curve shape is shared with the (validated) CPU curve.
 
 Sustained full duty is safe for the hardware (the fans are rated for it);
 it is only louder.
@@ -212,27 +262,24 @@ The curve is not a bolted-on side feature — it threads through the
 existing cooling/power flows:
 
 - **Platform profile ↔ curve.** While a custom curve is active
-  (`pwm_enable = 1`), *the curve* drives the fans, overriding whatever
-  fan behaviour the ACPI `platform_profile` would have applied. Because
-  writing the profile can make the EC drop the custom curve back to
+  (`pwm_enable = 1`), *the curve* drives the fans. Because writing the
+  `platform_profile` can make the EC drop the custom curve back to
   automatic, the reducer **re-asserts the active curve after every
-  `ApplyPlatformProfile`** (`reassert_curve_after_profile`), decoupled
-  from `fan_curve_follows_profile`. This is what keeps the curve alive
-  when the default `fan_follows_tdp` auto-cooling nudges the profile as
-  the TDP changes.
-- **The platform profile gates real power.** Measured on the RC73XA: at a
-  fixed `tdp set 30` under identical load and fans, `power-saver` settled
-  at 59 °C while `performance` hit 95 °C — amd_pmf clamps the actual power
-  draw by profile, regardless of the SPL `hpd` writes. The profile is
-  therefore the *dominant* performance/thermal lever, not a cosmetic
-  hint, which is exactly why `cool` couples it to the curve as one level
-  (`silent`→power-saver = low power + quiet, `aggressive`→performance =
-  full power + hard cooling). See `docs/dev/FAN_CURVE_TESTING.md` §11.
-- **Suspend/resume.** `SystemResumed` re-applies the active curve as a
-  final effect (the EC can reset it across suspend).
-- **AC plug/unplug.** Plugging AC ramps the TDP and, with auto-cooling
-  on, the profile — which (via the re-assert above, or
-  `fan_curve_follows_profile`) carries the curve along.
+  `ApplyPlatformProfile`** (`reassert_curve_after_profile`). This keeps the
+  curve alive across the boot-time profile write and any later
+  `set_profile`.
+- **The platform profile gates real power — so it's now decoupled.**
+  Measured on the RC73XA: at a fixed SPL under identical load and fans,
+  `power-saver` drew ~13 W while `performance` drew ~29–40 W — amd_pmf
+  clamps the actual draw by profile, regardless of the SPL `hpd` writes.
+  Because that made a low cooling level silently throttle the chip, the
+  profile is **no longer coupled to cooling**: it defaults to `performance`
+  (so the SPL is the real limit) and only `set_profile` changes it. See
+  [§6 Decoupling power from cooling](#6-decoupling-power-from-cooling).
+- **Suspend/resume.** `SystemResumed` re-applies the active curve (and the
+  profile) as final effects (the EC can reset them across suspend).
+- **AC plug/unplug.** Plugging AC ramps the TDP and, with auto-cooling on,
+  the *fan curve* follows it (the profile is left at its default).
 - **Telemetry.** The daemon now surfaces live fan RPM (CPU/GPU) and
   CPU/GPU temperatures over D-Bus (`GetThermalStatus`), shown in
   `hpdctl status` / `monitor` alongside the active curve. This revived
@@ -251,8 +298,10 @@ On-device validation of all of the above is scripted in
 | ASUS curve write/read-back + presets | `hpd-backend-asus/src/fan_curve.rs` |
 | hwmon lookup by stable `name` | `hpd-backend-asus/src/hwmon.rs` |
 | State machine (transition/effect/reducer) | `hpd-core/src/{transition,effect,reducer}.rs` |
+| Auto-cooling fan-curve inference | `hpd-core/src/inference.rs` (`infer_fan_curve_from_spl`) |
 | Resume re-apply | `hpd-core/src/reducer.rs` (`SystemResumed`) |
 | D-Bus methods + property | `hpd-dbus/src/service.rs` |
 | polkit action | `hpd-dbus/src/actions.rs`, `package/polkit/dev.cirodev.hpd.policy` |
-| CLI | `hpd-cli/src/main.rs` (`fan curve …`) |
-| Config (`default_fan_curve`, `fan_curve_follows_profile`) | `hpd-daemon/src/config.rs`, `package/hpd-example.toml` |
+| CLI | `hpd-cli/src/main.rs` (`cool …`) |
+| Config (`default_fan_curve`, `default_platform_profile`) | `hpd-daemon/src/config.rs`, `package/hpd-example.toml` |
+| Tuning helpers | `scripts/fan-tune.sh`, `scripts/fan-characterize.sh` |

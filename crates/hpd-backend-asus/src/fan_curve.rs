@@ -46,44 +46,57 @@ const ENABLE_AUTO: &str = "2";
 const FAN_CPU: u8 = 1;
 const FAN_GPU: u8 = 2;
 
-/// Quietest preset: low duty until the chip gets genuinely warm, then a
-/// firm ramp so it never relies on the firmware's undefined high-temp
-/// region.
+// Calibration note (Xbox Ally X / RC73XA, validated in-game June 2026):
+// the EC enforces a hard fan floor of ~3700 RPM (any duty <= ~8% still
+// spins at the floor) and a ceiling of ~8400 RPM under real thermal
+// demand. RPM saturates fast — most of the floor->ceiling span is
+// covered by duty ~20..220, and duty above ~220 buys almost no extra
+// airflow. The curves below therefore stop chasing the bottom (the fan
+// can't run quieter than the floor) and instead reach near-max airflow
+// EARLY in temperature, biasing toward cooling.
+
+/// Quietest preset (pairs with the PowerSaver profile, which already
+/// throttles the APU to ~13 W, so the chip stays cool on its own). Sits
+/// near the fan floor through the low/mid range, then ramps firmly past
+/// ~78 °C so it never relies on the firmware's undefined high-temp region.
 const SILENT: FanCurve = FanCurve::new([
-    FanCurvePoint::new(48, 8),
-    FanCurvePoint::new(56, 20),
-    FanCurvePoint::new(63, 38),
-    FanCurvePoint::new(70, 64),
-    FanCurvePoint::new(77, 102),
-    FanCurvePoint::new(83, 140),
-    FanCurvePoint::new(88, 190),
-    FanCurvePoint::new(93, 230),
+    FanCurvePoint::new(50, 15),
+    FanCurvePoint::new(58, 28),
+    FanCurvePoint::new(65, 55),
+    FanCurvePoint::new(72, 95),
+    FanCurvePoint::new(78, 150),
+    FanCurvePoint::new(83, 200),
+    FanCurvePoint::new(88, 235),
+    FanCurvePoint::new(93, 255),
 ]);
 
-/// Default after install: noticeably cooler than firmware, still
-/// reasonably quiet. Reaches full duty by ~92 °C.
+/// Default after install: noticeably cooler than firmware. Holds the
+/// chip in the low 60s °C at the Balanced profile's ~17-21 W in-game,
+/// reaching full duty by ~85 °C.
 const BALANCED: FanCurve = FanCurve::new([
-    FanCurvePoint::new(45, 15),
-    FanCurvePoint::new(54, 33),
-    FanCurvePoint::new(62, 64),
-    FanCurvePoint::new(69, 102),
-    FanCurvePoint::new(76, 140),
-    FanCurvePoint::new(82, 178),
-    FanCurvePoint::new(87, 216),
+    FanCurvePoint::new(45, 20),
+    FanCurvePoint::new(54, 50),
+    FanCurvePoint::new(62, 95),
+    FanCurvePoint::new(69, 145),
+    FanCurvePoint::new(75, 190),
+    FanCurvePoint::new(80, 225),
+    FanCurvePoint::new(85, 255),
     FanCurvePoint::new(92, 255),
 ]);
 
-/// Cooling-first, Armoury-Crate "Turbo" style: high duty early to keep
-/// the screen and back panel cool, at the cost of noise.
+/// Cooling-first, Armoury-Crate "Turbo" style: near-max airflow by
+/// ~74 °C to keep the screen and back panel cool, at the cost of noise.
+/// Validated holding ~78 °C under a sustained 40 W (Performance) game
+/// load with the fans pinned at the ~8000 RPM ceiling.
 const AGGRESSIVE: FanCurve = FanCurve::new([
-    FanCurvePoint::new(40, 26),
-    FanCurvePoint::new(50, 64),
-    FanCurvePoint::new(58, 102),
-    FanCurvePoint::new(65, 140),
-    FanCurvePoint::new(72, 178),
-    FanCurvePoint::new(79, 210),
-    FanCurvePoint::new(85, 240),
-    FanCurvePoint::new(91, 255),
+    FanCurvePoint::new(40, 45),
+    FanCurvePoint::new(48, 90),
+    FanCurvePoint::new(55, 135),
+    FanCurvePoint::new(62, 180),
+    FanCurvePoint::new(68, 220),
+    FanCurvePoint::new(74, 255),
+    FanCurvePoint::new(82, 255),
+    FanCurvePoint::new(90, 255),
 ]);
 
 /// Resolve a named preset to its `(cpu, gpu)` curves. Both fans share

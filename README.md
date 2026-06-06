@@ -162,15 +162,15 @@ hpdctl tdp set 18              # smart mode: SPL=18W, SPPT/FPPT derived
 hpdctl tdp get
 hpdctl preset eco|balanced|max # presets relative to hardware range
 
-# Cooling — one lever (platform profile + fan curve together)
+# Cooling — fans only (noise vs temperature; independent of power)
 hpdctl cool set silent|balanced|aggressive
-hpdctl cool auto               # let the daemon pick the level from TDP
+hpdctl cool auto               # let the daemon pick the fan curve from TDP
 hpdctl cool reset              # hand the fans back to firmware control
 hpdctl cool get                # current level + mode
 hpdctl cool curve              # draw the active fan curve
 
-# (The raw platform profile and fan curve are available over D-Bus —
-#  set_profile / set_fan_curve — for advanced/decoupled use.)
+# (The power profile / EPP is a separate lever, default `performance`,
+#  available over D-Bus as set_profile for advanced power tuning.)
 
 # Battery
 hpdctl charge set 80           # 20..=100, persisted across reboots
@@ -182,47 +182,44 @@ hpdctl monitor                 # refreshes once a second
 
 Run `hpdctl --help` for the full subcommand list and arg shapes.
 
-### TDP envelope vs cooling profile
+### Power and cooling are decoupled
 
-These are deliberately decoupled:
+`hpd` has two independent levers:
 
-- **TDP envelope** (SPL/SPPT/FPPT) is *how much power the SoC may draw*.
-- **Cooling profile** is *how aggressively the fans + ACPI hints respond*.
+- **Power** — the **TDP envelope** (SPL/SPPT/FPPT) you set is *how much
+  power the SoC may draw*, and it's the real limit. It's backed by the
+  ACPI **platform profile** (EPP), which defaults to `performance` so the
+  SPL is fully usable (see below).
+- **Cooling** — the EC **fan curve** is *how hard the fans work* (noise vs
+  temperature). It does **not** affect power.
 
 When `fan_follows_tdp` is on (default), changing the envelope re-infers
-a cooling profile from the SPL fraction of the hardware range
-(`< 33% → power-saver`, `< 67% → balanced`, else `performance`). Setting
-the cooling manually (`hpdctl cool set …`) latches `fan_follows_tdp=false`
-until you call `hpdctl cool auto` again.
+the **fan curve** from the SPL fraction of the hardware range
+(`< 33% → silent`, `< 67% → balanced`, else `aggressive`). Setting cooling
+manually (`hpdctl cool set …`) latches `fan_follows_tdp=false` until you
+call `hpdctl cool auto` again. The platform profile is **never** inferred
+from TDP.
 
-### Cooling is one lever
+### Why the decouple? (the platform profile gates power)
 
-Internally there are two mechanisms — the ACPI **platform profile** and
-the EC **fan curve** — but you drive them as a single thing:
+On the Ally family the ACPI platform profile doesn't just hint the fans —
+its EPP **gates the real power** the chip draws. Measured on the Xbox
+Ally X at a fixed SPL: `power-saver` drew ~13 W, `performance` ~29–40 W.
 
-- **`hpdctl cool set <level>`** sets the platform profile *and* the fan
-  curve to the matching level (`silent → power-saver`,
-  `balanced → balanced`, `aggressive → performance`) and switches to
-  manual cooling. While a custom curve is active, *it* drives the fans
-  (it overrides the profile's built-in firmware curve).
-- **`hpdctl cool auto`** lets the daemon infer the level from the TDP
-  fraction of the hardware range (the default mode).
+`hpd` used to tie the cooling level to that profile (`silent → power-saver`,
+…), so picking a quiet cooling level **silently throttled the chip** — a
+`tdp set 25` could run at ~13 W. "TDP didn't mean TDP." So:
 
-The daemon keeps the two in sync for you:
-
-- **Profile changes re-assert the curve.** Writing the platform profile
-  can make the EC drop the custom curve back to automatic, so the daemon
-  re-applies the active curve immediately after any profile change and
-  after resume from suspend — you never silently lose it.
-- **`fan_curve_follows_profile`** (config, **on by default**) is what
-  ties them together. Set it to `false` only if you want to drive the raw
-  platform profile and fan curve independently over D-Bus (`set_profile`
-  / `set_fan_curve`).
-
-The platform profile is not cosmetic: on the Ally family it gates the
-*real* power the chip may draw (measured: ~36 °C swing between
-`power-saver` and `performance` at a fixed TDP), which is why a cooling
-level couples a profile with a curve rather than just a fan speed.
+- The **platform profile defaults to `performance`** (config
+  `default_platform_profile`, applied at boot, which also migrates a
+  device left in a throttling profile by an older hpd). Change it with the
+  D-Bus `set_profile` (or the config key) only if you want an efficiency
+  bias — `performance` / `balanced` / `power-saver`.
+- **`hpdctl cool set / auto` drive the fan curve only.** Any combination is
+  now valid, including "full TDP + quiet fans".
+- The daemon still **re-asserts the active curve after any profile write**
+  (and on resume), because writing the profile can make the EC drop the
+  custom curve. `fan_curve_follows_profile` is now a no-op.
 
 **Full user manual:** [`docs/MANUAL.md`](docs/MANUAL.md) (English) ·
 [`docs/MANUAL-es.md`](docs/MANUAL-es.md) (Spanish) — every feature, every
@@ -231,8 +228,11 @@ combination, and a "what's normal vs. what to worry about" guide.
 See [`docs/fan-curves.md`](docs/fan-curves.md) for the thermal rationale
 and [`docs/dev/FAN_CURVE_TESTING.md`](docs/dev/FAN_CURVE_TESTING.md) for
 the on-device validation plan. A plain-language explainer in Spanish
-(cooling, auto vs manual, the power gating) lives in
-[`docs/COOLING-es.md`](docs/COOLING-es.md).
+(the power↔cooling decouple, auto vs manual, what changed and why) lives
+in [`docs/COOLING-es.md`](docs/COOLING-es.md). For a **visual** walkthrough
+(diagrams of the daemon, the Decky plugin, and how they talk — every
+combination, for dummies) see [`docs/DIAGRAMS.md`](docs/DIAGRAMS.md)
+(English) / [`docs/DIAGRAMS-es.md`](docs/DIAGRAMS-es.md) (Spanish).
 
 ---
 

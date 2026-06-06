@@ -44,7 +44,8 @@ use std::process;
         hpdctl tdp set 15             Set the power envelope to 15 W\n  \
         hpdctl preset eco             Apply the lowest-power preset\n  \
         hpdctl charge set 80          Stop charging the battery at 80%\n  \
-        hpdctl cool set aggressive    Cool harder (profile + fan curve)\n  \
+        hpdctl cool set aggressive    Cool harder (fans only)\n  \
+        hpdctl power set performance  Power mode (EPP): full TDP\n  \
         hpdctl cool auto              Let the daemon pick cooling from TDP\n  \
         hpdctl cool get               Show current cooling level + mode\n  \
         hpdctl doctor                 Check that hpd is the sole power manager\n  \
@@ -66,8 +67,10 @@ enum Commands {
     /// battery. `tdp set` adjusts the sustained limit (SPL); the daemon
     /// derives the boost limits (SPPT/FPPT) from it automatically.
     ///
-    /// With auto-cooling on, changing the TDP also moves the cooling
-    /// profile to match. Use `hpdctl limits` to see the valid range.
+    /// With auto-cooling on, changing the TDP also moves the fan curve to
+    /// match (quieter at low TDP, cooler at high). Power and cooling are
+    /// decoupled — the SPL you set here is the real limit. Use
+    /// `hpdctl limits` to see the valid range.
     Tdp {
         #[command(subcommand)]
         action: TdpAction,
@@ -87,8 +90,8 @@ enum Commands {
     /// `eco` = minimum SPL, `balanced` = midpoint, `max` = maximum SPL.
     ///
     /// This is NOT the same as the cooling level (see `hpdctl cool`).
-    /// With auto-cooling enabled the cooling profile follows the preset's
-    /// TDP automatically.
+    /// With auto-cooling enabled the fan curve follows the preset's TDP
+    /// automatically; power is unaffected by cooling.
     Preset {
         #[arg(help = "Preset name: eco (min SPL), balanced (midpoint), or max (max SPL)")]
         name: String,
@@ -113,20 +116,32 @@ enum Commands {
     /// Same dashboard as `status` but redrawn once per second. Press
     /// Ctrl+C to exit.
     Monitor,
-    /// Cooling: pick how hard the device cools (the one lever)
+    /// Cooling: pick how hard the fans work (independent of power)
     ///
-    /// `cool set <level>` programs the platform profile AND the fan curve
-    /// together — one knob instead of three. `cool auto` lets the daemon
-    /// pick the level from the current TDP; `cool reset` hands the fans
-    /// back to firmware control. Levels, quietest → coolest: `silent`,
-    /// `balanced`, `aggressive`.
+    /// `cool set <level>` sets the **fan curve** only — it does not change
+    /// power. Cooling and power are decoupled: `tdp set` is the single
+    /// power lever (the SPL you set is the real limit), and `cool` just
+    /// trades noise for temperature. `cool auto` lets the daemon pick the
+    /// fan curve from the current TDP; `cool reset` hands the fans back to
+    /// firmware control. Levels, quietest → coolest: `silent`, `balanced`,
+    /// `aggressive`.
     ///
-    /// (The raw platform profile and fan curve remain available over
-    /// D-Bus for advanced/decoupled use; they are intentionally off the
-    /// CLI to keep cooling a single concept.)
+    /// (The ACPI platform profile / EPP is a separate power knob that
+    /// defaults to `performance`; it stays available over D-Bus for
+    /// advanced use.)
     Cool {
         #[clap(subcommand)]
         action: CoolAction,
+    },
+    /// Power mode (EPP / platform profile) — the advanced power lever
+    ///
+    /// Separate from `tdp` (the watt limit) and from `cool` (fans only).
+    /// `performance` (the default) lets your TDP apply in full; `balanced`
+    /// and `eco` bias efficiency by letting the firmware clamp power below
+    /// your TDP. Most users leave this on `performance`.
+    Power {
+        #[clap(subcommand)]
+        action: PowerAction,
     },
     /// Install the polkit policy so privileged commands work
     ///
@@ -188,11 +203,26 @@ enum ChargeAction {
 }
 
 #[derive(Subcommand)]
+enum PowerAction {
+    /// Set the power mode: performance, balanced, or eco
+    ///
+    /// Maps to the ACPI platform profile (`eco` = power-saver). This is the
+    /// power/EPP lever, independent of cooling. `performance` keeps your TDP
+    /// fully usable; `balanced`/`eco` let the firmware clamp power lower.
+    Set {
+        #[arg(help = "Power mode: performance (full TDP), balanced, or eco (max efficiency)")]
+        mode: String,
+    },
+    /// Print the current power mode
+    Get,
+}
+
+#[derive(Subcommand)]
 enum CoolAction {
     /// Set the cooling level: silent, balanced, or aggressive
     ///
-    /// Programs the matching platform profile and fan curve together and
-    /// switches to manual cooling (until `cool auto`).
+    /// Sets the fan curve only (noise vs temperature) and switches to
+    /// manual cooling (until `cool auto`). Does not change power.
     Set {
         #[arg(help = "Cooling level: silent (quietest), balanced, or aggressive (coolest)")]
         level: String,
@@ -376,6 +406,42 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
                 println!("🌀 Fan curve: {}", level);
                 render_curve("CPU fan  (temp → speed)", &cpu);
                 render_curve("GPU fan  (temp → speed)", &gpu);
+            }
+        },
+        Commands::Power { action } => match action {
+            PowerAction::Set { mode } => {
+                // Friendly names → ACPI platform profile. `eco` is the
+                // user-facing name for `power-saver`.
+                let profile = match mode.to_lowercase().as_str() {
+                    "performance" | "perf" => "performance",
+                    "balanced" => "balanced",
+                    "eco" | "power-saver" | "powersave" | "power_saver" => "power-saver",
+                    other => {
+                        eprintln!(
+                            "❌ Unknown power mode '{}'. Use: performance, balanced, or eco.",
+                            other
+                        );
+                        process::exit(2);
+                    }
+                };
+                if let Err(e) = proxy.set_profile(profile).await {
+                    eprintln!("❌ Error setting power mode: {}", e);
+                } else {
+                    println!(
+                        "🔧 Power mode set to: {} ({})",
+                        mode.to_lowercase(),
+                        profile
+                    );
+                }
+            }
+            PowerAction::Get => {
+                let profile = proxy.active_profile().await?;
+                // Map the daemon's canonical name back to the friendly one.
+                let friendly = match profile.as_str() {
+                    "power-saver" => "eco",
+                    other => other,
+                };
+                println!("🔧 Power mode: {} ({})", friendly, profile);
             }
         },
         Commands::FixPolkit { apply } => {

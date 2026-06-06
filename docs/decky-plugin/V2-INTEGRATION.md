@@ -33,16 +33,16 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
 | `SetSpl` | `(u watts)` | Set the TDP / sustained power limit (whole watts). SPPT/FPPT derived. | `set-tdp` |
 | `SetPreset` | `(s name)` | TDP preset: `eco` / `balanced` / `max` (min/mid/max of the hw range). | `set-tdp` |
 | `SetChargeThreshold` | `(y percent)` | Battery charge cap, `20..=100`. | `set-charge` |
-| `SetCoolingLevel` | `(s level)` | **The cooling lever.** `silent` / `balanced` / `aggressive` → sets platform profile **and** fan curve together, switches to manual cooling. | `set-profile` |
-| `SetFanAuto` | `()` | Auto cooling: the level follows the TDP. | `set-profile` |
+| `SetCoolingLevel` | `(s level)` | **The cooling lever — fans only.** `silent` / `balanced` / `aggressive` → sets the **fan curve** and switches to manual cooling. Does **not** change power (decoupled). | `set-profile` |
+| `SetFanAuto` | `()` | Auto cooling: the **fan curve** follows the TDP. | `set-profile` |
 | `ResetFanCurve` | `()` | Hand the fans back to the firmware's automatic curve. | `set-fan-curve` |
 | `GetThermalStatus` | `() → (iiiii)` | Live `(cpu_temp_c, gpu_temp_c, cpu_rpm, gpu_rpm, soc_power_mw)`. `i32::MIN` = unavailable. **No signal — poll.** | — (read) |
 | `GetFanCurve` | `() → (a(uu) cpu, a(uu) gpu)` | The 8 `(temp_c, pwm)` points of each fan's active curve (pwm `0..=255`). Empty if firmware-only. **No signal.** | — (read) |
 | `GetHardwareLimits` | `() → (uuuu)` | `(spl_min, spl_max, sppt_max, fppt_max)` in watts — the valid TDP range. | — (read) |
 | `IsAcConnected` | `() → (b)` | Whether the charger is plugged in. | — (read) |
 | `GetDiagnostics` | `() → (b as)` | `(polkit_ok, missing_action_ids)`. `polkit_ok == false` ⇒ the polkit policy is not installed and **every** gated setter fails with `AuthFailed`. Live check; safe to poll. | — (read) |
-| `SetProfile` | `(s profile)` | **Advanced/raw.** ACPI platform profile (`power-saver`/`balanced`/`performance`) *without* moving the curve. Only meaningful with `fan_curve_follows_profile = false`. | `set-profile` |
-| `SetFanCurve` | `(s preset)` | **Advanced/raw.** Fan curve preset (`silent`/`balanced`/`aggressive`) *without* moving the profile. | `set-fan-curve` |
+| `SetProfile` | `(s profile)` | **The power-profile lever** (ACPI platform profile / EPP): `power-saver`/`balanced`/`performance`. Decoupled from cooling; defaults to `performance` so the SPL is the real limit. Lower it only for an efficiency bias. | `set-profile` |
+| `SetFanCurve` | `(s preset)` | **Advanced/raw.** Fan curve preset (`silent`/`balanced`/`aggressive`) directly (`SetCoolingLevel` is the normal path). | `set-fan-curve` |
 
 ### Properties (read-only, emit `PropertiesChanged`)
 
@@ -52,7 +52,8 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
 | `FanCurve` | `s` | Active cooling level: `silent` / `balanced` / `aggressive` / `custom` / `auto` (`auto` = firmware curve, daemon not managing it). |
 | `AutoCooling` | `b` | `true` = auto (follows TDP), `false` = manual. |
 | `ChargeEndThreshold` | `y` | Battery charge cap (%). |
-| `ActiveProfile` | `s` | Raw ACPI profile (`power-saver`/`balanced`/`performance`/custom). Advanced; most UIs read `FanCurve` for the cooling level instead. |
+| `ActiveProfile` | `s` | The power-profile / EPP (`power-saver`/`balanced`/`performance`/custom). Defaults to `performance`. This is the **power** lever now (not cooling); surface it as an optional "Power mode" control, separate from Cooling. |
+| `AcConnected` | `b` | Charger plugged in (daemon ≥ 2.4.0). **Emits `PropertiesChanged`** — subscribe instead of polling `IsAcConnected()`. Falls back to the method on older daemons. |
 
 ## Feature → UI mapping, by priority
 
@@ -63,8 +64,10 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
    - Read level from the **`FanCurve`** property, mode from **`AutoCooling`**.
    - Set a level → `SetCoolingLevel(level)` (switches to manual).
    - Auto → `SetFanAuto()`.
-   - ⚠️ Show **one** control, not three. The daemon couples profile + curve;
-     don't surface "profile" and "curve" and "mode" separately.
+   - ⚠️ Label it clearly as **fans only** (noise ↔ temperature). Cooling no
+     longer changes power, so drop any "Silent caps power / Aggressive
+     unlocks the TDP" copy. Power is the TDP slider (#2); the optional
+     power-profile lever is separate (#12).
 2. **TDP control** — a slider in watts.
    - Read **`CurrentSpl`**; range = `GetHardwareLimits()` (`spl_min..spl_max`).
    - Set → `SetSpl(watts)`.
@@ -103,19 +106,23 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
 
 ### 🟢 Opcionales / avanzadas
 
-12. **Raw platform profile** — `SetProfile` + `ActiveProfile`. Only useful
-    in decoupled mode (`fan_curve_follows_profile = false`). Hide behind an
-    "Advanced" section; most users never need it.
-13. **Raw decoupled curve** — `SetFanCurve` (curve without profile). Same
-    "Advanced" caveat.
-14. **Clamp hint** — if, under load, `soc_power_mw` stays well below the
-    `CurrentSpl` cap **and** cooling is manual at a low level, surface a
-    gentle hint: "this cooling level limits power; raise it or use Auto for
-    the full TDP." (This is the `silent` + high-TDP contradiction, now
-    observable from telemetry.)
-15. **Reassurance copy** — temp/RPM "normal vs. worry" tooltips (e.g. 95 °C
-    at full power with fans maxed is normal). Source the wording from
-    [`../MANUAL.md`](../MANUAL.md) → "What's normal vs. what to worry about".
+12. **Power mode (platform profile)** — `SetProfile` + `ActiveProfile`
+    (`Performance` / `Balanced` / `Eco`). This is the EPP power lever,
+    decoupled from cooling and defaulting to `Performance`. Surface it as
+    an optional "Power mode" control (separate from Cooling), or hide it —
+    most users leave it on Performance so their TDP is fully usable.
+13. **Raw curve** — `SetFanCurve` (set a fan-curve preset directly;
+    `SetCoolingLevel` is the normal path). "Advanced" caveat.
+14. **Power-mode hint** — if, under load, `soc_power_mw` stays well below
+    the `CurrentSpl` cap **and** `ActiveProfile` is `power-saver`, surface
+    a gentle hint: "Eco power mode is limiting the chip below your TDP;
+    switch to Performance for the full TDP." (Cooling level no longer
+    limits power — only the platform profile does.)
+15. **Reassurance copy** — temp/RPM "normal vs. worry" tooltips (e.g. high
+    temps under a heavy game with fans maxed are normal; temperature
+    tracks your **TDP** now, and cooling just trades fan noise for a few
+    degrees). Source the wording from [`../MANUAL.md`](../MANUAL.md) →
+    "What's normal vs. what to worry about".
 
 ## Update strategy
 

@@ -5,7 +5,17 @@ use hpd_error::{BackendError, HpdError};
 use hpd_sysfs::SysfsIo;
 
 const BATTERY_PATH: &str = "/sys/class/power_supply/BAT0";
-const AC_PATHS: [&str; 4] = [
+// Well-known AC/mains sysfs nodes across the ASUS handheld family. The
+// node name is firmware/kernel dependent: the ROG Xbox Ally X (board
+// RC73XA) exposes `AC0`, while earlier Ally/Ally X images use the bare
+// `AC` or an `ADP*` node. We probe in order and take the first readable
+// node — missing the device's actual name makes `is_ac_connected` fall
+// through to the fail-safe `false`, so the daemon would report DC while
+// physically on AC (the cause of the "AC status never updates" bug on
+// the Xbox Ally X, whose node is `AC0`).
+const AC_PATHS: [&str; 6] = [
+    "/sys/class/power_supply/AC0/online",
+    "/sys/class/power_supply/AC1/online",
     "/sys/class/power_supply/AC/online",
     "/sys/class/power_supply/ACAD/online",
     "/sys/class/power_supply/ADP0/online",
@@ -64,5 +74,46 @@ impl<S: SysfsIo> ChargeControl for AsusChargeBackend<S> {
         let path = format!("{}/charge_control_end_threshold", BATTERY_PATH);
         self.sysfs.write_string(&path, &threshold.to_string())?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use hpd_sysfs::MockSysfs;
+
+    #[test]
+    fn detects_ac0_node_on_xbox_ally_x() {
+        // Regression: the Xbox Ally X exposes its mains node as `AC0`,
+        // not the bare `AC`/`ADP*` names. Missing it made is_ac_connected
+        // always report false (DC) while physically plugged.
+        let mock = MockSysfs::new();
+        mock.create_file("sys/class/power_supply/AC0/online", "1");
+        let backend = AsusChargeBackend::new(mock.clone());
+        assert!(
+            backend.is_ac_connected().unwrap(),
+            "AC0/online == 1 must read as plugged"
+        );
+    }
+
+    #[test]
+    fn ac_unplugged_reads_false() {
+        let mock = MockSysfs::new();
+        mock.create_file("sys/class/power_supply/AC0/online", "0");
+        let backend = AsusChargeBackend::new(mock.clone());
+        assert!(!backend.is_ac_connected().unwrap());
+    }
+
+    #[test]
+    fn missing_ac_node_falls_back_to_dc() {
+        let mock = MockSysfs::new();
+        // No AC node seeded at all.
+        let backend = AsusChargeBackend::new(mock.clone());
+        assert!(
+            !backend.is_ac_connected().unwrap(),
+            "absent mains node must fail safe to DC"
+        );
     }
 }

@@ -357,6 +357,23 @@ where
     let (tx, rx) = mpsc::channel::<Transition>(daemon_config.channel_capacity);
     let internal_tx = tx.clone(); // For rollback
 
+    // Program the configured platform_profile (default Performance) at
+    // boot. The platform profile is a power lever decoupled from cooling:
+    // pinning it here means the SPL the user sets is the real usable
+    // ceiling, and a device left in a throttling profile (e.g. PowerSaver)
+    // by an older hpd is migrated forward. Sent BEFORE the fan curve
+    // because writing platform_profile can reset the EC's custom curve,
+    // and the buffered SetFanCurve below re-programs it afterwards.
+    if tx
+        .send(Transition::SetProfile(
+            daemon_config.default_platform_profile.clone(),
+        ))
+        .await
+        .is_err()
+    {
+        warn!("Executor channel closed before boot platform profile could be applied");
+    }
+
     // Program the boot fan curve, if any. The channel buffers this until
     // the executor starts draining it, so ordering here is irrelevant.
     if let Some(selection) = boot_fan_curve {
@@ -643,6 +660,11 @@ async fn spawn_properties_changed_emitter(
         if new.active_fan_curve != last.active_fan_curve {
             if let Err(e) = iface.fan_curve_changed(ctx).await {
                 error!(error = %e, "Failed to emit fan_curve PropertiesChanged");
+            }
+        }
+        if new.is_ac_connected != last.is_ac_connected {
+            if let Err(e) = iface.ac_connected_changed(ctx).await {
+                error!(error = %e, "Failed to emit ac_connected PropertiesChanged");
             }
         }
 

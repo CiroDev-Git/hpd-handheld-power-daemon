@@ -32,6 +32,15 @@
 # takes precedence over this on subsequent boots.
 # default_fan_curve = "balanced"
 
+# ACPI platform_profile (EPP / SMU power behaviour) programmed at every
+# boot. Power and cooling are DECOUPLED: this is the power lever and it
+# defaults to "performance" so the TDP / SPL you set is the real, usable
+# limit (a "power-saver" profile would clamp the APU well below your SPL).
+# Accepts: performance, balanced, power-saver (case-insensitive; the ACPI
+# aliases quiet / low-power also map to power-saver). Set "balanced" or
+# "power-saver" for an efficiency bias at the cost of peak performance.
+# default_platform_profile = "performance"
+
 # -------- Runtime-tunable (hot-reload via SIGHUP) ----------------------
 
 # SPL→SPPT and SPL→FPPT multipliers used by "smart mode" (when the user
@@ -40,18 +49,15 @@
 # sppt_factor = 1.15
 # fppt_factor = 1.25
 
-# Cooling-profile inference: when `fan_follows_tdp` is on, the daemon
-# maps SPL's position within the hardware range to an ACPI platform
-# profile.  Below `low_frac` → power-saver, between → balanced, above
-# `high_frac` → performance.
+# Auto-cooling inference: when `fan_follows_tdp` is on, the daemon maps
+# SPL's position within the hardware range to a FAN CURVE preset (not the
+# platform profile — power and cooling are decoupled). Below `low_frac` →
+# silent, between → balanced, above `high_frac` → aggressive.
 # [profile_thresholds]
 # low_frac  = 0.33
 # high_frac = 0.67
 
-# Ties the fan curve to the platform profile so "cooling" is one lever:
-# every profile change also programs the matching curve preset
-# (power-saver → silent, balanced → balanced, performance → aggressive),
-# which is what `hpdctl cool set` and auto-cooling rely on. ON by default.
-# Set to false only if you want to drive the raw platform profile and fan
-# curve independently over D-Bus (`set_profile` / `set_fan_curve`).
+# DEPRECATED / no-op since the power↔cooling decoupling. Kept only so
+# existing configs that set it still parse. The fan curve is now an
+# independent lever; the platform profile no longer drives it.
 # fan_curve_follows_profile = true

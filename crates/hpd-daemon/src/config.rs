@@ -7,13 +7,14 @@
 //! **never** die because of a bad config.
 
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use tracing::{info, warn};
 
 use hpd_capabilities::charge::DEFAULT_CHARGE_THRESHOLD;
 use hpd_capabilities::fan_curve::FanCurvePreset;
-use hpd_capabilities::profile::RuntimeConfig;
+use hpd_capabilities::profile::{ProfileName, RuntimeConfig};
 use hpd_core::executor::TRANSITION_CHANNEL_CAPACITY;
 
 /// Daemon runtime configuration.
@@ -61,6 +62,17 @@ pub struct DaemonConfig {
     /// `state.toml` takes precedence on subsequent boots.
     pub default_fan_curve: Option<FanCurvePreset>,
 
+    /// ACPI `platform_profile` (EPP / SMU power behaviour) to program at
+    /// startup. Defaults to [`ProfileName::Performance`] so the SPL the
+    /// user sets is the real, usable power ceiling — the platform profile
+    /// is a power lever decoupled from cooling and is *not* dragged toward
+    /// `PowerSaver` by the TDP any more. Applied on every boot (so it also
+    /// migrates a device left in a throttling profile by an older hpd);
+    /// override to `balanced` / `power-saver` for an efficiency bias.
+    /// Startup-only.
+    #[serde(deserialize_with = "de_platform_profile")]
+    pub default_platform_profile: ProfileName,
+
     /// Hot-swappable subset: thresholds + SPPT/FPPT boost multipliers
     /// the reducer reads on every transition. Replaced wholesale on
     /// `Transition::ConfigReload(RuntimeConfig)`.
@@ -79,9 +91,24 @@ impl Default for DaemonConfig {
             channel_capacity: TRANSITION_CHANNEL_CAPACITY,
             default_charge_threshold: DEFAULT_CHARGE_THRESHOLD,
             default_fan_curve: Some(FanCurvePreset::Balanced),
+            default_platform_profile: ProfileName::Performance,
             runtime: RuntimeConfig::DEFAULT,
         }
     }
+}
+
+/// Deserialize `default_platform_profile` through [`ProfileName`]'s
+/// case-insensitive `FromStr` (accepts `performance`, `balanced`,
+/// `power-saver`, the ACPI aliases `quiet` / `low-power`, or any vendor
+/// string) instead of serde's CamelCase variant-name matching. An empty
+/// or otherwise invalid value falls back to `Performance` — a config
+/// typo must never be fatal.
+fn de_platform_profile<'de, D>(deserializer: D) -> Result<ProfileName, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    Ok(ProfileName::from_str(&raw).unwrap_or(ProfileName::Performance))
 }
 
 impl DaemonConfig {
@@ -202,6 +229,7 @@ high_frac = 0.80
             channel_capacity: 64,
             default_charge_threshold: 90,
             default_fan_curve: Some(FanCurvePreset::Balanced),
+            default_platform_profile: ProfileName::Performance,
             runtime: RuntimeConfig {
                 profile_thresholds: ProfileThresholds {
                     low_frac: 0.25,
