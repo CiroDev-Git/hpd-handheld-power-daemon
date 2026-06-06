@@ -114,14 +114,16 @@ que hace que tu TDP se aplique al máximo.
 Si sos usuario avanzado y querés sesgar la eficiencia (gastar un poco menos
 a igual carga, a costa de pico de rendimiento), podés bajarla:
 
-```
-# por D-Bus (no hay subcomando dedicado en el CLI todavía)
-# o en /etc/hpd/config.toml:
+```fish
+hpdctl power set eco           # o: balanced / performance
+hpdctl power get               # ver el modo actual
+
+# o fijar el default de arranque en /etc/hpd/config.toml:
 default_platform_profile = "balanced"   # o "power-saver"
 ```
 
-`performance` / `balanced` / `power-saver` (acepta también los alias ACPI
-`quiet` / `low-power`). Por defecto: `performance`.
+`performance` / `balanced` / `eco` (`eco` = `power-saver`; el config acepta
+también los alias ACPI `quiet` / `low-power`). Por defecto: `performance`.
 
 ---
 
