@@ -11,6 +11,22 @@ not part of the published repository.
 
 ---
 
+## [2.4.3] — 2026-06-06
+
+### Fixed
+
+- **AC plug/unplug now detected on USB-C-charged handhelds (ROG Ally X).**
+  The netlink monitor filtered udev `power_supply` events by an `AC`/`ADP`
+  sysname and trusted the event's own `POWER_SUPPLY_ONLINE`. But when
+  charging over USB-C the plug/unplug **event** fires on the USB-C PD port
+  (`ucsi-source-psy-USBC000:*`, `type == "USB"`) — *not* on the mains node
+  (`AC0`) — so every USB-C edge was ignored and `IsAcConnected` / the
+  `AcConnected` property stayed frozen at the boot value. The monitor now
+  re-reads the canonical `type == "Mains"` node from sysfs on **any**
+  `power_supply` event and forwards only genuine, deduplicated edges. Boot
+  detection was already correct (re-queried from hardware); this fixes the
+  reactive updates after boot.
+
 ## [2.4.2] — 2026-06-06
 
 ### Added
