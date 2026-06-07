@@ -165,6 +165,7 @@ mirrored from `crates/hpd-dbus/src/service.rs` and
 | `SetFanAuto`                    | —                   | `()`                            | `dev.cirodev.hpd.set-profile`     |
 | `GetHardwareLimits`             | —                   | `(u32 spl_min_w, u32 spl_max_w, u32 sppt_max_w, u32 fppt_max_w)` | none (read-only) |
 | `IsAcConnected`                 | —                   | `b`                             | none (read-only)                  |
+| `GetVersion`                    | —                   | `s` (daemon ≥ 2.4.2)            | none (read-only)                  |
 
 > **Mind the asymmetry.** `SetFanAuto` is a one-shot re-enable
 > (takes no args; reducer flips `fan_follows_tdp = true`). To turn

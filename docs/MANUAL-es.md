@@ -307,6 +307,7 @@ debería reflejar eso: un control de cooling, no tres.
 | `ResetFanCurve()` | Fans al firmware. |
 | `GetThermalStatus() → (i,i,i,i)` | En vivo `(cpu_temp, gpu_temp, cpu_rpm, gpu_rpm)`; `i32::MIN` = sensor ausente. |
 | `GetFanCurve() → (a(uu), a(uu))` | Los 8 puntos `(temp,pwm)` de las curvas CPU y GPU, para dibujar el gráfico. |
+| `GetVersion() → (s)` | La versión del daemon (daemon ≥ 2.4.2; daemons viejos dan error → "unknown"). |
 | `fan_curve` (prop) | Nivel activo: `silent`/`balanced`/`aggressive`/`custom`/`auto`. |
 | `auto_cooling` (prop) | `true` = auto, `false` = manual. |
 | `current_spl`, `active_profile`, `charge_end_threshold`, `is_ac_connected` | Estado de potencia / perfil / batería / AC. |

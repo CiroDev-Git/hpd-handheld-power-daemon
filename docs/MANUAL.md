@@ -305,6 +305,7 @@ that: one cooling control, not three.
 | `ResetFanCurve()` | Fans back to firmware. |
 | `GetThermalStatus() → (i,i,i,i)` | Live `(cpu_temp, gpu_temp, cpu_rpm, gpu_rpm)`; `i32::MIN` = sensor absent. |
 | `GetFanCurve() → (a(uu), a(uu))` | The 8 `(temp,pwm)` points of CPU & GPU curves, to draw the graph. |
+| `GetVersion() → (s)` | The daemon's version string (daemon ≥ 2.4.2; older daemons error → "unknown"). |
 | `fan_curve` (prop) | Active level: `silent`/`balanced`/`aggressive`/`custom`/`auto`. |
 | `auto_cooling` (prop) | `true` = auto, `false` = manual. |
 | `current_spl`, `active_profile`, `charge_end_threshold`, `is_ac_connected` | Power / profile / battery / AC state. |
