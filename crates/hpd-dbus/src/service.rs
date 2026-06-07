@@ -152,7 +152,8 @@ impl PowerDaemonInterface {
         if !polkit::check(conn, &header, PolkitAction::SetCharge).await {
             return Err(auth_denied());
         }
-        self.send(Transition::ChargeThresholdChanged(threshold)).await
+        self.send(Transition::ChargeThresholdChanged(threshold))
+            .await
     }
 
     #[zbus(property)]
