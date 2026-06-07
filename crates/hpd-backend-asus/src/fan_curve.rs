@@ -241,6 +241,36 @@ impl<S: SysfsIo> FanCurveControl for AsusFanCurveBackend<S> {
             gpu: self.read_fan_points(&base, FAN_GPU)?,
         })
     }
+
+    fn active_selection(&self) -> Result<Option<FanCurveSelection>, HpdError> {
+        let base = self.curve_base()?;
+        // Firmware-auto mode → no custom curve is in charge.
+        if self
+            .sysfs
+            .read_string(Self::enable_path(&base, FAN_CPU))?
+            .trim()
+            == ENABLE_AUTO
+        {
+            return Ok(None);
+        }
+        // Custom mode: match the live points against each known preset so
+        // the daemon reports the real level, falling back to `Custom`.
+        let curves = self.get_curves()?;
+        for preset in [
+            FanCurvePreset::Silent,
+            FanCurvePreset::Balanced,
+            FanCurvePreset::Aggressive,
+        ] {
+            let (cpu, gpu) = preset_curves(preset);
+            if curves.cpu == cpu && curves.gpu == gpu {
+                return Ok(Some(FanCurveSelection::Preset(preset)));
+            }
+        }
+        Ok(Some(FanCurveSelection::Custom {
+            cpu: curves.cpu,
+            gpu: curves.gpu,
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -301,6 +331,34 @@ mod tests {
                 .unwrap(),
             ENABLE_CUSTOM
         );
+    }
+
+    #[test]
+    fn active_selection_reflects_the_live_ec() {
+        let mock = MockSysfs::new();
+        seed_curve_node(&mock); // enable seeded as "2" (firmware auto)
+        let backend = AsusFanCurveBackend::new(mock.clone());
+
+        // Firmware-auto mode → no custom selection.
+        assert_eq!(backend.active_selection().unwrap(), None);
+
+        // After applying a preset, it reads back as that exact preset.
+        backend
+            .apply(&FanCurveSelection::Preset(FanCurvePreset::Aggressive))
+            .unwrap();
+        assert_eq!(
+            backend.active_selection().unwrap(),
+            Some(FanCurveSelection::Preset(FanCurvePreset::Aggressive))
+        );
+
+        // Custom mode with points matching no preset → Custom (never a
+        // misleading preset name).
+        mock.write_string("/sys/class/hwmon/hwmon8/pwm1_auto_point8_pwm", "200")
+            .unwrap();
+        assert!(matches!(
+            backend.active_selection().unwrap(),
+            Some(FanCurveSelection::Custom { .. })
+        ));
     }
 
     #[test]

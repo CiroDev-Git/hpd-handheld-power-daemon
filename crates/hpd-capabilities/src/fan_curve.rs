@@ -189,6 +189,14 @@ pub trait FanCurveControl: Send + Sync {
 
     /// Read back the curves currently programmed into the EC.
     fn get_curves(&self) -> Result<ActiveFanCurves, HpdError>;
+
+    /// The selection the EC is **actually** running, derived live from
+    /// hardware: `None` when the firmware's automatic curve is active,
+    /// `Some(Preset)` when the stored points match a known preset, else
+    /// `Some(Custom)`. Used by the executor's rollback path so a
+    /// silently-rejected write never leaves the daemon reporting a level
+    /// the EC didn't accept (the reported level always reflects reality).
+    fn active_selection(&self) -> Result<Option<FanCurveSelection>, HpdError>;
 }
 
 #[cfg(test)]

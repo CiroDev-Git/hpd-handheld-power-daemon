@@ -210,11 +210,15 @@ impl<B: HwBackend> Executor<B> {
                     );
                     return;
                 };
-                // No rollback path: the backend reads the curve back and
-                // fails closed if the EC rejected it, and the EC keeps
-                // running the last good curve regardless. Log and move on.
+                // The backend reads the curve back and fails closed if the
+                // EC rejected it. On failure, roll the in-memory level back
+                // to what the EC actually runs (read live) so the reported
+                // `fan_curve` never claims a preset the hardware refused.
                 if let Err(e) = curve_cap.apply(&selection) {
-                    error!(effect = "ApplyFanCurve", error = %e, "Fan curve write failed");
+                    self.rollback("ApplyFanCurve", e, || {
+                        curve_cap.active_selection().map(Transition::SyncFanCurve)
+                    })
+                    .await;
                 } else {
                     debug!("Fan curve applied successfully");
                 }
@@ -228,7 +232,10 @@ impl<B: HwBackend> Executor<B> {
                     return;
                 };
                 if let Err(e) = curve_cap.reset_to_auto() {
-                    error!(effect = "ResetFanCurve", error = %e, "Fan curve reset failed");
+                    self.rollback("ResetFanCurve", e, || {
+                        curve_cap.active_selection().map(Transition::SyncFanCurve)
+                    })
+                    .await;
                 } else {
                     debug!("Fan curve reset to firmware auto");
                 }

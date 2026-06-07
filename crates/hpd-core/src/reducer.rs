@@ -157,6 +157,14 @@ pub fn reduce(
             new_state.charge_end_threshold = real_threshold;
         }
 
+        Transition::SyncFanCurve(real_selection) => {
+            // Mirror of SyncPowerTarget for the fan curve: the executor
+            // read the EC's actual selection back after a failed write, so
+            // the reported level reflects reality (no PersistState — a
+            // reboot re-reads + re-asserts anyway).
+            new_state.active_fan_curve = real_selection;
+        }
+
         Transition::AcPowerChanged(is_plugged) => {
             // Debounce: ignore no-op transitions.
             if state.is_ac_connected == is_plugged {
