@@ -11,6 +11,32 @@ not part of the published repository.
 
 ---
 
+## [2.5.2] — 2026-06-07
+
+### Fixed
+
+- **AC plug/unplug is finally detected at runtime — `PrivateNetwork=yes`
+  was blocking it.** The `hpd.service` sandbox ran the daemon in a private
+  network namespace, but udev delivers `power_supply` uevents over a
+  `NETLINK_KOBJECT_UEVENT` multicast that is **per-network-namespace** — so
+  the AC/DC monitor received **no** events at all and `IsAcConnected` /
+  `AcConnected` only ever reflected the boot/resume sysfs read. Set
+  `PrivateNetwork=no` (the daemon needs no real network — D-Bus is a Unix
+  socket) and documented why it must stay off. **Verified on-device (ROG
+  Xbox Ally X, USB-C charging): plug → `Charger connected = true`, unplug →
+  `false`, in real time.** This is the true root cause; the 2.4.3 fix
+  (re-read the `Mains` node on any `power_supply` event, needed because the
+  USB-C edge fires on the `ucsi-source-psy` node) was necessary but could
+  not work while the events were namespaced away.
+
+### Changed
+
+- **Network hardening preserved without breaking udev:** added
+  `IPAddressDeny=any` to `hpd.service` in place of `PrivateNetwork`. It
+  blocks all IP traffic (the daemon opens no IP sockets) at the eBPF level
+  without isolating the network namespace, so `AF_NETLINK` uevents still
+  flow. Net sandbox posture is unchanged in practice.
+
 ## [2.5.1] — 2026-06-07
 
 ### Fixed
