@@ -14,8 +14,43 @@
 //! [`hpd-daemon`'s `main.rs`](../hpd_daemon/index.html) for the wiring.
 
 use hpd_core::transition::Transition;
+use std::path::Path;
 use tokio::sync::mpsc;
 use tracing::info;
+
+/// The kernel power-supply class root. The canonical mains-adapter state
+/// lives under the `type == "Mains"` node here (e.g. `AC0`).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const POWER_SUPPLY_ROOT: &str = "/sys/class/power_supply";
+
+/// Reads the real AC-adapter state from the kernel `power_supply` class
+/// under `base`: `Some(true)` if **any** `type == "Mains"` supply reports
+/// `online == 1`, `Some(false)` if mains nodes exist but none are online,
+/// `None` if no readable mains node is present.
+///
+/// We re-read the canonical mains node instead of trusting a udev event's
+/// own `POWER_SUPPLY_ONLINE`, because on USB-C-charged handhelds (ROG Ally
+/// X) the plug/unplug **event** fires on the USB-C PD port
+/// (`ucsi-source-psy-USBC000:*`, `type == "USB"`) — *not* on the mains
+/// node — even though the kernel updates `AC0/online` correctly. Filtering
+/// events by an `AC`/`ADP` sysname therefore misses every USB-C edge.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn read_mains_online_at(base: &Path) -> Option<bool> {
+    let mut found_mains = false;
+    let mut any_online = false;
+    for entry in std::fs::read_dir(base).ok()?.flatten() {
+        let node = entry.path();
+        let kind = std::fs::read_to_string(node.join("type")).unwrap_or_default();
+        if kind.trim() == "Mains" {
+            found_mains = true;
+            let online = std::fs::read_to_string(node.join("online")).unwrap_or_default();
+            if online.trim() == "1" {
+                any_online = true;
+            }
+        }
+    }
+    found_mains.then_some(any_online)
+}
 
 // ========================================================
 // PRODUCTION MODE (Compily on Linux)
@@ -28,10 +63,6 @@ mod linux {
     use tracing::{debug, error};
 
     const SUBSYS_POWER: &str = "power_supply";
-    const PROP_ONLINE: &str = "POWER_SUPPLY_ONLINE";
-    const VAL_ONLINE_TRUE: &str = "1";
-    const IDENTIFIER_AC: &str = "AC";
-    const IDENTIFIER_ADP: &str = "ADP";
 
     /// Block the current task on the udev `power_supply` subsystem and
     /// forward every AC-plug / AC-unplug edge to `tx` as a
@@ -80,15 +111,22 @@ mod linux {
 
         debug!("Netlink monitor ready. Awaiting for AC/DC events...");
 
-        // 3. Infinite sleeping loop (0% CPU). Only awake when event happen
-        while let Some(Ok(event)) = async_monitor.next().await {
-            let sysname = event.sysname();
-            let name = sysname.to_string_lossy().to_uppercase();
-            if name.contains(IDENTIFIER_AC) || name.contains(IDENTIFIER_ADP) {
-                // ONLINE (1 = Connected, 0 = Disconnected)
-                if let Some(online_val) = event.property_value(PROP_ONLINE) {
-                    let is_ac_plugged: bool = online_val == VAL_ONLINE_TRUE;
+        let root = Path::new(POWER_SUPPLY_ROOT);
 
+        // Seed the last-known state from sysfs so the first real edge — not
+        // the monitor's own startup — is what produces a transition.
+        let mut last_state = read_mains_online_at(root);
+
+        // 3. Infinite sleeping loop (0% CPU). Only awake when an event
+        //    happens. We do NOT trust the event's own node/ONLINE: on USB-C
+        //    handhelds the edge fires on the PD port, not the mains node, so
+        //    on *any* power_supply event we re-read the canonical mains node
+        //    and forward only genuine plug/unplug edges (deduped).
+        while let Some(Ok(_event)) = async_monitor.next().await {
+            let current = read_mains_online_at(root);
+            if let Some(is_ac_plugged) = current {
+                if last_state != current {
+                    last_state = current;
                     info!(
                         "⚡ Hardware event detected: Charger connected = {}",
                         is_ac_plugged
@@ -129,3 +167,66 @@ pub use linux::spawn_power_monitor;
 
 #[cfg(not(target_os = "linux"))]
 pub use dummy::spawn_power_monitor;
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+
+    /// Build a fake `/sys/class/power_supply` tree under a unique temp dir.
+    fn fixture(nodes: &[(&str, &str, Option<&str>)]) -> std::path::PathBuf {
+        // Atomic counter guarantees a unique dir even for parallel tests
+        // landing on the same nanosecond.
+        static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let base =
+            std::env::temp_dir().join(format!("hpd-netlink-test-{}-{}", std::process::id(), n));
+        std::fs::remove_dir_all(&base).ok(); // clear any stale leftover
+        for (name, kind, online) in nodes {
+            let node = base.join(name);
+            std::fs::create_dir_all(&node).unwrap();
+            std::fs::write(node.join("type"), format!("{kind}\n")).unwrap();
+            if let Some(o) = online {
+                std::fs::write(node.join("online"), format!("{o}\n")).unwrap();
+            }
+        }
+        base
+    }
+
+    #[test]
+    fn mains_online_reflects_ac0_not_the_usb_c_port() {
+        // ROG Ally X shape: AC0 is the Mains node; the USB-C PD ports are
+        // type=USB. Charging via USB-C sets AC0/online=1.
+        let base = fixture(&[
+            ("AC0", "Mains", Some("1")),
+            ("BAT0", "Battery", None),
+            ("ucsi-source-psy-USBC000:002", "USB", Some("1")),
+        ]);
+        assert_eq!(read_mains_online_at(&base), Some(true));
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn mains_offline_when_ac0_online_zero_ignoring_usb() {
+        // A USB device reporting online=1 must NOT count as AC.
+        let base = fixture(&[
+            ("AC0", "Mains", Some("0")),
+            ("ucsi-source-psy-USBC000:001", "USB", Some("1")),
+        ]);
+        assert_eq!(read_mains_online_at(&base), Some(false));
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn no_mains_node_is_none() {
+        let base = fixture(&[("BAT0", "Battery", None)]);
+        assert_eq!(read_mains_online_at(&base), None);
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn missing_root_is_none() {
+        let base = std::env::temp_dir().join("hpd-netlink-does-not-exist-xyz");
+        assert_eq!(read_mains_online_at(&base), None);
+    }
+}
