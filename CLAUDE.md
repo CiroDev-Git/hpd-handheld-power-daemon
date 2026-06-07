@@ -16,7 +16,7 @@ fan / temperature / power reporting on handheld PCs
 - `hpdctl` (from crate `hpd-cli`) — user-facing CLI that talks to the
   daemon over D-Bus.
 
-Current release: **`2.0.0`** (see `CHANGELOG.md`). The public
+Current release: **`2.6.0`** (see `CHANGELOG.md`). The public
 surface (D-Bus interface, CLI subcommands, on-disk state, polkit action
 IDs) is stable and follows SemVer.
 
