@@ -188,6 +188,14 @@ impl PowerDaemonInterface {
         self.state_rx.borrow().fan_follows_tdp
     }
 
+    /// The daemon's own version (the crate's `CARGO_PKG_VERSION`, e.g.
+    /// `2.4.2`). Read-only, unauthenticated — lets a client (the Decky
+    /// plugin) show which daemon it's talking to. A client predating this
+    /// method gets a D-Bus error and should fall back to "unknown".
+    async fn get_version(&self) -> String {
+        env!("CARGO_PKG_VERSION").to_string()
+    }
+
     /// Hardware-imposed envelope limits (all watts):
     /// `(spl_min, spl_max, sppt_max, fppt_max)`.
     async fn get_hardware_limits(&self) -> zbus::fdo::Result<(u32, u32, u32, u32)> {

@@ -11,6 +11,15 @@ not part of the published repository.
 
 ---
 
+## [2.4.2] — 2026-06-06
+
+### Added
+
+- **`get_version()` D-Bus method** — read-only, unauthenticated; returns
+  the daemon's `CARGO_PKG_VERSION`. Lets a client (the Decky plugin) show
+  which daemon version it's talking to. Clients predating it get a D-Bus
+  error and fall back to "unknown".
+
 ## [2.4.1] — 2026-06-06
 
 ### Fixed
