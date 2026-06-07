@@ -11,6 +11,44 @@ not part of the published repository.
 
 ---
 
+## [2.6.0] — 2026-06-07
+
+### Removed
+
+- **Dead config knob `fan_curve_follows_profile` is gone.** It became a
+  no-op when power and cooling were decoupled (the fan curve follows the
+  TDP envelope, never the platform profile), but it lingered in
+  `RuntimeConfig` and the example config where it could mislead operators
+  into thinking it still did something. Removed from the struct, the
+  shipped `hpd-example.toml`, and the tests that poked it. **Backward
+  compatible:** serde ignores unknown keys, so a `config.toml` that still
+  sets `fan_curve_follows_profile` keeps parsing — the value is simply
+  dropped, exactly as before.
+
+### Changed
+
+- **Doc-comment sweep: code comments now match the decoupled
+  power↔cooling model.** Several `///` comments still described the old
+  coupled behaviour the code abandoned — that auto-cooling and
+  `set_profile` drive the ACPI `platform_profile`, when in reality
+  auto-cooling infers the **fan curve** and `set_profile` is an
+  independent power lever that does not touch cooling. Corrected on
+  `ProfileState::fan_follows_tdp`, `Transition::SetCoolingLevel`, the
+  `auto_cooling` / `set_profile` / `set_fan_auto` D-Bus methods, the
+  `TdpPreset` table, and the executor's post-reduce comment. The reducer
+  helper `apply_target_and_profile` (which no longer applies a profile)
+  was renamed `apply_power_target`. **No behaviour change** — comments and
+  one private identifier only.
+- **`DIAGRAMS.md` / `DIAGRAMS-es.md`:** dropped the stale `set_fan_curve`
+  entry from the setters box (the method was retired in 2.5.0).
+
+### Internal
+
+- **`hpd-dbus`:** the seven polkit-gated setters now funnel their
+  "enqueue transition or report the executor is down" step through one
+  private `PowerDaemonInterface::send` helper instead of repeating the
+  `tx.send(...).is_err()` boilerplate (per AUDIT_V1). No surface change.
+
 ## [2.5.2] — 2026-06-07
 
 ### Fixed
