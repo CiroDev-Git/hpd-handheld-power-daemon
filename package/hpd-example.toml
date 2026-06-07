@@ -56,8 +56,3 @@
 # [profile_thresholds]
 # low_frac  = 0.33
 # high_frac = 0.67
-
-# DEPRECATED / no-op since the power↔cooling decoupling. Kept only so
-# existing configs that set it still parse. The fan curve is now an
-# independent lever; the platform profile no longer drives it.
-# fan_curve_follows_profile = true

@@ -19,8 +19,11 @@ pub struct ProfileState {
     /// Battery charge end threshold (percentage 20..=100).
     pub charge_end_threshold: u8,
     /// When `true`, every TDP change re-infers and applies a matching
-    /// platform profile; explicit `set_profile` calls flip it off until
-    /// `EnableFanAuto` is sent.
+    /// **fan curve** (cooling follows power; the ACPI `platform_profile`
+    /// is a separate, decoupled lever and is never inferred here). Flipped
+    /// off by an explicit `set_cooling_level` (manual cooling) and back on
+    /// by `EnableFanAuto`. A manual `set_profile` does **not** touch it —
+    /// power and cooling are independent.
     pub fan_follows_tdp: bool,
     /// Last envelope used while running on battery, restored on AC
     /// unplug. `None` until the first AC plug event mutates it.

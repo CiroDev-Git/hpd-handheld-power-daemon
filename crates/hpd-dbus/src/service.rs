@@ -61,6 +61,18 @@ impl PowerDaemonInterface {
             backend,
         }
     }
+
+    /// Forward a [`Transition`] into the executor, mapping a closed
+    /// command channel (executor gone) to the standard `executor_down()`
+    /// D-Bus error. Every polkit-gated setter funnels through here so the
+    /// "send or report executor down" boilerplate lives in one place.
+    async fn send(&self, transition: Transition) -> zbus::fdo::Result<()> {
+        if self.tx.send(transition).await.is_err() {
+            error!("Failed to send transition to executor");
+            return Err(executor_down());
+        }
+        Ok(())
+    }
 }
 
 /// Sentinel returned in [`PowerDaemonInterface::get_thermal_status`] for
@@ -93,11 +105,7 @@ impl PowerDaemonInterface {
         if !polkit::check(conn, &header, PolkitAction::SetTdp).await {
             return Err(auth_denied());
         }
-        if self.tx.send(Transition::SetSpl(watts)).await.is_err() {
-            error!("Failed to send transition to executor");
-            return Err(executor_down());
-        }
-        Ok(())
+        self.send(Transition::SetSpl(watts)).await
     }
 
     /// Apply a named TDP preset (`eco`, `balanced`, `max`).
@@ -116,11 +124,7 @@ impl PowerDaemonInterface {
         let preset = preset_name
             .parse::<hpd_capabilities::profile::TdpPreset>()
             .map_err(zbus::fdo::Error::InvalidArgs)?;
-        if self.tx.send(Transition::SetPreset(preset)).await.is_err() {
-            error!("Failed to send transition to executor");
-            return Err(executor_down());
-        }
-        Ok(())
+        self.send(Transition::SetPreset(preset)).await
     }
 
     /// Current SPL in whole watts (the UI never sees milliwatts).
@@ -148,16 +152,8 @@ impl PowerDaemonInterface {
         if !polkit::check(conn, &header, PolkitAction::SetCharge).await {
             return Err(auth_denied());
         }
-        if self
-            .tx
-            .send(Transition::ChargeThresholdChanged(threshold))
+        self.send(Transition::ChargeThresholdChanged(threshold))
             .await
-            .is_err()
-        {
-            error!("Failed to send transition to executor");
-            return Err(executor_down());
-        }
-        Ok(())
     }
 
     #[zbus(property)]
@@ -174,15 +170,16 @@ impl PowerDaemonInterface {
         self.state_rx.borrow().charge_end_threshold
     }
 
-    /// Whether the daemon is currently inferring the cooling profile
-    /// from the TDP envelope (auto mode) or honouring the operator's
-    /// last explicit `set_profile` (manual mode).
+    /// Whether the daemon is currently inferring the **fan curve** from
+    /// the TDP envelope (auto cooling) or honouring the operator's last
+    /// explicit `set_cooling_level` (manual cooling).
     ///
     /// Backed by `ProfileState::fan_follows_tdp`. Exposed on D-Bus so
     /// status widgets (KDE / GNOME power applets, overlay HUDs) can
     /// surface the mode without inferring it from observed behaviour.
-    /// Re-enabling auto mode is `set_fan_auto`; setting any profile
-    /// manually with `set_profile` flips this back to `false`.
+    /// Re-enable auto cooling with `set_fan_auto`; `set_cooling_level`
+    /// flips it back to `false`. The power-profile lever `set_profile` is
+    /// decoupled and does **not** affect this flag.
     #[zbus(property)]
     async fn auto_cooling(&self) -> bool {
         self.state_rx.borrow().fan_follows_tdp
@@ -227,10 +224,11 @@ impl PowerDaemonInterface {
         self.state_rx.borrow().is_ac_connected
     }
 
-    /// Set the ACPI platform/cooling profile manually
-    /// (`power-saver`, `balanced`, `performance`, or a custom vendor
-    /// string). Flips `auto_cooling` to `false` for the rest of the
-    /// session — re-enable with [`set_fan_auto`](Self::set_fan_auto).
+    /// Set the ACPI `platform_profile` manually (`power-saver`,
+    /// `balanced`, `performance`, or a custom vendor string) — the EPP /
+    /// power-bias lever, surfaced to users as "Power mode". Decoupled from
+    /// cooling: it does **not** touch the fan curve or the `auto_cooling`
+    /// flag (use `set_cooling_level` / `set_fan_auto` for those).
     ///
     /// `polkit` action: `dev.cirodev.hpd.set-profile` (`auth_admin_keep`).
     async fn set_profile(
@@ -243,15 +241,7 @@ impl PowerDaemonInterface {
             return Err(auth_denied());
         }
         let profile_enum = ProfileName::from_str(profile).map_err(zbus::fdo::Error::InvalidArgs)?;
-        if self
-            .tx
-            .send(Transition::SetProfile(profile_enum))
-            .await
-            .is_err()
-        {
-            return Err(executor_down());
-        }
-        Ok(())
+        self.send(Transition::SetProfile(profile_enum)).await
     }
 
     /// Cooling lever: set the fan-curve level (`silent`, `balanced`,
@@ -276,19 +266,12 @@ impl PowerDaemonInterface {
         if !polkit::check(conn, &header, PolkitAction::SetProfile).await {
             return Err(auth_denied());
         }
-        if self
-            .tx
-            .send(Transition::SetCoolingLevel(preset))
-            .await
-            .is_err()
-        {
-            return Err(executor_down());
-        }
-        Ok(())
+        self.send(Transition::SetCoolingLevel(preset)).await
     }
 
-    /// Re-enable auto-cooling: the daemon resumes inferring the
-    /// platform profile from the active TDP envelope.
+    /// Re-enable auto-cooling: the daemon resumes inferring the **fan
+    /// curve** from the active TDP envelope (the platform profile is
+    /// unaffected — it is a decoupled power lever).
     ///
     /// `polkit` action: `dev.cirodev.hpd.set-profile`.
     async fn set_fan_auto(
@@ -299,10 +282,7 @@ impl PowerDaemonInterface {
         if !polkit::check(conn, &header, PolkitAction::SetProfile).await {
             return Err(auth_denied());
         }
-        if self.tx.send(Transition::EnableFanAuto).await.is_err() {
-            return Err(executor_down());
-        }
-        Ok(())
+        self.send(Transition::EnableFanAuto).await
     }
 
     /// Hand fan control back to the firmware's automatic curve.
@@ -320,10 +300,7 @@ impl PowerDaemonInterface {
         if !polkit::check(conn, &header, PolkitAction::SetProfile).await {
             return Err(auth_denied());
         }
-        if self.tx.send(Transition::ResetFanCurve).await.is_err() {
-            return Err(executor_down());
-        }
-        Ok(())
+        self.send(Transition::ResetFanCurve).await
     }
 
     /// Live thermal telemetry:

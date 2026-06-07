@@ -118,10 +118,11 @@ impl<B: HwBackend> Executor<B> {
                     for effect in output.effects {
                         self.handle_effect(effect).await;
                     }
-                    // Auto-cooling profile follow-up is the reducer's job:
-                    // apply_target_and_profile already infers and pushes the
-                    // matching ApplyPlatformProfile effect when fan_follows_tdp
-                    // is on. No post-reduce inference here.
+                    // Auto-cooling follow-up is the reducer's job:
+                    // apply_power_target already infers and pushes the
+                    // matching ApplyFanCurve effect when fan_follows_tdp is
+                    // on. The platform profile is decoupled and never
+                    // inferred. No post-reduce inference here.
                 }
                 Err(e) => {
                     error!(error = %e, "Reducer rejected transition due to invariant violation");

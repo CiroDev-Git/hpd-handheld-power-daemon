@@ -22,12 +22,12 @@ pub enum Transition {
     /// Set the ACPI platform / cooling profile and disable
     /// `fan_follows_tdp` until the next `EnableFanAuto`.
     SetProfile(ProfileName),
-    /// Unified cooling lever: set the platform profile *and* the fan
-    /// curve together to the level implied by the preset
-    /// (`Silent`→power-saver, `Balanced`→balanced,
-    /// `Aggressive`→performance), and disable `fan_follows_tdp`. This is
-    /// the front-end for `hpdctl cool set`; the raw `SetProfile`
-    /// transition remains for advanced callers.
+    /// Cooling lever (fans only): set the **fan curve** to the requested
+    /// preset (`Silent` / `Balanced` / `Aggressive`) and disable
+    /// `fan_follows_tdp` (manual cooling). Decoupled from power — it does
+    /// **not** touch the ACPI `platform_profile` or the power envelope.
+    /// This is the front-end for `hpdctl cool set`; the `SetProfile`
+    /// transition is the separate power-profile lever.
     SetCoolingLevel(FanCurvePreset),
     /// User-requested change of the battery charge end threshold.
     ChargeThresholdChanged(u8),

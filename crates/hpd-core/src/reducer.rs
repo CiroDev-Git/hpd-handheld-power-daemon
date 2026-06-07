@@ -92,7 +92,7 @@ pub fn reduce(
 
             validate_power_envelope(&new_target)?;
 
-            return apply_target_and_profile(state, new_target, device_limits, config);
+            return apply_power_target(state, new_target, device_limits, config);
         }
 
         // -----------------------------------------------------
@@ -101,7 +101,7 @@ pub fn reduce(
         Transition::SetEnvelope(new_target) => {
             validate_power_envelope(&new_target)?;
 
-            return apply_target_and_profile(state, new_target, device_limits, config);
+            return apply_power_target(state, new_target, device_limits, config);
         }
 
         Transition::SetProfile(new_profile) => {
@@ -209,7 +209,7 @@ pub fn reduce(
 
             // Persist even when power_target didn't actually change: we still
             // mutated last_dc_target / is_ac_connected and those must survive
-            // a reboot. apply_target_and_profile only emits PersistState when
+            // a reboot. apply_power_target only emits PersistState when
             // the target changed, so we top it up here if missing.
             if !output
                 .effects
@@ -283,7 +283,7 @@ pub fn reduce(
     Ok(ReducerOutput { new_state, effects })
 }
 
-fn apply_target_and_profile(
+fn apply_power_target(
     current_state: &ProfileState,
     new_target: PowerEnvelopeTarget,
     device_limits: &PowerEnvelopeLimits,
@@ -458,7 +458,7 @@ mod tests {
     fn test_ac_plugged_persists_last_dc_target_even_when_target_unchanged() {
         // Regression for Audit §3.5 / Lote 6: when the system is already at
         // the Turbo target (e.g., a stale boot-time state) and the charger is
-        // plugged in, apply_target_and_profile sees no envelope change and
+        // plugged in, apply_power_target sees no envelope change and
         // skips PersistState. But we DO mutate last_dc_target and
         // is_ac_connected, so we MUST persist or they're lost on reboot.
         let limits = PowerEnvelopeLimits {
@@ -471,7 +471,7 @@ mod tests {
 
         // Start with the exact target that AcPowerChanged(true) -> SetPreset(Turbo)
         // would produce (35W SPL, sppt = 35000*1.15 = 40250, fppt = 35000*1.25 = 43750).
-        // apply_target_and_profile sees no change and emits no PersistState.
+        // apply_power_target sees no change and emits no PersistState.
         let turbo_target = PowerEnvelopeTarget {
             spl: PowerMilliwatts(35_000),
             sppt: PowerMilliwatts(40_250),
@@ -680,7 +680,7 @@ mod tests {
     fn test_enable_fan_auto_flips_flag_when_previously_disabled() {
         // Today the re-evaluation produces zero effects because the inferred
         // profile is only re-applied behind an envelope change in
-        // apply_target_and_profile; the contract for this transition is just
+        // apply_power_target; the contract for this transition is just
         // that the flag flips. Persistence of the flag itself is a separate
         // concern tracked in the audit.
         let mut state = setup_state();
@@ -966,13 +966,11 @@ mod tests {
     #[test]
     fn test_set_profile_is_decoupled_from_fan_curve() {
         // Decoupled model: SetProfile changes only the platform_profile.
-        // It never switches the fan curve to a "matching" preset, even
-        // with the legacy fan_curve_follows_profile flag set (now a
-        // no-op), and it must not flip the auto-cooling mode. With no
-        // managed curve there is nothing to re-assert.
+        // It never switches the fan curve to a "matching" preset, and it
+        // must not flip the auto-cooling mode. With no managed curve there
+        // is nothing to re-assert.
         let state = setup_state(); // active_profile = Balanced, curve = None
-        let mut config = setup_config();
-        config.fan_curve_follows_profile = true; // legacy flag, now ignored
+        let config = setup_config();
 
         let out = reduce(
             &state,
@@ -991,27 +989,6 @@ mod tests {
             out.new_state.fan_follows_tdp, state.fan_follows_tdp,
             "SetProfile must not flip auto-cooling"
         );
-        assert!(!out
-            .effects
-            .iter()
-            .any(|e| matches!(e, Effect::ApplyFanCurve(_))));
-    }
-
-    #[test]
-    fn test_set_profile_does_not_touch_curve_when_follow_disabled() {
-        // With fan_curve_follows_profile explicitly off and no managed
-        // curve, a profile change must leave the fan curve alone.
-        let state = setup_state(); // active_fan_curve = None
-        let mut config = setup_config();
-        config.fan_curve_follows_profile = false;
-        let out = reduce(
-            &state,
-            Transition::SetProfile(ProfileName::Performance),
-            &setup_limits(),
-            &config,
-        )
-        .unwrap();
-        assert_eq!(out.new_state.active_fan_curve, None);
         assert!(!out
             .effects
             .iter()
@@ -1050,16 +1027,15 @@ mod tests {
     }
 
     #[test]
-    fn test_profile_change_reasserts_active_curve_even_with_follow_disabled() {
+    fn test_profile_change_reasserts_active_curve() {
         // Preservation: writing the platform profile can make the EC drop
         // the custom curve, so a profile change must re-apply the active
-        // curve UNCHANGED even when fan_curve_follows_profile is off.
+        // curve UNCHANGED (it is re-asserted, never re-inferred).
         use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
         let sel = FanCurveSelection::Preset(FanCurvePreset::Silent);
         let mut state = setup_state();
         state.active_fan_curve = Some(sel);
-        let mut config = setup_config();
-        config.fan_curve_follows_profile = false; // preservation path, not follow
+        let config = setup_config();
         let out = reduce(
             &state,
             Transition::SetProfile(ProfileName::Performance),

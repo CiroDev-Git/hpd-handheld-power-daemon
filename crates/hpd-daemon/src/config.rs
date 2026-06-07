@@ -237,7 +237,6 @@ high_frac = 0.80
                 },
                 sppt_factor: 1.10,
                 fppt_factor: 1.30,
-                fan_curve_follows_profile: true,
             },
         };
         assert_eq!(cfg.to_runtime(), cfg.runtime);

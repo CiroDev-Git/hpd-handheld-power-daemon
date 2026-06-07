@@ -258,7 +258,7 @@ flowchart LR
         PYc["Python backend"]
     end
     subgraph DAEMON["Daemon hpd"]
-        SET["Setters (polkit-gated):<br/>set_spl, set_preset, set_charge_threshold,<br/>set_cooling_level, set_fan_auto,<br/>reset_fan_curve, set_profile, set_fan_curve"]
+        SET["Setters (polkit-gated):<br/>set_spl, set_preset, set_charge_threshold,<br/>set_cooling_level, set_fan_auto,<br/>reset_fan_curve, set_profile"]
         GET["Reads (no polkit):<br/>get_thermal_status, get_fan_curve,<br/>get_hardware_limits, is_ac_connected,<br/>get_diagnostics, get_power_conflicts"]
         PROP["Properties (PropertiesChanged):<br/>current_spl, active_profile,<br/>charge_end_threshold, auto_cooling, fan_curve"]
     end

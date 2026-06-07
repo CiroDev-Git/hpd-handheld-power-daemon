@@ -358,7 +358,7 @@ async fn test_executor_config_reload_swaps_runtime_config() {
     let exec_handle = tokio::spawn(executor.run());
 
     // Park the state at a known SPL so the post-reload SetSpl is a
-    // real envelope change (apply_target_and_profile no-ops when the
+    // real envelope change (apply_power_target no-ops when the
     // target is unchanged).
     tx.send(Transition::SetSpl(15)).await.unwrap();
     wait_state(&mut state_rx, |s| {
@@ -373,7 +373,6 @@ async fn test_executor_config_reload_swaps_runtime_config() {
         profile_thresholds: ProfileThresholds::DEFAULT,
         sppt_factor: 2.0,
         fppt_factor: 2.0,
-        fan_curve_follows_profile: false,
     };
     tx.send(Transition::ConfigReload(new_runtime))
         .await
