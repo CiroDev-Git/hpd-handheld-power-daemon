@@ -260,7 +260,8 @@ impl PowerDaemonInterface {
     /// profile / power envelope (use `set_spl` / `set_profile` for those).
     ///
     /// This is the front-end for `hpdctl cool set`. The raw `set_profile`
-    /// and `set_fan_curve` methods remain for advanced callers.
+    /// method remains for advanced callers (the unused raw `set_fan_curve`
+    /// was retired in 2.5.0 — `set_cooling_level` covers the fan curve).
     ///
     /// `polkit` action: `dev.cirodev.hpd.set-profile` (`auth_admin_keep`).
     async fn set_cooling_level(
@@ -304,45 +305,19 @@ impl PowerDaemonInterface {
         Ok(())
     }
 
-    /// Program a named custom fan curve (`silent`, `balanced`,
-    /// `aggressive`). The daemon resolves the preset to the model's
-    /// concrete curve, writes it to the EC, and re-applies it across
-    /// suspend/resume.
-    ///
-    /// `polkit` action: `dev.cirodev.hpd.set-fan-curve` (`auth_admin_keep`).
-    async fn set_fan_curve(
-        &self,
-        preset: &str,
-        #[zbus(connection)] conn: &zbus::Connection,
-        #[zbus(header)] header: zbus::message::Header<'_>,
-    ) -> zbus::fdo::Result<()> {
-        debug!("D-Bus received request to Set Fan Curve: {}", preset);
-        let preset = FanCurvePreset::from_str(preset)
-            .map_err(|e| zbus::fdo::Error::InvalidArgs(e.to_string()))?;
-        if !polkit::check(conn, &header, PolkitAction::SetFanCurve).await {
-            return Err(auth_denied());
-        }
-        if self
-            .tx
-            .send(Transition::SetFanCurve(FanCurveSelection::Preset(preset)))
-            .await
-            .is_err()
-        {
-            return Err(executor_down());
-        }
-        Ok(())
-    }
-
     /// Hand fan control back to the firmware's automatic curve.
     ///
-    /// `polkit` action: `dev.cirodev.hpd.set-fan-curve`.
+    /// `polkit` action: `dev.cirodev.hpd.set-profile` (grouped with the
+    /// other cooling levers `set_cooling_level` / `set_fan_auto`; the
+    /// dedicated `set-fan-curve` action was retired in 2.5.0 along with
+    /// the unused raw `set_fan_curve` method).
     async fn reset_fan_curve(
         &self,
         #[zbus(connection)] conn: &zbus::Connection,
         #[zbus(header)] header: zbus::message::Header<'_>,
     ) -> zbus::fdo::Result<()> {
         debug!("D-Bus received request to reset fan curve to firmware auto");
-        if !polkit::check(conn, &header, PolkitAction::SetFanCurve).await {
+        if !polkit::check(conn, &header, PolkitAction::SetProfile).await {
             return Err(auth_denied());
         }
         if self.tx.send(Transition::ResetFanCurve).await.is_err() {

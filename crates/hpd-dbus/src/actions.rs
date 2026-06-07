@@ -28,12 +28,10 @@ pub enum PolkitAction {
     /// Change the battery charge end threshold.
     /// High-impact: `auth_admin`.
     SetCharge,
-    /// Change the platform cooling profile or re-bind fan-auto.
+    /// Change the platform cooling profile, re-bind fan-auto, or reset
+    /// the fan curve to firmware.
     /// Low-impact, cosmetic-leaning: `auth_admin_keep` (5 min cache).
     SetProfile,
-    /// Program or reset the EC-mediated custom fan curve.
-    /// Low-impact, cosmetic-leaning: `auth_admin_keep` (5 min cache).
-    SetFanCurve,
 }
 
 impl PolkitAction {
@@ -44,11 +42,10 @@ impl PolkitAction {
     /// exhaustive match in this module's tests turns a newly-added enum
     /// variant into a compile error here, prompting whoever adds it to
     /// extend this array too.
-    pub const ALL: [PolkitAction; 4] = [
+    pub const ALL: [PolkitAction; 3] = [
         PolkitAction::SetTdp,
         PolkitAction::SetCharge,
         PolkitAction::SetProfile,
-        PolkitAction::SetFanCurve,
     ];
 
     /// Polkit `action_id` string declared in the project's policy file.
@@ -57,7 +54,6 @@ impl PolkitAction {
             PolkitAction::SetTdp => "dev.cirodev.hpd.set-tdp",
             PolkitAction::SetCharge => "dev.cirodev.hpd.set-charge",
             PolkitAction::SetProfile => "dev.cirodev.hpd.set-profile",
-            PolkitAction::SetFanCurve => "dev.cirodev.hpd.set-fan-curve",
         }
     }
 }
@@ -89,10 +85,7 @@ mod tests {
         // error here, which is the prompt to also add it to ALL above.
         for action in PolkitAction::ALL {
             match action {
-                PolkitAction::SetTdp
-                | PolkitAction::SetCharge
-                | PolkitAction::SetProfile
-                | PolkitAction::SetFanCurve => {}
+                PolkitAction::SetTdp | PolkitAction::SetCharge | PolkitAction::SetProfile => {}
             }
         }
     }

@@ -131,7 +131,7 @@ if command -v pkaction >/dev/null 2>&1; then
     # D-Bus. Confirm each of ours is present.
     registered="$(pkaction 2>/dev/null || true)"
     missing=()
-    for action in set-tdp set-charge set-profile set-fan-curve; do
+    for action in set-tdp set-charge set-profile; do
         if ! printf '%s\n' "$registered" | grep -qxF "dev.cirodev.hpd.$action"; then
             missing+=("dev.cirodev.hpd.$action")
         fi

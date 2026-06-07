@@ -43,7 +43,6 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
 | `GetVersion` | `() → (s)` | The daemon's version string (daemon ≥ 2.4.2). Errors on older daemons → show "unknown". | — (read) |
 | `GetDiagnostics` | `() → (b as)` | `(polkit_ok, missing_action_ids)`. `polkit_ok == false` ⇒ the polkit policy is not installed and **every** gated setter fails with `AuthFailed`. Live check; safe to poll. | — (read) |
 | `SetProfile` | `(s profile)` | **The power-profile lever** (ACPI platform profile / EPP): `power-saver`/`balanced`/`performance`. Decoupled from cooling; defaults to `performance` so the SPL is the real limit. Lower it only for an efficiency bias. | `set-profile` |
-| `SetFanCurve` | `(s preset)` | **Advanced/raw.** Fan curve preset (`silent`/`balanced`/`aggressive`) directly (`SetCoolingLevel` is the normal path). | `set-fan-curve` |
 
 ### Properties (read-only, emit `PropertiesChanged`)
 
@@ -119,9 +118,6 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
 
 ### 🟢 Opcionales / avanzadas
 
-12. **Raw curve** — `SetFanCurve` (set a fan-curve preset directly;
-    `SetCoolingLevel` is the normal path). Genuinely advanced and rarely
-    needed; collapsed behind the Advanced panel.
 13. **Power-mode hint (folded into #5)** — when `ActiveProfile` is
     `balanced`/`power-saver`, the Power mode control shows an informative
     note that real power is held below the TDP, with the current TDP
@@ -153,9 +149,9 @@ The plugin should not assume every reading exists:
 
 ## ⚠️ Limitations in v2.0.0 (so you don't design around them)
 
-- **No custom (hand-drawn) curve push.** `SetCoolingLevel` and
-  `SetFanCurve` take a **preset name** only (`silent`/`balanced`/
-  `aggressive`). There is **no** D-Bus method that accepts arbitrary
+- **No custom (hand-drawn) curve push.** `SetCoolingLevel` takes a
+  **preset name** only (`silent`/`balanced`/`aggressive`). There is **no**
+  D-Bus method that accepts arbitrary
   16-point curves. So the plugin can **select presets** and **draw the
   active curve** (`GetFanCurve`), but **cannot** offer a curve editor. A
   future daemon method (e.g. `SetCustomFanCurve(a(uu) cpu, a(uu) gpu)`)

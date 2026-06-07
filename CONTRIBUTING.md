@@ -239,7 +239,7 @@ public surface is:
 | D-Bus interface `dev.cirodev.hpd.PowerDaemon1` (methods, properties, signals) | MAJOR — breaks every client |
 | `hpdctl` subcommand syntax and option flags                          | MAJOR for removals/renames; MINOR for additions |
 | On-disk state at `/var/lib/hpd/state.toml` (schema, not values)      | MAJOR if non-backwards-compatible; MINOR if additive with `#[serde(default)]` |
-| Polkit action IDs in `dev.cirodev.hpd.{set-tdp, set-charge, set-profile, set-fan-curve}` + the `wheel` grant in `49-hpd.rules` | MAJOR — renaming an action or dropping the `wheel` grant breaks operator policies |
+| Polkit action IDs in `dev.cirodev.hpd.{set-tdp, set-charge, set-profile}` + the `wheel` grant in `49-hpd.rules` | MAJOR — renaming an action or dropping the `wheel` grant breaks operator policies (the `set-fan-curve` action was retired in 2.5.0 with the unused raw `set_fan_curve` method) |
 | `/etc/hpd/config.toml` schema                                        | MAJOR if a previously-valid file is now rejected; MINOR if purely additive |
 
 Internal Rust API (every `pub` item in `hpd-error`, `hpd-sysfs`,

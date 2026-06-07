@@ -187,9 +187,10 @@ The check talks to `org.freedesktop.PolicyKit1.Authority` directly
 - `dev.cirodev.hpd.set-tdp` — TDP / preset changes (`auth_admin`).
 - `dev.cirodev.hpd.set-charge` — charge threshold (`auth_admin`).
 - `dev.cirodev.hpd.set-profile` — cooling level / platform profile +
-  fan-auto (`auth_admin_keep` — 5-minute cache).
-- `dev.cirodev.hpd.set-fan-curve` — fan-curve set / reset
-  (`auth_admin_keep` — 5-minute cache).
+  fan-auto + fan-curve **reset** (`auth_admin_keep` — 5-minute cache).
+  (The separate `set-fan-curve` action and the unused raw `set_fan_curve`
+  D-Bus method were retired in 2.5.0; `set_cooling_level` covers the fan
+  curve and `reset_fan_curve` moved onto this action.)
 
 These `<defaults>` in `package/polkit/dev.cirodev.hpd.policy` are the
 baseline for **non-administrator** callers. **`wheel`-group members
@@ -457,7 +458,7 @@ and exits cleanly rather than letting systemd `SIGKILL` it mid-write.
   so trusting the persisted values without re-applying would make the
   daemon report state the device no longer has. Same path as resume; the
   reducer log says "boot/resume". This is why the boot does **not** send
-  separate `SetProfile`/`SetFanCurve` transitions any more.
+  separate `SetProfile`/`SetCoolingLevel` transitions any more.
 - `Transition::SetSpl` derives SPPT and FPPT from SPL via fixed
   multipliers (1.15× and 1.25× by default, tunable through
   `RuntimeConfig::sppt_factor`/`fppt_factor`), capped at hw limits.

@@ -43,11 +43,6 @@ trait PowerDaemon {
     /// profile and fan curve together and latches manual cooling.
     async fn set_cooling_level(&self, level: &str) -> zbus::Result<()>;
 
-    /// Program a named custom fan curve (`silent`, `balanced`,
-    /// `aggressive`). Resolved to the model's concrete curve by the
-    /// daemon and re-applied across suspend/resume.
-    async fn set_fan_curve(&self, preset: &str) -> zbus::Result<()>;
-
     /// Hand fan control back to the firmware's automatic curve.
     async fn reset_fan_curve(&self) -> zbus::Result<()>;
 

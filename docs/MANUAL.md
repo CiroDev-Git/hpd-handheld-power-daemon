@@ -311,7 +311,6 @@ that: one cooling control, not three.
 | `current_spl`, `active_profile`, `charge_end_threshold`, `is_ac_connected` | Power / profile / battery / AC state. |
 | `SetSpl(u)`, `SetPreset(s)`, `SetChargeThreshold(y)` | Power and battery setters. |
 | `SetProfile(s)` | The power-profile lever (`performance`/`balanced`/`power-saver`), decoupled from cooling. |
-| `SetFanCurve(s)` | Raw fan-curve set (advanced). |
 
 **Suggested UI (post-decouple):**
 - A **TDP** slider — *this is the power control* (`current_spl` / `SetSpl`,

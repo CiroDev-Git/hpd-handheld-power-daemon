@@ -313,7 +313,6 @@ debería reflejar eso: un control de cooling, no tres.
 | `current_spl`, `active_profile`, `charge_end_threshold`, `is_ac_connected` | Estado de potencia / perfil / batería / AC. |
 | `SetSpl(u)`, `SetPreset(s)`, `SetChargeThreshold(y)` | Setters de potencia y batería. |
 | `SetProfile(s)` | La palanca de potencia (`performance`/`balanced`/`power-saver`), decoplada del cooling. |
-| `SetFanCurve(s)` | Set crudo de la curva (avanzado). |
 
 **UI sugerida (post-desacople):**
 - Un slider de **TDP** — *este es el control de potencia* (`current_spl` /
