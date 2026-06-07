@@ -52,7 +52,18 @@ ConfigurationDirectoryMode=0755
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-PrivateNetwork=yes
+# NOTE: PrivateNetwork must stay OFF. The AC/DC monitor (hpd-netlink) reads
+# udev `power_supply` uevents over a NETLINK_KOBJECT_UEVENT socket, and that
+# multicast is per-network-namespace: with PrivateNetwork=yes the daemon sits
+# in an isolated netns and receives NO uevents, so plug/unplug is never
+# detected at runtime (the boot/resume sysfs read still works, which masked
+# this for a long time — see CHANGELOG 2.5.2). The daemon needs no real
+# network (D-Bus is a Unix socket), so dropping this costs nothing.
+PrivateNetwork=no
+# Replacement for the network-hardening intent of PrivateNetwork: deny all
+# IP traffic at the eBPF level. This blocks AF_INET/AF_INET6 (the daemon
+# opens none) without touching AF_NETLINK, so udev uevents still flow.
+IPAddressDeny=any
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 ProtectKernelLogs=yes
