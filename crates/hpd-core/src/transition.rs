@@ -3,7 +3,7 @@
 //! Every external event that can mutate the daemon's state goes
 //! through one of these variants.
 
-use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
+use hpd_capabilities::fan_curve::FanCurvePreset;
 use hpd_capabilities::power::PowerEnvelopeTarget;
 use hpd_capabilities::profile::{ProfileName, RuntimeConfig, TdpPreset};
 
@@ -26,8 +26,8 @@ pub enum Transition {
     /// curve together to the level implied by the preset
     /// (`Silent`→power-saver, `Balanced`→balanced,
     /// `Aggressive`→performance), and disable `fan_follows_tdp`. This is
-    /// the front-end for `hpdctl cool set`; the raw `SetProfile` /
-    /// `SetFanCurve` transitions remain for advanced callers.
+    /// the front-end for `hpdctl cool set`; the raw `SetProfile`
+    /// transition remains for advanced callers.
     SetCoolingLevel(FanCurvePreset),
     /// User-requested change of the battery charge end threshold.
     ChargeThresholdChanged(u8),
@@ -49,10 +49,6 @@ pub enum Transition {
     SystemResumed,
     /// Re-bind cooling-profile inference to the TDP envelope.
     EnableFanAuto,
-    /// Program a custom fan curve (named preset or explicit curves).
-    /// The backend resolves presets to its model's concrete points and
-    /// reads them back to confirm the EC accepted the write.
-    SetFanCurve(FanCurveSelection),
     /// Hand fan control back to the firmware's automatic curve.
     ResetFanCurve,
     /// Hot-reload of runtime-tunable config. Intercepted by the Executor

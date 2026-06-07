@@ -297,7 +297,7 @@ echo "charge daemon=$(hpdctl charge get)  sysfs=$(cat /sys/class/power_supply/BA
 | 9.1 | as a `wheel` user (device owner), `hpdctl cool set balanced` | **no password prompt** (49-hpd.rules grant) |
 | 9.2 | over SSH as the same wheel user | still no prompt (the rule keys on group, not session tier) |
 | 9.3 | as a non-wheel user | prompted to authenticate (`auth_admin_keep`); cached ~5 min after |
-| 9.4 | `pkaction --action-id dev.cirodev.hpd.set-fan-curve` | action is registered |
+| 9.4 | `pkaction --action-id dev.cirodev.hpd.set-profile` | action is registered (gates `cool set`/`auto`/`reset`; the old `set-fan-curve` action was retired in 2.5.0) |
 
 ---
 

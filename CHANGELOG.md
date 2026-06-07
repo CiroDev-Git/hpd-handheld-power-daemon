@@ -11,6 +11,25 @@ not part of the published repository.
 
 ---
 
+## [2.5.0] — 2026-06-07
+
+### Removed
+
+- **The unused raw `set_fan_curve` D-Bus method and its `set-fan-curve`
+  polkit action.** `set_fan_curve` set a fan-curve preset directly without
+  latching manual mode — so under auto-cooling it silently no-op'd (the
+  next TDP change re-inferred and overwrote the curve), and it was reachable
+  from no CLI subcommand and (since plugin 2.7.0) no UI. `set_cooling_level`
+  (latches manual) and `reset_fan_curve` fully cover the fan curve. The
+  `Transition::SetFanCurve` variant and the CLI proxy binding are gone too.
+  `reset_fan_curve` now authorises against the **`dev.cirodev.hpd.set-profile`**
+  action (grouped with the other cooling levers); the dedicated
+  `set-fan-curve` action is retired. Removing a D-Bus method + polkit action
+  is normally a breaking change, but there are no external consumers — only
+  hpd's own CLI and Decky plugin, neither of which used it — so this ships
+  as a minor cleanup. The fan-curve **infrastructure** (presets, EC writes,
+  auto-follow, boot/resume re-assert, the graph) is unchanged.
+
 ## [2.4.3] — 2026-06-06
 
 ### Fixed

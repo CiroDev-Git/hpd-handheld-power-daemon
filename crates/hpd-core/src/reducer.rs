@@ -237,14 +237,6 @@ pub fn reduce(
             });
         }
 
-        Transition::SetFanCurve(selection) => {
-            if new_state.active_fan_curve != Some(selection) {
-                new_state.active_fan_curve = Some(selection);
-                effects.push(Effect::ApplyFanCurve(selection));
-                effects.push(Effect::PersistState);
-            }
-        }
-
         Transition::ResetFanCurve => {
             if new_state.active_fan_curve.is_some() {
                 new_state.active_fan_curve = None;
@@ -908,42 +900,6 @@ mod tests {
     }
 
     // ---------- Fan curve ----------
-
-    #[test]
-    fn test_set_fan_curve_applies_and_persists_when_changed() {
-        use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
-        let state = setup_state(); // active_fan_curve = None
-        let sel = FanCurveSelection::Preset(FanCurvePreset::Balanced);
-        let out = reduce(
-            &state,
-            Transition::SetFanCurve(sel),
-            &setup_limits(),
-            &setup_config(),
-        )
-        .unwrap();
-        assert_eq!(out.new_state.active_fan_curve, Some(sel));
-        assert_eq!(
-            out.effects,
-            vec![Effect::ApplyFanCurve(sel), Effect::PersistState]
-        );
-    }
-
-    #[test]
-    fn test_set_fan_curve_is_no_op_when_unchanged() {
-        use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
-        let sel = FanCurveSelection::Preset(FanCurvePreset::Aggressive);
-        let mut state = setup_state();
-        state.active_fan_curve = Some(sel);
-        let out = reduce(
-            &state,
-            Transition::SetFanCurve(sel),
-            &setup_limits(),
-            &setup_config(),
-        )
-        .unwrap();
-        assert_eq!(out.new_state, state);
-        assert!(out.effects.is_empty());
-    }
 
     #[test]
     fn test_reset_fan_curve_clears_and_emits_reset() {
