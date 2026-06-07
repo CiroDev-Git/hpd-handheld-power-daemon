@@ -3,7 +3,7 @@
 //! Every external event that can mutate the daemon's state goes
 //! through one of these variants.
 
-use hpd_capabilities::fan_curve::FanCurvePreset;
+use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
 use hpd_capabilities::power::PowerEnvelopeTarget;
 use hpd_capabilities::profile::{ProfileName, RuntimeConfig, TdpPreset};
 
@@ -40,6 +40,10 @@ pub enum Transition {
     /// Forced rollback to the charge end threshold the kernel actually
     /// reports, used by the executor after `set_end_threshold` fails.
     SyncChargeThreshold(u8),
+    /// Forced rollback to the fan-curve selection the EC actually runs
+    /// (`None` = firmware auto), used by the executor after `apply` /
+    /// `reset_to_auto` fails, so the reported level never lies.
+    SyncFanCurve(Option<FanCurveSelection>),
     /// AC charger was plugged (`true`) or unplugged (`false`).
     /// Triggers preset swap + `last_dc_target` bookkeeping.
     AcPowerChanged(bool),

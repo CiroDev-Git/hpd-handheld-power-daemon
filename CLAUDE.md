@@ -150,11 +150,21 @@ handlers or monitors.
    `hpd-core/src/inference.rs`). `cool set` (`SetCoolingLevel`) likewise
    programs the fan curve only; `set_profile` is the manual power-profile
    lever and stays decoupled from cooling.
-6. **Rollback on hardware-write failure.** Today only
-   `ApplyPowerEnvelope` rolls back: on failure the executor reads the
-   real hardware state and re-injects `SyncPowerTarget`. The other two
-   `Apply*` effects log on failure but do not roll back — Lote 38 of
-   the V2 remediation plan will unify this.
+6. **Rollback on hardware-write failure.** All four `Apply*` effects
+   roll back through the shared `Executor::rollback` helper: on a backend
+   write failure the executor reads the **real** hardware state and
+   re-injects the matching `Sync*` transition so `ProfileState` converges
+   to what the device actually has — `ApplyPowerEnvelope`→`SyncPowerTarget`,
+   `ApplyPlatformProfile`→`SyncPlatformProfile`,
+   `ApplyChargeThreshold`→`SyncChargeThreshold`, and
+   `ApplyFanCurve`/`ResetFanCurve`→`SyncFanCurve` (via
+   `FanCurveControl::active_selection`, which reads the EC and matches the
+   live points back to a preset / `custom` / firmware-`auto`). This is the
+   invariant that keeps the reported knob state from ever claiming a value
+   the hardware refused. (`SetSpl`/etc. additionally `PersistState`; the
+   `Sync*` rollbacks deliberately do **not** persist — the executor read
+   the authoritative value from hardware, so a reboot re-reads + re-asserts
+   the same thing.)
 7. **`ConfigReload` interception.** The executor intercepts
    `Transition::ConfigReload(new_config)` *before* `reduce()` is
    called and atomically swaps its own `RuntimeConfig`. The next
@@ -476,6 +486,18 @@ and exits cleanly rather than letting systemd `SIGKILL` it mid-write.
 - The `simulator` feature on `hpd-daemon` implies `vendor-asus`
   *and* `hpd-dbus/simulator` simultaneously: the simulator needs the
   ASUS firmware model and the polkit bypass in the same build.
+- **`set_profile` / `ActiveProfile` / `active_profile` / the `set-profile`
+  polkit action all name the ACPI `platform_profile`** (the EPP / power-bias
+  lever: `power-saver`/`balanced`/`performance`), mirroring the kernel's
+  own `/sys/firmware/acpi/platform_profile` term — that's why the internal
+  name is "profile" even though the user-facing surface calls it **"Power
+  mode"** (Decky plugin) and **`hpdctl power`** (CLI). The names were kept
+  deliberately (kernel-accurate internally, friendly externally) rather than
+  renamed, since a rename would break the D-Bus/polkit surface + the
+  persisted `state.toml`. Note the `set-profile` polkit action also gates
+  the cooling levers (`set_cooling_level` / `set_fan_auto` /
+  `reset_fan_curve`) — it's the shared "low-impact, `auth_admin_keep`"
+  bucket, not only the power profile.
 
 ## Where to look for things
 

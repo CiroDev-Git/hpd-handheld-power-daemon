@@ -11,6 +11,28 @@ not part of the published repository.
 
 ---
 
+## [2.5.1] — 2026-06-07
+
+### Fixed
+
+- **The reported fan-curve level can no longer claim a value the EC
+  refused.** `ApplyFanCurve` / `ResetFanCurve` now roll back like the
+  other `Apply*` effects: on a write failure the executor re-reads the
+  EC's *actual* selection (new `FanCurveControl::active_selection`, which
+  matches the live points back to a preset / `custom` / firmware-`auto`)
+  and re-injects `Transition::SyncFanCurve`, so `ProfileState.active_fan_curve`
+  — and therefore the `FanCurve` property — always reflects reality. On a
+  successful write the existing read-back verification already guaranteed
+  this; the gap was only the failure path. All four `Apply*` effects now
+  share the same rollback contract.
+
+### Docs
+
+- Clarified that `set_profile` / `ActiveProfile` / the `set-profile` polkit
+  action all name the kernel's ACPI `platform_profile` (surfaced as "Power
+  mode" / `hpdctl power`), and that `set-profile` is the shared
+  `auth_admin_keep` bucket also gating the cooling levers.
+
 ## [2.5.0] — 2026-06-07
 
 ### Removed
