@@ -40,6 +40,7 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
 | `GetFanCurve` | `() → (a(uu) cpu, a(uu) gpu)` | The 8 `(temp_c, pwm)` points of each fan's active curve (pwm `0..=255`). Empty if firmware-only. **No signal.** | — (read) |
 | `GetHardwareLimits` | `() → (uuuu)` | `(spl_min, spl_max, sppt_max, fppt_max)` in watts — the valid TDP range. | — (read) |
 | `IsAcConnected` | `() → (b)` | Whether the charger is plugged in. | — (read) |
+| `GetVersion` | `() → (s)` | The daemon's version string (daemon ≥ 2.4.2). Errors on older daemons → show "unknown". | — (read) |
 | `GetDiagnostics` | `() → (b as)` | `(polkit_ok, missing_action_ids)`. `polkit_ok == false` ⇒ the polkit policy is not installed and **every** gated setter fails with `AuthFailed`. Live check; safe to poll. | — (read) |
 | `SetProfile` | `(s profile)` | **The power-profile lever** (ACPI platform profile / EPP): `power-saver`/`balanced`/`performance`. Decoupled from cooling; defaults to `performance` so the SPL is the real limit. Lower it only for an efficiency bias. | `set-profile` |
 | `SetFanCurve` | `(s preset)` | **Advanced/raw.** Fan curve preset (`silent`/`balanced`/`aggressive`) directly (`SetCoolingLevel` is the normal path). | `set-fan-curve` |
