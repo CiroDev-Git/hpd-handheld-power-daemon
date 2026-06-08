@@ -44,13 +44,14 @@ pub fn reduce(
     let mut new_state = state.clone();
     let mut effects = Vec::new();
 
-    // "AC = maximum performance" lock: while plugged in with
-    // `ac_max_performance` on, the power/cooling levers are pinned and user
-    // writes are ignored (the battery charge threshold is exempt). This is
-    // the reducer-level backstop; the D-Bus setters also reject up-front so
-    // the caller gets an immediate error. AC / suspend / boot / `Sync*`
-    // rollback / config-reload transitions are never gated.
-    if state.is_ac_connected && config.ac_max_performance && is_locked_write(&transition) {
+    // "AC = maximum performance" lock: while plugged in with the
+    // `ac_max_performance` preference on, the power/cooling levers are pinned
+    // and user writes are ignored (the battery charge threshold is exempt,
+    // and `SetAcMaxPerformance` itself is never gated — it is how you release
+    // the lock). This is the reducer-level backstop; the D-Bus setters also
+    // reject up-front so the caller gets an immediate error. AC / suspend /
+    // boot / `Sync*` rollback / config-reload transitions are never gated.
+    if state.is_ac_connected && state.ac_max_performance && is_locked_write(&transition) {
         info!(?transition, "Ignored: on AC, locked to maximum performance");
         return Ok(ReducerOutput { new_state, effects });
     }
@@ -179,47 +180,45 @@ pub fn reduce(
             }
 
             let mut output = if is_plugged {
-                // Snapshot the user's battery (DC) prefs first so unplug can
-                // restore the full set (TDP + power mode + cooling), then
-                // apply the AC policy.
-                let snapshot = DcSnapshot {
-                    power_target: state.power_target.clone(),
-                    active_profile: state.active_profile.clone(),
-                    active_fan_curve: state.active_fan_curve,
-                    fan_follows_tdp: state.fan_follows_tdp,
-                };
-                let mut o = if config.ac_max_performance {
+                if state.ac_max_performance {
+                    // Lock ON: snapshot the user's battery (DC) prefs so unplug
+                    // can restore the full set, then force maximum performance.
                     info!("Charger plugged: locking to maximum performance (Performance / Max / Aggressive)");
-                    force_ac_max_performance(state, device_limits, config)
+                    let snapshot = DcSnapshot {
+                        power_target: state.power_target.clone(),
+                        active_profile: state.active_profile.clone(),
+                        active_fan_curve: state.active_fan_curve,
+                        fan_follows_tdp: state.fan_follows_tdp,
+                    };
+                    let mut o = force_ac_max_performance(state, device_limits, config);
+                    o.new_state.last_dc_state = Some(snapshot);
+                    o.effects.push(Effect::PersistState);
+                    o
                 } else {
-                    info!(preset = %TdpPreset::Max, "Charger plugged: applying Max TDP preset");
-                    reduce(
-                        state,
-                        Transition::SetPreset(TdpPreset::Max),
-                        device_limits,
-                        config,
-                    )?
-                };
-                o.new_state.last_dc_state = Some(snapshot);
-                o
+                    // Lock OFF: fully manual — plugging in changes nothing.
+                    info!("Charger plugged: AC lock disabled, no change (manual mode)");
+                    ReducerOutput {
+                        new_state: state.clone(),
+                        effects: vec![],
+                    }
+                }
             } else if let Some(snapshot) = state.last_dc_state.clone() {
+                // Unplug with a saved snapshot (we forced something on AC):
+                // restore the battery state and clear the snapshot.
                 info!(
                     action = "restore_previous",
                     "Charger unplugged: restoring battery (DC) state"
                 );
                 restore_dc_state(state, &snapshot)
-            } else {
+            } else if state.ac_max_performance {
+                // Locked but no snapshot — the first unplug after a cold
+                // install / boot that happened on AC. Synthesize quiet battery
+                // defaults instead of leaving the forced-max levers in place:
+                // Balanced TDP + re-engaged auto-cooling so the fan curve drops
+                // from the forced Aggressive (otherwise the fans stay loud on
+                // battery). Reduce on an already-unplugged view so the lock
+                // doesn't gate the internal SetPreset.
                 info!(preset = %TdpPreset::Balanced, "Charger unplugged: no saved DC state, applying quiet defaults (Balanced + auto cooling)");
-                // No battery snapshot exists — this is the very first unplug
-                // after a cold install / boot that happened on AC. Synthesize
-                // sane battery defaults instead of leaving the forced-max
-                // levers in place: Balanced TDP, and re-engage auto-cooling so
-                // the fan curve drops from the forced Aggressive to match the
-                // lower TDP (otherwise the fans would stay loud on battery).
-                //
-                // Reduce on an already-unplugged view so the AC lock (still
-                // showing `is_ac_connected = true` on `state`) doesn't gate
-                // this internal SetPreset into a no-op.
                 let mut dc_view = state.clone();
                 dc_view.is_ac_connected = false;
                 dc_view.fan_follows_tdp = true;
@@ -229,22 +228,16 @@ pub fn reduce(
                     device_limits,
                     config,
                 )?
+            } else {
+                // Lock OFF, nothing was ever forced: fully manual, no change.
+                info!("Charger unplugged: AC lock disabled, no change (manual mode)");
+                ReducerOutput {
+                    new_state: state.clone(),
+                    effects: vec![],
+                }
             };
 
             output.new_state.is_ac_connected = is_plugged;
-
-            // Persist even when power_target didn't actually change: we still
-            // mutated last_dc_state / is_ac_connected and those must survive
-            // a reboot. The force/legacy paths may not emit PersistState, so
-            // top it up here if missing.
-            if !output
-                .effects
-                .iter()
-                .any(|e| matches!(e, Effect::PersistState))
-            {
-                output.effects.push(Effect::PersistState);
-            }
-
             return Ok(output);
         }
 
@@ -258,7 +251,7 @@ pub fn reduce(
             // resumed straight into AC (where no `AcPowerChanged` edge fires),
             // and the device should already be pinned + locked. The charge
             // threshold is always re-applied (it is exempt from the lock).
-            if state.is_ac_connected && config.ac_max_performance {
+            if state.is_ac_connected && state.ac_max_performance {
                 info!("Boot/resume on AC: re-asserting maximum-performance lock");
                 let mut output = force_ac_max_performance(state, device_limits, config);
                 output
@@ -307,6 +300,53 @@ pub fn reduce(
                     config,
                 );
             }
+        }
+
+        Transition::SetAcMaxPerformance(enabled) => {
+            // Toggle the "lock to max on AC" preference, applied immediately.
+            if new_state.ac_max_performance == enabled {
+                return Ok(ReducerOutput { new_state, effects }); // no change
+            }
+            if state.is_ac_connected {
+                if enabled {
+                    // Turning the lock ON while plugged: snapshot the current
+                    // (manual) state as the battery baseline if we have none,
+                    // then force maximum performance.
+                    info!("AC lock enabled while plugged: forcing maximum performance");
+                    let mut o = force_ac_max_performance(state, device_limits, config);
+                    o.new_state.ac_max_performance = true;
+                    if o.new_state.last_dc_state.is_none() {
+                        o.new_state.last_dc_state = Some(DcSnapshot {
+                            power_target: state.power_target.clone(),
+                            active_profile: state.active_profile.clone(),
+                            active_fan_curve: state.active_fan_curve,
+                            fan_follows_tdp: state.fan_follows_tdp,
+                        });
+                    }
+                    o.effects.push(Effect::PersistState);
+                    return Ok(o);
+                }
+                // Turning the lock OFF while plugged: restore the battery
+                // snapshot (so you are not stranded at max), unlock, go manual.
+                info!("AC lock disabled while plugged: restoring battery state, unlocking");
+                let mut o = if let Some(snapshot) = state.last_dc_state.clone() {
+                    restore_dc_state(state, &snapshot)
+                } else {
+                    ReducerOutput {
+                        new_state: state.clone(),
+                        effects: vec![Effect::PersistState],
+                    }
+                };
+                o.new_state.ac_max_performance = false;
+                return Ok(o);
+            }
+            // On battery: just store the preference; it applies on next plug.
+            info!(
+                enabled,
+                "AC lock preference updated (on battery; applies on next plug)"
+            );
+            new_state.ac_max_performance = enabled;
+            effects.push(Effect::PersistState);
         }
 
         // Intercepted by the Executor before reduce() is called; the
@@ -446,12 +486,15 @@ fn force_ac_max_performance(
     ReducerOutput { new_state, effects }
 }
 
-/// Restore a previously-captured battery (DC) snapshot on AC unplug,
-/// emitting only the `Apply*` effects for the rails that actually differ
-/// from the current (forced-max) state. Always ends with `PersistState`.
+/// Restore a previously-captured battery (DC) snapshot (on AC unplug, or
+/// when the lock is toggled off while plugged), emitting only the `Apply*`
+/// effects for the rails that actually differ from the current (forced-max)
+/// state. Clears `last_dc_state` so a later unplug in manual mode does not
+/// replay a stale snapshot. Always ends with `PersistState`.
 fn restore_dc_state(current: &ProfileState, snapshot: &DcSnapshot) -> ReducerOutput {
     let mut new_state = current.clone();
     let mut effects = Vec::new();
+    new_state.last_dc_state = None;
 
     if new_state.power_target != snapshot.power_target {
         new_state.power_target = snapshot.power_target.clone();
@@ -502,6 +545,7 @@ mod tests {
             fan_follows_tdp: true,
             last_dc_state: None,
             active_fan_curve: None,
+            ac_max_performance: true,
             ac_locked: false,
         }
     }
@@ -625,6 +669,7 @@ mod tests {
             fan_follows_tdp: true,
             last_dc_state: None,
             active_fan_curve: None,
+            ac_max_performance: true,
             ac_locked: false,
         };
 
@@ -736,31 +781,32 @@ mod tests {
     }
 
     #[test]
-    fn test_ac_plugged_legacy_mode_only_maxes_tdp() {
-        // With ac_max_performance OFF, the historic behaviour: only the TDP
-        // ramps to max; power mode + cooling are untouched, nothing is forced.
-        let mut config = setup_config();
-        config.ac_max_performance = false;
-        let state = setup_state(); // Balanced profile, curve None
+    fn test_ac_plugged_with_lock_off_is_fully_manual() {
+        // With ac_max_performance OFF (the preference), plugging in changes
+        // NOTHING — fully manual. No force, no max-TDP, no snapshot, no effects.
+        let mut state = setup_state(); // Balanced profile, 15W, curve None
+        state.ac_max_performance = false;
+        let before = state.clone();
 
         let out = reduce(
             &state,
             Transition::AcPowerChanged(true),
             &setup_limits(),
-            &config,
+            &setup_config(),
         )
         .unwrap();
 
         assert!(out.new_state.is_ac_connected);
-        assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(35_000));
-        // Profile + cooling left as they were (no forcing).
-        assert_eq!(out.new_state.active_profile, ProfileName::Balanced);
-        assert!(!out
-            .effects
-            .iter()
-            .any(|e| matches!(e, Effect::ApplyPlatformProfile(_))));
-        // DC snapshot still captured for symmetric restore on unplug.
-        assert!(out.new_state.last_dc_state.is_some());
+        // Everything else unchanged from the battery state.
+        assert_eq!(out.new_state.power_target, before.power_target);
+        assert_eq!(out.new_state.active_profile, before.active_profile);
+        assert_eq!(out.new_state.active_fan_curve, before.active_fan_curve);
+        assert!(out.new_state.last_dc_state.is_none());
+        assert!(
+            out.effects.is_empty(),
+            "lock-off plug must produce no effects, got {:?}",
+            out.effects
+        );
     }
 
     #[test]
@@ -1402,16 +1448,16 @@ mod tests {
     }
 
     #[test]
-    fn test_lock_inactive_when_feature_disabled() {
-        // On AC but ac_max_performance off → writes apply normally (no lock).
-        let state = locked_on_ac_state();
-        let mut cfg = setup_config();
-        cfg.ac_max_performance = false;
+    fn test_lock_inactive_when_preference_disabled() {
+        // On AC but the ac_max_performance preference is off → writes apply
+        // normally (no lock).
+        let mut state = locked_on_ac_state();
+        state.ac_max_performance = false;
         let out = reduce(
             &state,
             Transition::SetProfile(ProfileName::PowerSaver),
             &setup_limits(),
-            &cfg,
+            &setup_config(),
         )
         .unwrap();
         assert_eq!(out.new_state.active_profile, ProfileName::PowerSaver);
@@ -1510,5 +1556,131 @@ mod tests {
         assert!(out
             .effects
             .contains(&Effect::ApplyPlatformProfile(ProfileName::Balanced)));
+    }
+
+    // ---------- SetAcMaxPerformance (the runtime toggle) ----------
+
+    #[test]
+    fn test_toggle_lock_off_while_plugged_restores_and_unlocks() {
+        // Locked on AC with a saved battery snapshot. Toggling the lock OFF
+        // restores the battery state, clears the snapshot, and unlocks.
+        let snap = DcSnapshot {
+            power_target: PowerEnvelopeTarget {
+                spl: PowerMilliwatts(12_000),
+                sppt: PowerMilliwatts(13_800),
+                fppt: Some(PowerMilliwatts(15_000)),
+            },
+            active_profile: ProfileName::Balanced,
+            active_fan_curve: Some(FanCurveSelection::Preset(FanCurvePreset::Silent)),
+            fan_follows_tdp: true,
+        };
+        let mut state = locked_on_ac_state(); // forced max, ac_max_performance = true
+        state.last_dc_state = Some(snap.clone());
+
+        let out = reduce(
+            &state,
+            Transition::SetAcMaxPerformance(false),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+
+        assert!(!out.new_state.ac_max_performance);
+        assert_eq!(out.new_state.power_target, snap.power_target);
+        assert_eq!(out.new_state.active_profile, ProfileName::Balanced);
+        assert_eq!(out.new_state.active_fan_curve, snap.active_fan_curve);
+        assert!(out.new_state.last_dc_state.is_none(), "snapshot cleared");
+        assert!(out.effects.contains(&Effect::PersistState));
+    }
+
+    #[test]
+    fn test_toggle_lock_on_while_plugged_forces_and_snapshots() {
+        // Manual on AC (lock off), then toggle ON: snapshot the current manual
+        // state for unplug restore + force maximum performance.
+        let mut state = setup_state();
+        state.is_ac_connected = true;
+        state.ac_max_performance = false;
+        state.last_dc_state = None;
+        let manual = state.clone();
+
+        let out = reduce(
+            &state,
+            Transition::SetAcMaxPerformance(true),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+
+        assert!(out.new_state.ac_max_performance);
+        assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(35_000));
+        assert_eq!(out.new_state.active_profile, ProfileName::Performance);
+        assert_eq!(
+            out.new_state.active_fan_curve,
+            Some(FanCurveSelection::Preset(FanCurvePreset::Aggressive))
+        );
+        assert_eq!(
+            out.new_state.last_dc_state,
+            Some(DcSnapshot {
+                power_target: manual.power_target,
+                active_profile: manual.active_profile,
+                active_fan_curve: manual.active_fan_curve,
+                fan_follows_tdp: manual.fan_follows_tdp,
+            })
+        );
+    }
+
+    #[test]
+    fn test_toggle_lock_on_battery_just_stores_preference() {
+        // On battery, toggling only stores the preference (no force / restore,
+        // no hardware effects) — it applies on the next plug.
+        let state = setup_state(); // on battery, ac_max_performance = true
+        let before = state.clone();
+        let out = reduce(
+            &state,
+            Transition::SetAcMaxPerformance(false),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert!(!out.new_state.ac_max_performance);
+        assert_eq!(out.new_state.power_target, before.power_target);
+        assert!(!out.effects.iter().any(|e| matches!(
+            e,
+            Effect::ApplyPowerEnvelope(_)
+                | Effect::ApplyPlatformProfile(_)
+                | Effect::ApplyFanCurve(_)
+        )));
+        assert!(out.effects.contains(&Effect::PersistState));
+    }
+
+    #[test]
+    fn test_toggle_lock_to_same_value_is_a_noop() {
+        let state = locked_on_ac_state(); // ac_max_performance = true
+        let out = reduce(
+            &state,
+            Transition::SetAcMaxPerformance(true),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert_eq!(out.new_state, state);
+        assert!(out.effects.is_empty());
+    }
+
+    #[test]
+    fn test_toggle_is_never_gated_by_the_lock() {
+        // The toggle must work even while locked (it is how you release it).
+        let state = locked_on_ac_state(); // locked
+        let out = reduce(
+            &state,
+            Transition::SetAcMaxPerformance(false),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert!(
+            !out.new_state.ac_max_performance,
+            "toggle must not be gated"
+        );
     }
 }

@@ -7,6 +7,12 @@ use hpd_capabilities::power::PowerEnvelopeTarget;
 use hpd_capabilities::profile::ProfileName;
 use serde::{Deserialize, Serialize};
 
+/// Serde default for [`ProfileState::ac_max_performance`]: the lock is on
+/// unless a `state.toml` explicitly stored `false`.
+fn default_ac_max_performance() -> bool {
+    true
+}
+
 /// Snapshot of the user's **battery (DC)** power + cooling preferences,
 /// captured the moment AC is plugged in and restored verbatim on unplug.
 ///
@@ -51,6 +57,18 @@ pub struct ProfileState {
     /// AC plug event captures it. See [`DcSnapshot`].
     #[serde(default)]
     pub last_dc_state: Option<DcSnapshot>,
+
+    /// **The "lock to maximum performance on AC" preference** (toggleable at
+    /// runtime via `set_ac_max_performance`, persisted so it survives a
+    /// reboot). When `true` (the default), plugging in pins **Performance /
+    /// Max TDP / Aggressive** and rejects power/cooling writes until unplug;
+    /// the battery (DC) prefs are restored on unplug. When `false`, AC is
+    /// fully manual — plugging/unplugging changes nothing and everything
+    /// stays editable. Seeded on first boot from
+    /// `DaemonConfig::default_ac_max_performance`. `#[serde(default = …)]`
+    /// to `true` so a `state.toml` predating this field loads as "locked".
+    #[serde(default = "default_ac_max_performance")]
+    pub ac_max_performance: bool,
 
     /// Active custom fan-curve selection. `None` means the firmware's
     /// automatic curve is in charge (the daemon is not managing the fan

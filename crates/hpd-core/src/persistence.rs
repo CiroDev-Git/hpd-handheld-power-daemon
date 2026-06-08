@@ -110,6 +110,7 @@ mod tests {
             fan_follows_tdp: true,
             last_dc_state: None,
             active_fan_curve: None,
+            ac_max_performance: true,
             ac_locked: false,
         }
     }

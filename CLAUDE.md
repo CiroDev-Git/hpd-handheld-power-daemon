@@ -180,46 +180,52 @@ handlers or monitors.
 
 ### AC = maximum performance (the lock)
 
-When `RuntimeConfig::ac_max_performance` is on (**default**), being on wall
-power means "run flat out, hands off":
+The **`ProfileState::ac_max_performance`** preference (persisted, default on,
+toggleable at runtime) decides whether wall power means "run flat out, hands
+off." It is seeded on first boot from `DaemonConfig::default_ac_max_performance`,
+then lives in `state.toml` and is flipped via `set_ac_max_performance`
+(`hpdctl ac-lock on|off`, or the plugin toggle) — **not** a config file edit.
 
-- **Force on plug.** `Transition::AcPowerChanged(true)` snapshots the user's
-  battery state into `ProfileState::last_dc_state` (a `DcSnapshot` of TDP +
-  power mode + cooling + auto-cooling), then `force_ac_max_performance` pins
-  **Performance / Max TDP / Aggressive** (`fan_follows_tdp` off — the curve is
-  pinned, not inferred). Effects order: power → profile → fan curve **last**
-  (writing `platform_profile` can drop the EC curve). With the flag off, plug
-  only ramps the TDP to Max (the historic behaviour) and nothing locks.
-- **Restore on unplug.** `restore_dc_state` re-applies the `last_dc_state`
-  snapshot (diff-only effects). **With no snapshot** — the very first unplug
-  after a device that was *installed / booted while plugged in* (so no
-  battery→AC edge ever captured one) — it synthesizes **quiet battery
-  defaults**: the **Balanced** TDP preset *and* re-engages auto-cooling
-  (`fan_follows_tdp = true`) so the fan curve drops from the forced
-  `Aggressive` to match the lower TDP, rather than leaving the fans roaring on
-  battery. The power mode is left at `Performance` (the daemon's always-on
-  default — the configured `default_platform_profile`), so the SPL stays
-  usable. Both unplug paths reduce on an `is_ac_connected = false` view so the
-  lock doesn't gate their own internal `SetPreset`. From the next plug cycle
-  on, a real snapshot exists and round-trips exactly.
+- **Force on plug (lock on).** `Transition::AcPowerChanged(true)` snapshots the
+  user's battery state into `ProfileState::last_dc_state` (a `DcSnapshot` of
+  TDP + power mode + cooling + auto-cooling), then `force_ac_max_performance`
+  pins **Performance / Max TDP / Aggressive** (`fan_follows_tdp` off — the
+  curve is pinned, not inferred). Effects order: power → profile → fan curve
+  **last** (writing `platform_profile` can drop the EC curve).
+- **Lock off = fully manual.** With the preference off, `AcPowerChanged` (both
+  edges) is a **no-op** — plugging/unplugging changes nothing and everything
+  stays editable.
+- **Restore on unplug (lock on).** `restore_dc_state` re-applies the
+  `last_dc_state` snapshot (diff-only effects) and **clears it**
+  (`last_dc_state = None`) so a later manual-mode unplug can't replay a stale
+  snapshot. **With no snapshot** — the first unplug after a device *installed /
+  booted while plugged in* — it synthesizes **quiet battery defaults**: the
+  **Balanced** TDP preset *and* re-engages auto-cooling (`fan_follows_tdp =
+  true`) so the curve drops from the forced `Aggressive`, rather than leaving
+  the fans roaring on battery. The power mode is left at `Performance` (the
+  daemon's always-on default). Both unplug paths reduce on an `is_ac_connected
+  = false` view so the lock doesn't gate their own internal `SetPreset`.
 - **The lock.** While `is_ac_connected && ac_max_performance`, the reducer
   treats the seven user power/cooling writes (`SetSpl`, `SetPreset`,
   `SetEnvelope`, `SetProfile`, `SetCoolingLevel`, `EnableFanAuto`,
   `ResetFanCurve`) as **no-ops** (`is_locked_write`). The D-Bus setters also
-  `reject_if_locked()` up-front so the caller gets an immediate error.
-  `ChargeThresholdChanged` is **never** gated — the battery limit stays
-  editable. `Sync*` rollbacks, AC/suspend/boot and `ConfigReload` are never
-  gated.
+  `reject_if_locked()` up-front. `ChargeThresholdChanged` and
+  `SetAcMaxPerformance` are **never** gated — the battery limit stays editable,
+  and the toggle is how you *release* the lock. `Sync*` rollbacks,
+  AC/suspend/boot and `ConfigReload` are never gated.
+- **The toggle (`SetAcMaxPerformance`).** Applied immediately: turning it
+  **on** while plugged snapshots the current state (if `last_dc_state` is
+  `None`) and forces max; turning it **off** while plugged restores the
+  snapshot (so you are not stranded at max) and unlocks. On battery it just
+  stores the preference (applies on the next plug).
 - **Boot/resume on AC** re-asserts the forced-max policy via the
   `SystemResumed` arm (no plug edge fires at boot), so a device that boots or
   resumes straight into AC is already pinned + locked.
-- **Reported state.** `ProfileState::ac_locked` is **derived, never
-  persisted** (`#[serde(skip)]`): the executor recomputes it
-  (`is_ac_connected && config.ac_max_performance`) on every state publish and
-  on `ConfigReload`, and `hpd-dbus` exposes it as the `AcLocked` property so
-  the plugin can disable its controls live. A live SIGHUP toggle of the flag
-  updates `AcLocked` but does **not** force/restore mid-session — that applies
-  on the next AC edge.
+- **Reported state.** `ProfileState::ac_locked` is **derived, never persisted**
+  (`#[serde(skip)]`): the executor recomputes it (`is_ac_connected &&
+  ac_max_performance`) on every state publish, and `hpd-dbus` exposes both
+  `AcMaxPerformance` (the preference) and `AcLocked` (the live lock) as
+  properties so the plugin can render its toggle and disable controls live.
 
 State is persisted to **`/var/lib/hpd/state.toml`** via atomic
 temp-file + rename. Under systemd the path is resolved from the
@@ -407,7 +413,7 @@ to override defaults; existing `config.toml` is never overwritten by
 | SIGTERM    | systemd `stop` / `restart`   | Same as SIGINT.                                                                 |
 | SIGHUP     | `systemctl reload` / manual  | Reload `/etc/hpd/config.toml`; push `ConfigReload(new.to_runtime())`. Daemon keeps running. |
 | Resume     | logind `PrepareForSleep`     | Push `Transition::SystemResumed`; reducer re-applies envelope + profile + charge threshold (kernel may have lost them across suspend). |
-| AC plug    | udev `power_supply` event    | Push `Transition::AcPowerChanged(true/false)`. **On plug** the reducer snapshots the user's battery (DC) state into `last_dc_state` and — when `ac_max_performance` is on (default) — forces **Performance / Max TDP / Aggressive** and sets the lock; **on unplug** it restores the `last_dc_state` snapshot. With `ac_max_performance = false` it only bumps the TDP to Max (historic behaviour). See "AC = maximum performance" below. |
+| AC plug    | udev `power_supply` event    | Push `Transition::AcPowerChanged(true/false)`. **When the `ac_max_performance` preference is on (default):** on plug, snapshot the battery (DC) state into `last_dc_state` and force **Performance / Max TDP / Aggressive** + lock; on unplug, restore the snapshot. **When off:** both edges are a no-op (AC fully manual). See "AC = maximum performance" below. |
 
 The daemon awaits the executor join after sending `Shutdown` with a
 5s timeout cap (`tokio::time::timeout`), well below systemd's

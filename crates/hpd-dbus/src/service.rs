@@ -260,6 +260,38 @@ impl PowerDaemonInterface {
         self.state_rx.borrow().ac_locked
     }
 
+    /// The **"lock to maximum performance on AC"** preference (toggleable,
+    /// persisted). `true` (default) = plugging in pins Performance / Max /
+    /// Aggressive and locks the controls; `false` = AC is fully manual.
+    /// Distinct from `AcLocked`, which is the *live* lock state
+    /// (`ac_max_performance && on AC`). Emits `PropertiesChanged` when toggled.
+    #[zbus(property)]
+    async fn ac_max_performance(&self) -> bool {
+        self.state_rx.borrow().ac_max_performance
+    }
+
+    /// Toggle the "lock to maximum performance on AC" preference. Applied
+    /// immediately: enabling while plugged in forces max + locks; disabling
+    /// while plugged in restores your battery state and unlocks. **Not**
+    /// rejected while locked — this is how you release the lock.
+    ///
+    /// `polkit` action: `dev.cirodev.hpd.set-profile` (`auth_admin_keep`).
+    async fn set_ac_max_performance(
+        &self,
+        enabled: bool,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        debug!(
+            "D-Bus received request to set ac_max_performance: {}",
+            enabled
+        );
+        if !polkit::check(conn, &header, PolkitAction::SetProfile).await {
+            return Err(auth_denied());
+        }
+        self.send(Transition::SetAcMaxPerformance(enabled)).await
+    }
+
     /// Set the ACPI `platform_profile` manually (`power-saver`,
     /// `balanced`, `performance`, or a custom vendor string) — the EPP /
     /// power-bias lever, surfaced to users as "Power mode". Decoupled from
@@ -512,6 +544,7 @@ mod tests {
             last_dc_state: None,
             active_fan_curve: None,
             is_ac_connected: false,
+            ac_max_performance: true,
             ac_locked: false,
         }
     }

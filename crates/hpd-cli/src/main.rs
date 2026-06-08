@@ -143,6 +143,21 @@ enum Commands {
         #[clap(subcommand)]
         action: PowerAction,
     },
+    /// Lock to maximum performance while on AC (on / off)
+    ///
+    /// When ON (the default), plugging in the charger pins Performance /
+    /// Max TDP / Aggressive cooling and LOCKS those controls until you
+    /// unplug — the battery charge limit stays editable. When OFF, AC is
+    /// fully manual (plugging in changes nothing). Run with no argument to
+    /// print the current preference + live lock state. The setting persists
+    /// across reboots.
+    AcLock {
+        #[arg(
+            value_parser = ["on", "off"],
+            help = "on = lock max on AC; off = fully manual; omit to show state"
+        )]
+        state: Option<String>,
+    },
     /// Install the polkit policy so privileged commands work
     ///
     /// Fixes the "Permission denied / AuthFailed" you hit when the daemon
@@ -442,6 +457,36 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
                     other => other,
                 };
                 println!("🔧 Power mode: {} ({})", friendly, profile);
+            }
+        },
+        Commands::AcLock { state } => match state.as_deref() {
+            Some(s @ ("on" | "off")) => {
+                let enabled = s == "on";
+                if let Err(e) = proxy.set_ac_max_performance(enabled).await {
+                    eprintln!("❌ Error setting AC lock: {}", e);
+                } else if enabled {
+                    println!(
+                        "🔒 AC lock ENABLED — plugging in now pins max performance (Performance / Max / Aggressive) and locks the controls. The battery charge limit stays editable."
+                    );
+                } else {
+                    println!(
+                        "🔓 AC lock DISABLED — AC is now fully manual; plugging in changes nothing."
+                    );
+                }
+            }
+            None => {
+                let pref = proxy.ac_max_performance().await?;
+                let live = proxy.ac_locked().await?;
+                println!(
+                    "🔌 AC lock: {} (preference) · currently {}",
+                    if pref { "on" } else { "off" },
+                    if live { "LOCKED (on AC)" } else { "unlocked" }
+                );
+            }
+            // clap's value_parser restricts to on/off/None, so this is unreachable.
+            Some(other) => {
+                eprintln!("❌ Unknown argument '{}'. Use: on, off, or omit.", other);
+                process::exit(2);
             }
         },
         Commands::FixPolkit { apply } => {

@@ -327,7 +327,7 @@ enum small and keeps zbus's signal machinery out of the reducer.
 | `SIGTERM`  | `systemctl stop`/`restart`  | Same as SIGINT.                                                                                                                                                                          |
 | `SIGHUP`   | `systemctl reload`          | Re-read `/etc/hpd/config.toml`; push `ConfigReload(new.to_runtime())`. Startup-only fields (`state_path`, `channel_capacity`, `default_charge_threshold`) are logged as "needs restart". |
 | Resume     | logind `PrepareForSleep`    | Push `SystemResumed`; reducer re-applies envelope + profile + charge threshold (kernel may have lost them across suspend).                                                               |
-| AC plug    | udev `power_supply`         | Push `AcPowerChanged(b)`. On plug the reducer snapshots the battery state into `last_dc_state` and (default `ac_max_performance`) forces **Performance / Max / Aggressive** + sets the `AcLocked` lock; on unplug it restores the snapshot. Flag off → only bumps TDP to Max.                       |
+| AC plug    | udev `power_supply`         | Push `AcPowerChanged(b)`. With the `ac_max_performance` preference on (default): on plug, snapshot the battery state into `last_dc_state` + force **Performance / Max / Aggressive** + set the `AcLocked` lock; on unplug, restore the snapshot. With it off: both edges are a no-op (AC fully manual). Toggle via `set_ac_max_performance` / `hpdctl ac-lock`.                       |
 
 ### Shutdown safety
 
@@ -428,11 +428,14 @@ pub is_ac_connected: bool,
 pub ac_locked: bool, // derived: is_ac_connected && config.ac_max_performance
 ```
 
-`ac_locked` is a pure function of the (re-queried) AC state and live config,
-so it is recomputed by the executor on every publish and surfaced over D-Bus
-as the **`AcLocked`** property — it never lives on disk. (The persisted
-`last_dc_state: Option<DcSnapshot>` does carry the user's battery TDP / power
-mode / cooling so the unplug restore survives a reboot.)
+`ac_locked` is a pure function of the (re-queried) AC state and the
+persisted `ac_max_performance` preference, so it is recomputed by the
+executor on every publish and surfaced over D-Bus as the **`AcLocked`**
+property — it never lives on disk. (The persisted `last_dc_state:
+Option<DcSnapshot>` carries the user's battery TDP / power mode / cooling so
+the unplug restore survives a reboot, and the persisted toggleable
+`ac_max_performance` preference — seeded from `default_ac_max_performance` —
+is exposed as the **`AcMaxPerformance`** property.)
 
 The AC state is **re-queried from hardware on every boot** rather
 than trusted from disk. Stale persisted state could otherwise lie to

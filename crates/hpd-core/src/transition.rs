@@ -51,6 +51,14 @@ pub enum Transition {
     /// profile and charge threshold so the kernel sees the daemon's
     /// view of the world again.
     SystemResumed,
+    /// Toggle the **"lock to maximum performance on AC"** preference
+    /// (`ProfileState::ac_max_performance`). Persisted. Applied immediately:
+    /// turning it **on** while plugged in snapshots the current state and
+    /// forces Performance / Max / Aggressive + lock; turning it **off** while
+    /// plugged in restores the battery snapshot (if any) and unlocks. On
+    /// battery it just stores the preference. Never gated by the lock — it is
+    /// how you *release* the lock.
+    SetAcMaxPerformance(bool),
     /// Re-bind cooling-profile inference to the TDP envelope.
     EnableFanAuto,
     /// Hand fan control back to the firmware's automatic curve.

@@ -292,9 +292,12 @@ ruido de traqueteo/rozamiento (problema físico).
   de carga de batería sigue ajustable** — es lo único que tiene sentido
   cambiar enchufado. Al **desenchufar**, se restauran tus ajustes de batería
   (DC) exactos: TDP, Power mode y cooling.
-  - ¿No querés el bloqueo? Poné `ac_max_performance = false` en
-    `/etc/hpd/config.toml` (y `sudo systemctl reload hpd`). Con eso, enchufar
-    solo sube el TDP a Max y no bloquea nada — el comportamiento histórico.
+  - **¿Querés apagar el bloqueo?** Corré **`hpdctl ac-lock off`** (o el toggle
+    "Lock to max on AC" en Settings del plugin). Con eso, **AC queda totalmente
+    manual** — enchufar no cambia nada y todos los controles quedan editables.
+    Lo volvés a prender con `hpdctl ac-lock on`. La preferencia persiste entre
+    reinicios (sin editar config). `hpdctl ac-lock` sin argumento muestra el
+    estado actual.
   - **¿Instalado (o arrancado por primera vez) estando enchufado?** El daemon
     arranca bloqueado en máximo rendimiento, igual que si acabaras de
     enchufar. La **primera vez que desenchufás**, como todavía no registró una

@@ -290,10 +290,12 @@ or a rattling/grinding noise (physical issue).
   charge limit stays adjustable** — it's the one setting that still makes
   sense to change while plugged in. When you **unplug**, your exact battery
   (DC) settings — TDP, Power mode and cooling — are restored.
-  - Don't want the lock? Set `ac_max_performance = false` in
-    `/etc/hpd/config.toml` (then `sudo systemctl reload hpd`). With it off,
-    plugging in only raises the TDP to Max and nothing is locked — the
-    historic behaviour.
+  - **Want to turn the lock off?** Run **`hpdctl ac-lock off`** (or flip the
+    "Lock to max on AC" toggle in the plugin's Settings). With it off, **AC
+    is fully manual** — plugging in changes nothing and every control stays
+    editable. Turn it back on with `hpdctl ac-lock on`. The setting persists
+    across reboots (no config file edit needed). `hpdctl ac-lock` with no
+    argument prints the current state.
   - **Installed (or first booted) while plugged in?** The daemon starts
     locked at maximum performance, exactly as if you'd just plugged in. The
     **first time you unplug**, since it never recorded a battery preference
