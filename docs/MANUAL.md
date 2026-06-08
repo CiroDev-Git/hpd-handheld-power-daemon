@@ -304,8 +304,14 @@ or a rattling/grinding noise (physical issue).
     After that first unplug your settings are remembered normally.
 - **Resume from suspend:** hpd re-applies your power, platform profile,
   charge limit and fan curve — fixing the bug where fans could blast at
-  full speed after waking. If you resume on AC, the maximum-performance lock
-  is re-asserted.
+  full speed after waking. It also **checks the real charger state on
+  wake** (in case you plugged or unplugged while it was asleep): resume on
+  AC re-asserts the maximum-performance lock; resume on battery brings back
+  your battery settings.
+- **Plugged/unplugged while off or asleep:** the same applies on a cold
+  boot. If you shut down plugged in and boot up on battery, hpd comes back
+  to your **battery** settings (not stuck at max); boot up plugged in and it
+  starts locked at max. The charger state the device actually has wins.
 - **Reboot:** the daemon re-applies your full saved state (TDP, power
   mode, charge limit, fan curve) to the hardware on startup, so what it
   reports always matches the device — even if a cold boot reset the

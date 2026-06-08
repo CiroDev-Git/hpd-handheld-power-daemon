@@ -477,3 +477,45 @@ async fn test_executor_shutdown_persists_state_and_exits_cleanly() {
 
     let _ = std::fs::remove_file(&path);
 }
+
+#[tokio::test]
+async fn test_resume_rereads_ac_state_from_hardware() {
+    // Scenario C: the in-memory state says "on battery", but the hardware
+    // (MockBackend) reports AC connected — as if the charger was plugged while
+    // the device was suspended and the udev event was missed. SystemResumed
+    // must re-read the real AC from hardware and apply the AC policy (force
+    // max + lock), not trust the stale in-memory value.
+    let backend = MockBackend::new(initial_state().power_target.clone(), limits());
+    backend.ac_connected.store(true, Ordering::SeqCst); // hardware: on AC
+
+    let path = fresh_temp_path("resume_ac");
+    let persister = StatePersister::new(&path);
+    let (tx, rx) = mpsc::channel(32);
+    // initial_state() is on battery (is_ac_connected = false), lock on.
+    let (executor, mut state_rx) = Executor::new(
+        backend,
+        initial_state(),
+        limits(),
+        config(),
+        rx,
+        tx.clone(),
+        persister,
+    );
+    let exec_handle = tokio::spawn(executor.run());
+
+    tx.send(Transition::SystemResumed).await.unwrap();
+    let settled = wait_state(&mut state_rx, |s| {
+        s.is_ac_connected && s.power_target.spl == PowerMilliwatts(35_000)
+    })
+    .await;
+
+    assert!(
+        settled.is_ac_connected,
+        "AC re-read from hardware on resume"
+    );
+    assert!(settled.ac_locked, "locked on AC after the re-read");
+    assert_eq!(settled.power_target.spl, PowerMilliwatts(35_000));
+
+    exec_handle.abort();
+    let _ = std::fs::remove_file(&path);
+}
