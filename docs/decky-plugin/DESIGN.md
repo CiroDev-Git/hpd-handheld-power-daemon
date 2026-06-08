@@ -287,8 +287,7 @@ hpd-decky-plugin/
 │   ├── cache.py                 # StateCache
 │   ├── bridge.py                # PropertiesChanged → frontend events
 │   ├── models.py                # @dataclass mirrors of D-Bus types
-│   ├── errors.py                # typed error taxonomy
-│   └── settings.py              # plugin-local prefs (decky Settings)
+│   └── errors.py                # typed error taxonomy
 ├── src/                         # frontend
 │   ├── index.tsx                # plugin entry, registers QAM panel
 │   ├── api/
@@ -430,19 +429,18 @@ events from the Python backend to the React frontend. The bridge:
   - `hpd:state` — full `StateSnapshot` (state, limits, capabilities)
   - `hpd:health` — `HealthSnapshot` changes only
 
-### 6.5 Settings (plugin-local)
+### 6.5 Settings (plugin-local) — removed in plugin 2.10.0
 
-Stored via Decky's `Settings` helper (a JSON file under
-`~/homebrew/settings/hpd-decky-plugin/`):
-- `rememberPresetAcrossReboots: bool` (default `false`)
-- `rememberCharge: bool` (default `false`)
-- `confirmTdpAbove: number | null` (default 25 W; warn if user drags
-  the slider above this)
-- `theme: 'auto' | 'light' | 'dark'` (default `auto`)
-
-These are **plugin preferences**, distinct from daemon state. The
-daemon owns hardware state; the plugin owns "how do I want to
-present it to you".
+The plugin no longer stores any preferences of its own. Its only setting,
+`confirmTdpAbove` (a confirm dialog when the TDP slider crossed a watt
+threshold), guarded too narrow a path — the Max preset and the AC auto-max
+both set a high TDP without a prompt — so it and the whole settings-
+persistence subsystem (`backend/settings.py`, the `get_settings` /
+`update_settings` IPC, the TS settings store, the versioned `config.json`)
+were removed in plugin 2.10.0. The `SettingsPanel` now hosts only the
+**"Lock to max on AC" toggle**, which is a **daemon** preference
+(`SetAcMaxPerformance` over D-Bus). The daemon owns hardware state; the
+plugin keeps nothing of its own.
 
 ---
 
@@ -812,14 +810,15 @@ tooltip explaining why ("Hardware limits unknown — retry needed").
 - **No data** (after timeout): controls render disabled with an
   explanatory note; never with `0 W` or `quiet` as a stand-in.
 
-### 12.4 Confirmation prompts
+### 12.4 Soft warnings (inline, no modal)
 
-A confirmation modal appears when:
-- TDP slider crosses `settings.confirmTdpAbove` (default 25 W).
-- Charge threshold is set below 60 %. **The daemon allows down to
-  20 %**; the plugin only *warns* (does not clamp) below 60 % and
-  shows a one-liner explaining that very low thresholds shorten
-  realised battery capacity. The user can always proceed.
+There are **no confirmation modals** (the "Confirm TDP above" one was removed
+in plugin 2.10.0 with the settings subsystem). The one remaining nudge is
+inline and non-blocking:
+- **Charge threshold below 60 %.** The daemon allows down to 20 %; the plugin
+  only *warns* (does not clamp) via a one-liner in the slider's **description**
+  that very low thresholds shorten realised battery capacity. The user can
+  always proceed — nothing gates the write.
 
 ### 12.5 Optimistic updates with rollback
 
@@ -948,23 +947,15 @@ question "what disables this?" in the description.
 
 Two distinct configuration surfaces:
 
-### 16.1 User-facing plugin preferences (`SettingsPanel`)
+### 16.1 The `SettingsPanel`
 
-Persisted via Decky's `Settings` module. Schema is **versioned** in
-the file:
-
-```json
-{
-  "version": 1,
-  "rememberPresetAcrossReboots": false,
-  "rememberCharge": false,
-  "confirmTdpAbove": 25,
-  "theme": "auto"
-}
-```
-
-A `migrate(from, to)` function in `backend/settings.py` handles
-schema bumps. Migrations are idempotent and never destructive.
+**The plugin keeps no preferences of its own** — the whole settings-
+persistence subsystem (`backend/settings.py`, the `get_settings` /
+`update_settings` IPC, the TS settings store, the versioned `config.json`)
+was removed in plugin 2.10.0 along with its only consumer, "Confirm TDP
+above". The `SettingsPanel` now hosts just the **"Lock to max on AC" toggle**,
+which is a **daemon** preference (`SetAcMaxPerformance`, persisted by the
+daemon in `state.toml`). The plugin writes nothing under `~/homebrew/settings/`.
 
 ### 16.2 Daemon configuration
 
@@ -1318,7 +1309,6 @@ single source of truth for which concern.)
 | Error taxonomy                    | `backend/errors.py`, `src/api/errors.ts` |
 | Capability rules                  | `src/store/selectors.ts`            |
 | Health detection                  | `backend/health.py`                 |
-| Settings schema + migrations      | `backend/settings.py`               |
 | Bus name / object path constants  | `backend/client.py` (only)          |
 | Polkit action IDs (consumed)      | `docs/COMPATIBILITY.md` (informational) |
 | User-facing messages              | `src/utils/errorMessages.ts`        |
