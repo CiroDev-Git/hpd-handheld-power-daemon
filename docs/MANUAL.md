@@ -294,6 +294,12 @@ or a rattling/grinding noise (physical issue).
     `/etc/hpd/config.toml` (then `sudo systemctl reload hpd`). With it off,
     plugging in only raises the TDP to Max and nothing is locked — the
     historic behaviour.
+  - **Installed (or first booted) while plugged in?** The daemon starts
+    locked at maximum performance, exactly as if you'd just plugged in. The
+    **first time you unplug**, since it never recorded a battery preference
+    yet, it lands on quiet defaults — **Balanced TDP with auto-cooling** (so
+    the fans calm down) — instead of staying on the loud Aggressive curve.
+    After that first unplug your settings are remembered normally.
 - **Resume from suspend:** hpd re-applies your power, platform profile,
   charge limit and fan curve — fixing the bug where fans could blast at
   full speed after waking. If you resume on AC, the maximum-performance lock

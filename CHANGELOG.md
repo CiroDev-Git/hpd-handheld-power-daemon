@@ -40,8 +40,20 @@ not part of the published repository.
     `last_dc_state` — a full `DcSnapshot` (TDP + power mode + cooling +
     auto-cooling) so the unplug restore brings back every lever, not just the
     watts. Old `state.toml` files load cleanly (the field defaults to "no
-    snapshot"; the first unplug after upgrade falls back to the Balanced
-    preset).
+    snapshot").
+  - **Cold install / first boot on AC.** A device installed or first booted
+    while plugged in starts locked at max (no battery snapshot exists yet).
+    The **first unplug** synthesizes quiet battery defaults — **Balanced TDP
+    with auto-cooling re-engaged** — so the fan curve drops from the forced
+    `Aggressive` instead of leaving the fans loud on battery (the power mode
+    stays at the `Performance` default so the SPL is usable). From the next
+    plug cycle on, a real snapshot round-trips exactly.
+
+### Internal
+
+- Factored the smart-mode SPPT/FPPT envelope maths into one
+  `derive_boosted_envelope` helper shared by `Transition::SetSpl` and the new
+  forced-max path (no behaviour change).
 
 ## [2.6.0] — 2026-06-07
 

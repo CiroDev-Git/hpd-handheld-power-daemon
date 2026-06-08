@@ -90,16 +90,7 @@ pub fn reduce(
                 )));
             }
 
-            let sppt_mw =
-                ((spl.0 as f32 * config.sppt_factor) as u32).min(device_limits.sppt_max.0);
-            let fppt_mw =
-                ((spl.0 as f32 * config.fppt_factor) as u32).min(device_limits.fppt_max.0);
-
-            let new_target = PowerEnvelopeTarget {
-                spl,
-                sppt: PowerMilliwatts(sppt_mw),
-                fppt: Some(PowerMilliwatts(fppt_mw)),
-            };
+            let new_target = derive_boosted_envelope(spl, device_limits, config);
 
             validate_power_envelope(&new_target)?;
 
@@ -218,12 +209,20 @@ pub fn reduce(
                 );
                 restore_dc_state(state, &snapshot)
             } else {
-                info!(preset = %TdpPreset::Balanced, "Charger unplugged: no saved DC state, applying default preset");
+                info!(preset = %TdpPreset::Balanced, "Charger unplugged: no saved DC state, applying quiet defaults (Balanced + auto cooling)");
+                // No battery snapshot exists — this is the very first unplug
+                // after a cold install / boot that happened on AC. Synthesize
+                // sane battery defaults instead of leaving the forced-max
+                // levers in place: Balanced TDP, and re-engage auto-cooling so
+                // the fan curve drops from the forced Aggressive to match the
+                // lower TDP (otherwise the fans would stay loud on battery).
+                //
                 // Reduce on an already-unplugged view so the AC lock (still
                 // showing `is_ac_connected = true` on `state`) doesn't gate
                 // this internal SetPreset into a no-op.
                 let mut dc_view = state.clone();
                 dc_view.is_ac_connected = false;
+                dc_view.fan_follows_tdp = true;
                 reduce(
                     &dc_view,
                     Transition::SetPreset(TdpPreset::Balanced),
@@ -396,6 +395,26 @@ fn is_locked_write(transition: &Transition) -> bool {
     )
 }
 
+/// Derive the full power envelope for a given SPL by scaling SPPT/FPPT with
+/// the configured boost factors, each clamped to its hardware `*_max` rail.
+/// Single source of the "smart-mode" envelope maths shared by
+/// `Transition::SetSpl` and [`force_ac_max_performance`].
+fn derive_boosted_envelope(
+    spl: PowerMilliwatts,
+    device_limits: &PowerEnvelopeLimits,
+    config: &RuntimeConfig,
+) -> PowerEnvelopeTarget {
+    let sppt =
+        PowerMilliwatts(((spl.0 as f32 * config.sppt_factor) as u32).min(device_limits.sppt_max.0));
+    let fppt =
+        PowerMilliwatts(((spl.0 as f32 * config.fppt_factor) as u32).min(device_limits.fppt_max.0));
+    PowerEnvelopeTarget {
+        spl,
+        sppt,
+        fppt: Some(fppt),
+    }
+}
+
 /// Build the forced "AC = maximum performance" state: TDP at the hardware
 /// ceiling (with SPPT/FPPT derived via the boost factors), power mode
 /// `Performance`, cooling curve `Aggressive`, and auto-cooling off (the
@@ -409,16 +428,7 @@ fn force_ac_max_performance(
     device_limits: &PowerEnvelopeLimits,
     config: &RuntimeConfig,
 ) -> ReducerOutput {
-    let spl = device_limits.spl_max;
-    let sppt =
-        PowerMilliwatts(((spl.0 as f32 * config.sppt_factor) as u32).min(device_limits.sppt_max.0));
-    let fppt =
-        PowerMilliwatts(((spl.0 as f32 * config.fppt_factor) as u32).min(device_limits.fppt_max.0));
-    let target = PowerEnvelopeTarget {
-        spl,
-        sppt,
-        fppt: Some(fppt),
-    };
+    let target = derive_boosted_envelope(device_limits.spl_max, device_limits, config);
     let profile = ProfileName::Performance;
     let curve = FanCurveSelection::Preset(FanCurvePreset::Aggressive);
 
@@ -797,13 +807,25 @@ mod tests {
     }
 
     #[test]
-    fn test_ac_unplugged_without_snapshot_applies_balanced_preset() {
-        // Cold case: no DC memory (e.g. booted while plugged, then unplugged).
-        // Fall back to the Balanced preset (midpoint of [7,35]W = 21W). The
-        // AC lock must NOT gate this internal restore.
+    fn test_ac_unplugged_without_snapshot_resets_to_quiet_defaults() {
+        // First unplug after a cold install / boot that happened on AC: no DC
+        // snapshot, and the levers are pinned at the forced max (Aggressive
+        // curve, auto-cooling off). The unplug must land on quiet battery
+        // defaults — Balanced TDP (midpoint of [7,35]W = 21W), auto-cooling
+        // re-engaged, and the curve dropped to match (Balanced) instead of
+        // leaving the fans roaring at Aggressive. The AC lock must NOT gate
+        // this internal restore.
         let mut state = setup_state();
         state.is_ac_connected = true;
         state.last_dc_state = None;
+        state.power_target = PowerEnvelopeTarget {
+            spl: PowerMilliwatts(35_000),
+            sppt: PowerMilliwatts(40_250),
+            fppt: Some(PowerMilliwatts(43_750)),
+        };
+        state.active_profile = ProfileName::Performance;
+        state.active_fan_curve = Some(FanCurveSelection::Preset(FanCurvePreset::Aggressive));
+        state.fan_follows_tdp = false;
 
         let out = reduce(
             &state,
@@ -812,8 +834,19 @@ mod tests {
             &setup_config(),
         )
         .unwrap();
+
         assert!(!out.new_state.is_ac_connected);
         assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(21_000));
+        assert!(
+            out.new_state.fan_follows_tdp,
+            "auto-cooling must re-engage on the no-snapshot unplug"
+        );
+        // 21W on [7,35] → fraction 0.5 → Balanced curve (no longer Aggressive).
+        assert_eq!(
+            out.new_state.active_fan_curve,
+            Some(FanCurveSelection::Preset(FanCurvePreset::Balanced)),
+            "the forced Aggressive curve must drop to match the lower TDP"
+        );
     }
 
     // ---------- SystemResumed ----------
@@ -1411,6 +1444,49 @@ mod tests {
         );
         assert!(out.effects.contains(&Effect::ApplyChargeThreshold(75)));
         assert!(out.effects.contains(&Effect::PersistState));
+    }
+
+    #[test]
+    fn test_cold_install_on_ac_then_first_unplug() {
+        // End-to-end of the "installed while plugged in" scenario: a fresh
+        // install has no DC snapshot and boots on AC. The boot re-assert
+        // (SystemResumed) forces max + lock; the very first unplug lands on
+        // quiet battery defaults rather than the forced-max leftovers.
+        let limits = setup_limits();
+        let config = setup_config();
+
+        // Cold initial state: hardware-read values, on AC, no snapshot.
+        let mut cold = setup_state();
+        cold.is_ac_connected = true;
+        cold.last_dc_state = None;
+
+        // 1. Boot re-assert forces maximum performance.
+        let booted = reduce(&cold, Transition::SystemResumed, &limits, &config)
+            .unwrap()
+            .new_state;
+        assert_eq!(booted.power_target.spl, PowerMilliwatts(35_000));
+        assert_eq!(booted.active_profile, ProfileName::Performance);
+        assert_eq!(
+            booted.active_fan_curve,
+            Some(FanCurveSelection::Preset(FanCurvePreset::Aggressive))
+        );
+        assert!(booted.is_ac_connected);
+        assert!(
+            booted.last_dc_state.is_none(),
+            "boot re-assert does not fabricate a DC snapshot"
+        );
+
+        // 2. First unplug → quiet defaults (Balanced + auto-cooling).
+        let unplugged = reduce(&booted, Transition::AcPowerChanged(false), &limits, &config)
+            .unwrap()
+            .new_state;
+        assert!(!unplugged.is_ac_connected);
+        assert_eq!(unplugged.power_target.spl, PowerMilliwatts(21_000));
+        assert!(unplugged.fan_follows_tdp);
+        assert_eq!(
+            unplugged.active_fan_curve,
+            Some(FanCurveSelection::Preset(FanCurvePreset::Balanced))
+        );
     }
 
     #[test]

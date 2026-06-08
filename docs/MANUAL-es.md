@@ -295,6 +295,13 @@ ruido de traqueteo/rozamiento (problema físico).
   - ¿No querés el bloqueo? Poné `ac_max_performance = false` en
     `/etc/hpd/config.toml` (y `sudo systemctl reload hpd`). Con eso, enchufar
     solo sube el TDP a Max y no bloquea nada — el comportamiento histórico.
+  - **¿Instalado (o arrancado por primera vez) estando enchufado?** El daemon
+    arranca bloqueado en máximo rendimiento, igual que si acabaras de
+    enchufar. La **primera vez que desenchufás**, como todavía no registró una
+    preferencia de batería, cae en valores tranquilos — **TDP Balanced con
+    auto-cooling** (para que los fans se calmen) — en vez de quedarse con la
+    curva Aggressive ruidosa. Después de ese primer desenchufe, tus ajustes se
+    recuerdan normalmente.
 - **Volver de suspensión:** hpd re-aplica tu potencia, platform profile,
   tope de carga y curva de ventilador — arreglando el bug donde los fans
   arrancaban a tope al despertar. Si volvés enchufado, el bloqueo de máximo

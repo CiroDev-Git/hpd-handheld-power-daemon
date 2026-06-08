@@ -191,9 +191,17 @@ power means "run flat out, hands off":
   (writing `platform_profile` can drop the EC curve). With the flag off, plug
   only ramps the TDP to Max (the historic behaviour) and nothing locks.
 - **Restore on unplug.** `restore_dc_state` re-applies the `last_dc_state`
-  snapshot (diff-only effects); with no snapshot it falls back to the Balanced
-  preset. The fallback reduces on an `is_ac_connected = false` view so the lock
-  doesn't gate its own internal `SetPreset`.
+  snapshot (diff-only effects). **With no snapshot** — the very first unplug
+  after a device that was *installed / booted while plugged in* (so no
+  battery→AC edge ever captured one) — it synthesizes **quiet battery
+  defaults**: the **Balanced** TDP preset *and* re-engages auto-cooling
+  (`fan_follows_tdp = true`) so the fan curve drops from the forced
+  `Aggressive` to match the lower TDP, rather than leaving the fans roaring on
+  battery. The power mode is left at `Performance` (the daemon's always-on
+  default — the configured `default_platform_profile`), so the SPL stays
+  usable. Both unplug paths reduce on an `is_ac_connected = false` view so the
+  lock doesn't gate their own internal `SetPreset`. From the next plug cycle
+  on, a real snapshot exists and round-trips exactly.
 - **The lock.** While `is_ac_connected && ac_max_performance`, the reducer
   treats the seven user power/cooling writes (`SetSpl`, `SetPreset`,
   `SetEnvelope`, `SetProfile`, `SetCoolingLevel`, `EnableFanAuto`,
