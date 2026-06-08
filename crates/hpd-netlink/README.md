@@ -14,8 +14,9 @@
 Subscribes to the udev `power_supply` subsystem and emits a
 [`hpd_core::transition::Transition::AcPowerChanged`] every time the
 charger is plugged or unplugged. The reducer uses that signal to
-snapshot the user's DC TDP on plug and restore it on unplug
-(`last_dc_target`).
+snapshot the user's battery (DC) state on plug and restore it on unplug
+(`last_dc_state`), and — with the `ac_max_performance` preference on
+(default) — to force / release the maximum-performance lock.
 
 On non-Linux targets the crate compiles to a single `async fn` that
 awaits a never-resolving future, so the daemon binary stays buildable

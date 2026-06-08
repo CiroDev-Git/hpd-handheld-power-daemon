@@ -22,13 +22,23 @@ enqueued.
 | `set_preset(s)`         | method   | `dev.cirodev.hpd.set-tdp`           |
 | `set_charge_threshold(y)`| method  | `dev.cirodev.hpd.set-charge`        |
 | `set_profile(s)`        | method   | `dev.cirodev.hpd.set-profile`       |
+| `set_cooling_level(s)`  | method   | `dev.cirodev.hpd.set-profile`       |
 | `set_fan_auto()`        | method   | `dev.cirodev.hpd.set-profile`       |
-| `get_hardware_limits()` | method   | —                                   |
+| `reset_fan_curve()`     | method   | `dev.cirodev.hpd.set-profile`       |
+| `set_ac_max_performance(b)` | method | `dev.cirodev.hpd.set-profile`     |
+| `get_hardware_limits()` / `get_version()` / `get_thermal_status()` / `get_fan_curve()` / `get_diagnostics()` / `get_power_conflicts()` | method | — |
 | `is_ac_connected()`     | method   | —                                   |
 | `current_spl`           | property | —                                   |
 | `active_profile`        | property | —                                   |
 | `charge_end_threshold`  | property | —                                   |
 | `auto_cooling`          | property | —                                   |
+| `fan_curve`             | property | —                                   |
+| `ac_connected`          | property | —                                   |
+| `ac_locked` / `ac_max_performance` | property | —                        |
+
+While `ac_locked` is `true` (on AC with the lock preference on), the six
+power/cooling setters reject with a "locked on AC" error;
+`set_charge_threshold` and `set_ac_max_performance` are exempt.
 
 Property changes emit `PropertiesChanged` signals — the daemon's
 `spawn_properties_changed_emitter` watches the executor's

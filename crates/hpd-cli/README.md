@@ -30,13 +30,15 @@ The CLI surface is stable under SemVer from `1.0.0` forward.
 | `hpdctl limits`               | Show hardware SPL/SPPT/FPPT ranges.         |
 | `hpdctl status`               | One-shot dashboard.                         |
 | `hpdctl monitor`              | Live dashboard, refreshed every second.     |
-| `hpdctl cool set <level>`     | Set cooling level: `silent`/`balanced`/`aggressive` (profile + fan curve). |
-| `hpdctl cool auto`            | Let the daemon pick the cooling level from TDP. |
+| `hpdctl cool set <level>`     | Set the **fan curve** (fans only): `silent`/`balanced`/`aggressive`. Decoupled from power. |
+| `hpdctl cool auto`            | Let the daemon pick the fan curve from TDP. |
 | `hpdctl cool reset`           | Hand the fans back to firmware control.     |
 | `hpdctl cool get`             | Show current cooling level and mode.        |
+| `hpdctl power set <mode>`     | Power mode / EPP: `performance`/`balanced`/`eco`. Default `performance`. |
+| `hpdctl ac-lock [on\|off]`    | Lock max performance on AC (on by default). No arg = show state. |
 
 Privileged subcommands (`tdp set`, `charge set`, `preset`, `cool set`,
-`cool auto`) are authorized by polkit. Members of the `wheel` group (the
+`cool auto`, `power set`, `ac-lock`) are authorized by polkit. Members of the `wheel` group (the
 device owner) run them without any prompt — including over SSH — via
 `package/polkit/49-hpd.rules`. Any other user gets a polkit prompt
 (answered once per 5-minute window for `set-profile`, per call for

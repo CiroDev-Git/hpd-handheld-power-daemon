@@ -30,8 +30,11 @@ Three principles enforced here:
    the new values. The reducer treats `ConfigReload` as a no-op.
 
 State is persisted via `persistence::save_atomic` (`tempfile +
-rename`). `ProfileState::is_ac_connected` is `#[serde(skip)]` —
-re-queried from hardware at boot, never trusted from disk.
+rename`). `ProfileState::is_ac_connected` and the derived
+`ac_locked` are `#[serde(skip)]` — re-queried/recomputed at boot,
+never trusted from disk; the persisted fields include `last_dc_state`
+(battery snapshot for the AC restore) and the `ac_max_performance`
+lock preference.
 
 ## Rollback contract
 
