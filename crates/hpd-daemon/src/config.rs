@@ -73,6 +73,15 @@ pub struct DaemonConfig {
     #[serde(deserialize_with = "de_platform_profile")]
     pub default_platform_profile: ProfileName,
 
+    /// First-boot seed for the **"lock to maximum performance on AC"**
+    /// preference (`ProfileState::ac_max_performance`). Defaults to `true`
+    /// (plugging in pins Performance / Max / Aggressive and locks the
+    /// power/cooling controls). Only consulted when no `state.toml` exists
+    /// yet — after that the live value is persisted in state and toggled at
+    /// runtime via `set_ac_max_performance` (the CLI / plugin toggle), so
+    /// this is a one-time default, not a runtime control. Startup-only.
+    pub default_ac_max_performance: bool,
+
     /// Hot-swappable subset: thresholds + SPPT/FPPT boost multipliers
     /// the reducer reads on every transition. Replaced wholesale on
     /// `Transition::ConfigReload(RuntimeConfig)`.
@@ -92,6 +101,7 @@ impl Default for DaemonConfig {
             default_charge_threshold: DEFAULT_CHARGE_THRESHOLD,
             default_fan_curve: Some(FanCurvePreset::Balanced),
             default_platform_profile: ProfileName::Performance,
+            default_ac_max_performance: true,
             runtime: RuntimeConfig::DEFAULT,
         }
     }
@@ -230,6 +240,7 @@ high_frac = 0.80
             default_charge_threshold: 90,
             default_fan_curve: Some(FanCurvePreset::Balanced),
             default_platform_profile: ProfileName::Performance,
+            default_ac_max_performance: true,
             runtime: RuntimeConfig {
                 profile_thresholds: ProfileThresholds {
                     low_frac: 0.25,

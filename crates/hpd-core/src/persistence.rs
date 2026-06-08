@@ -108,8 +108,10 @@ mod tests {
             is_ac_connected: true,
             charge_end_threshold: 80,
             fan_follows_tdp: true,
-            last_dc_target: None,
+            last_dc_state: None,
             active_fan_curve: None,
+            ac_max_performance: true,
+            ac_locked: false,
         }
     }
 
@@ -135,7 +137,7 @@ mod tests {
         assert_eq!(loaded.active_profile, saved.active_profile);
         assert_eq!(loaded.charge_end_threshold, saved.charge_end_threshold);
         assert_eq!(loaded.fan_follows_tdp, saved.fan_follows_tdp);
-        assert_eq!(loaded.last_dc_target, saved.last_dc_target);
+        assert_eq!(loaded.last_dc_state, saved.last_dc_state);
         assert!(
             !loaded.is_ac_connected,
             "is_ac_connected is #[serde(skip)]; must reset to false on load"

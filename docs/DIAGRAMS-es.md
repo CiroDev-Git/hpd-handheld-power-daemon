@@ -257,7 +257,7 @@ flowchart LR
         PYc["Backend Python"]
     end
     subgraph DAEMON["Daemon hpd"]
-        SET["Setters (gated por polkit):<br/>set_spl, set_preset, set_charge_threshold,<br/>set_cooling_level, set_fan_auto,<br/>reset_fan_curve, set_profile"]
+        SET["Setters (gated por polkit):<br/>set_spl, set_preset, set_charge_threshold,<br/>set_cooling_level, set_fan_auto,<br/>reset_fan_curve, set_profile, set_ac_max_performance"]
         GET["Lecturas (sin polkit):<br/>get_thermal_status, get_fan_curve,<br/>get_hardware_limits, is_ac_connected,<br/>get_diagnostics, get_power_conflicts"]
         PROP["Propiedades (PropertiesChanged):<br/>current_spl, active_profile,<br/>charge_end_threshold, auto_cooling, fan_curve"]
     end
@@ -323,12 +323,10 @@ sequenceDiagram
     participant UI as Plugin (UI)
 
     K->>D: evento power_supply (AC0 online=1)
-    D->>D: AcPowerChanged(true) → guarda TDP DC, sube a máx
-    Note over D: is_ac_connected NO emite señal
-    PY->>D: (poll cada ~10 s) is_ac_connected()
-    D-->>PY: true
-    PY-->>UI: push → indicador "⚡ AC"
-    Note over PY,UI: el TDP sí emite señal → el slider se actualiza al instante
+    D->>D: AcPowerChanged(true) → snapshot estado DC, fuerza Performance / Max / Aggressive, set AcLocked
+    D-->>PY: PropertiesChanged: AcConnected=true, AcLocked=true, CurrentSpl, ActiveProfile, FanCurve
+    PY-->>UI: indicador "⚡ AC" + deshabilita TDP / preset / power-mode / cooling (carga sigue editable)
+    Note over D,UI: mientras AcLocked, el daemon rechaza escrituras de potencia/cooling; al desenchufar restaura el snapshot DC
 ```
 
 ### 3.5 Caso de uso — cambio externo (hpdctl en una terminal)
@@ -432,13 +430,15 @@ Cómo se llama lo mismo en cada lado (todo termina en el daemon):
 | Preset de potencia | `preset eco/balanced/max` | `SetPreset(s)` | botones Eco/Balanced/Max | `set-tdp` |
 | **Cooling (ventilador)** | `cool set <nivel>` | `SetCoolingLevel(s)` | selector Cooling | `set-profile` |
 | Cooling automático | `cool auto` | `SetFanAuto()` | toggle Auto | `set-profile` |
-| Cooling a firmware | `cool reset` | `ResetFanCurve()` | botón Reset | `set-fan-curve` |
+| Cooling a firmware | `cool reset` | `ResetFanCurve()` | botón Reset | `set-profile` |
 | **Power mode (avanzado)** | `power set <modo>` | `SetProfile(s)` | Avanzado → Power mode | `set-profile` |
+| **AC lock** | `ac-lock on/off` | `SetAcMaxPerformance(b)` | toggle en Settings | `set-profile` |
 | **Batería** | `charge set <%>` | `SetChargeThreshold(y)` | control de batería | `set-charge` |
 | Ver temps/RPM/W | `status` / `monitor` | `GetThermalStatus()` | telemetría (poll) | — |
 | Ver curva | `cool curve` | `GetFanCurve()` | gráfico | — |
 | Ver rango HW | `limits` | `GetHardwareLimits()` | rango del slider | — |
 | Ver AC | `status` | `AcConnected` (prop) / `IsAcConnected()` | indicador (reactivo) | — |
+| Ver AC lock | `ac-lock` | `AcLocked` / `AcMaxPerformance` (props) | banner + toggle en Settings | — |
 | Salud / polkit | `doctor` | `GetDiagnostics()` | banner Setup | — |
 | Rivales | `doctor` | `GetPowerConflicts()` | banner Conflicto | — |
 

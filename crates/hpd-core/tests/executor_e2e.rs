@@ -69,8 +69,10 @@ fn initial_state() -> ProfileState {
         is_ac_connected: false,
         charge_end_threshold: 80,
         fan_follows_tdp: true,
-        last_dc_target: None,
+        last_dc_state: None,
         active_fan_curve: None,
+        ac_max_performance: true,
+        ac_locked: false,
     }
 }
 

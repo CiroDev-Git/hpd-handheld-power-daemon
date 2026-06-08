@@ -143,7 +143,7 @@ El daemon escribe la **curva del ventilador** en estos momentos:
 | Corrés `cool auto` | Pasa a auto; la curva se deriva del TDP actual. |
 | En **auto**, cambiás el TDP (`tdp set` / `preset`) | La curva se re-deriva según dónde cae el TDP en el rango — `< 33 %` → silent, `33–67 %` → balanced, `> 67 %` → aggressive. El platform profile **no** se toca. |
 | Volver de suspensión | Se re-aplican la curva (y el profile) activos (el firmware los puede perder al dormir). |
-| Enchufar AC | El TDP sube; en auto, la curva lo sigue. |
+| Enchufar AC | Por defecto (`ac_max_performance`) se **bloquea en máximo rendimiento**: Power mode → Performance, TDP → Max, cooling → Aggressive, y se rechazan los cambios de potencia/cooling hasta desenchufar (el tope de carga sigue editable). Al desenchufar se restaura tu estado de batería. |
 | Arranque | El daemon re-aplica tu **estado completo guardado** (TDP, power mode → default configurado, tope de carga, curva) al hardware — así coincide con el device aunque un boot en frío haya reseteado el firmware a sus defaults. |
 
 El **platform profile** es la palanca de potencia/EPP. Arranca en
@@ -284,11 +284,31 @@ ruido de traqueteo/rozamiento (problema físico).
 
 ## Comportamiento con AC, batería y al despertar
 
-- **Enchufar AC:** hpd sube la potencia (y, en cooling auto, la curva del
-  ventilador la sigue), y restaura tu config de batería al desenchufar.
+- **Enchufar AC — bloqueado en máximo rendimiento.** Por defecto, enchufar
+  el cargador fija el device en su tope: **Power mode → Performance, TDP →
+  Max, cooling → Aggressive**, y **bloquea** esos controles para que nada
+  los cambie mientras estás en corriente (la CLI y el plugin rechazan los
+  cambios de potencia/cooling con un mensaje "bloqueado en AC"). Tu **tope
+  de carga de batería sigue ajustable** — es lo único que tiene sentido
+  cambiar enchufado. Al **desenchufar**, se restauran tus ajustes de batería
+  (DC) exactos: TDP, Power mode y cooling.
+  - **¿Querés apagar el bloqueo?** Corré **`hpdctl ac-lock off`** (o el toggle
+    "Lock to max on AC" en Settings del plugin). Con eso, **AC queda totalmente
+    manual** — enchufar no cambia nada y todos los controles quedan editables.
+    Lo volvés a prender con `hpdctl ac-lock on`. La preferencia persiste entre
+    reinicios (sin editar config). `hpdctl ac-lock` sin argumento muestra el
+    estado actual.
+  - **¿Instalado (o arrancado por primera vez) estando enchufado?** El daemon
+    arranca bloqueado en máximo rendimiento, igual que si acabaras de
+    enchufar. La **primera vez que desenchufás**, como todavía no registró una
+    preferencia de batería, cae en valores tranquilos — **TDP Balanced con
+    auto-cooling** (para que los fans se calmen) — en vez de quedarse con la
+    curva Aggressive ruidosa. Después de ese primer desenchufe, tus ajustes se
+    recuerdan normalmente.
 - **Volver de suspensión:** hpd re-aplica tu potencia, platform profile,
   tope de carga y curva de ventilador — arreglando el bug donde los fans
-  arrancaban a tope al despertar.
+  arrancaban a tope al despertar. Si volvés enchufado, el bloqueo de máximo
+  rendimiento se re-afirma.
 - **Reinicio:** el daemon re-aplica tu estado completo guardado (TDP,
   power mode, tope de carga, curva) al hardware al arrancar, así lo que
   reporta siempre coincide con el device — aunque un boot en frío haya

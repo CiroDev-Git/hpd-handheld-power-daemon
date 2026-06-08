@@ -176,6 +176,10 @@ hpdctl cool curve              # draw the active fan curve
 hpdctl charge set 80           # 20..=100, persisted across reboots
 hpdctl charge get
 
+# AC lock — pin max performance while plugged in (on by default)
+hpdctl ac-lock                 # show the current state
+hpdctl ac-lock on|off          # on = lock max on AC; off = AC fully manual
+
 # Live monitor
 hpdctl monitor                 # refreshes once a second
 ```

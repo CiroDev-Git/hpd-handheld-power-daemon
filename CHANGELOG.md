@@ -11,6 +11,58 @@ not part of the published repository.
 
 ---
 
+## [2.7.0] — 2026-06-08
+
+### Added
+
+- **"Lock to maximum performance on AC" — a toggleable preference.** When on
+  (the default), plugging in the charger pins the device to its ceiling —
+  **Power mode → Performance, TDP → Max, cooling → Aggressive** — and
+  **rejects every power/cooling change until unplug**. The user's battery
+  (DC) preferences (TDP + power mode + cooling) are snapshotted on the plug
+  edge and restored verbatim on unplug. The **battery charge threshold stays
+  editable** on AC — it is the one knob that legitimately varies on wall
+  power. When **off, AC is fully manual** — plugging/unplugging changes
+  nothing and everything stays editable.
+  - **Toggleable at runtime, persisted** (no config edit / reload needed):
+    `hpdctl ac-lock on|off` (or no argument to print the state), and the
+    new `set_ac_max_performance(b)` D-Bus method. The live value lives in
+    `state.toml`; `default_ac_max_performance` (in `/etc/hpd/config.toml`,
+    default `true`) only seeds the very first boot. Toggling is applied
+    immediately: enabling while plugged forces max + locks; disabling while
+    plugged restores your battery state and unlocks.
+  - **New D-Bus properties** `AcMaxPerformance: b` (the preference) and
+    `AcLocked: b` (the live lock state, `AcMaxPerformance && on AC`) — both
+    emit `PropertiesChanged`. While `AcLocked`, the six power/cooling setters
+    (`set_spl`, `set_preset`, `set_profile`, `set_cooling_level`,
+    `set_fan_auto`, `reset_fan_curve`) fail fast with a clear "locked on AC"
+    error; `set_charge_threshold` and `set_ac_max_performance` are exempt (the
+    latter is how you release the lock). The reducer enforces the same rule as
+    a backstop for any client.
+  - **Boot/resume on AC** re-asserts the forced-max policy (the same
+    `SystemResumed` path), so a device booted or resumed straight into AC is
+    already pinned + locked.
+  - **State:** the persisted `last_dc_target` (envelope only) became
+    `last_dc_state` — a full `DcSnapshot` (TDP + power mode + cooling +
+    auto-cooling) so the unplug restore brings back every lever, not just the
+    watts; plus the new persisted `ac_max_performance` preference. Old
+    `state.toml` files load cleanly (`last_dc_state` defaults to "no
+    snapshot"; `ac_max_performance` defaults to `true`).
+  - **Cold install / first boot on AC.** A device installed or first booted
+    while plugged in (with the lock on) starts locked at max — no battery
+    snapshot exists yet. The **first unplug** synthesizes quiet battery
+    defaults — **Balanced TDP with auto-cooling re-engaged** — so the fan
+    curve drops from the forced `Aggressive` instead of leaving the fans loud
+    on battery (the power mode stays at the `Performance` default so the SPL
+    is usable). From the next plug cycle on, a real snapshot round-trips
+    exactly.
+
+### Internal
+
+- Factored the smart-mode SPPT/FPPT envelope maths into one
+  `derive_boosted_envelope` helper shared by `Transition::SetSpl` and the
+  forced-max path (no behaviour change).
+
 ## [2.6.0] — 2026-06-07
 
 ### Removed

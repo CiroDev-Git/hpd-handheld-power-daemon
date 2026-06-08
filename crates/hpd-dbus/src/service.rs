@@ -73,6 +73,18 @@ impl PowerDaemonInterface {
         }
         Ok(())
     }
+
+    /// Reject a power/cooling write while the "AC = maximum performance"
+    /// lock is active (`ac_locked`), giving the caller an immediate, clear
+    /// error instead of a silently-ignored command. The reducer enforces
+    /// the same rule as a backstop. The battery charge setter deliberately
+    /// does **not** call this — it stays editable on AC.
+    fn reject_if_locked(&self) -> zbus::fdo::Result<()> {
+        if self.state_rx.borrow().ac_locked {
+            return Err(locked_on_ac());
+        }
+        Ok(())
+    }
 }
 
 /// Sentinel returned in [`PowerDaemonInterface::get_thermal_status`] for
@@ -86,6 +98,15 @@ fn auth_denied() -> zbus::fdo::Error {
 
 fn executor_down() -> zbus::fdo::Error {
     zbus::fdo::Error::Failed("Internal daemon error: Executor down".into())
+}
+
+fn locked_on_ac() -> zbus::fdo::Error {
+    zbus::fdo::Error::Failed(
+        "Locked: on AC power the device is pinned to maximum performance \
+         (Performance / Max TDP / Aggressive). Unplug to adjust \
+         (the battery charge limit stays editable)."
+            .into(),
+    )
 }
 
 #[interface(name = "dev.cirodev.hpd.PowerDaemon1")]
@@ -102,6 +123,7 @@ impl PowerDaemonInterface {
         #[zbus(header)] header: zbus::message::Header<'_>,
     ) -> zbus::fdo::Result<()> {
         debug!("D-Bus received request to Set SPL: {}W", watts);
+        self.reject_if_locked()?;
         if !polkit::check(conn, &header, PolkitAction::SetTdp).await {
             return Err(auth_denied());
         }
@@ -118,6 +140,7 @@ impl PowerDaemonInterface {
         #[zbus(header)] header: zbus::message::Header<'_>,
     ) -> zbus::fdo::Result<()> {
         debug!("D-Bus received request to Set Preset: {}", preset_name);
+        self.reject_if_locked()?;
         if !polkit::check(conn, &header, PolkitAction::SetTdp).await {
             return Err(auth_denied());
         }
@@ -224,6 +247,51 @@ impl PowerDaemonInterface {
         self.state_rx.borrow().is_ac_connected
     }
 
+    /// Whether the power/cooling controls are currently **locked** because
+    /// the device is on AC with `ac_max_performance` enabled — pinned to
+    /// Performance / Max TDP / Aggressive. While `true`, `set_spl`,
+    /// `set_preset`, `set_profile`, `set_cooling_level`, `set_fan_auto` and
+    /// `reset_fan_curve` all fail fast with a "locked on AC" error; the
+    /// battery `set_charge_threshold` stays editable. Clients (the Decky
+    /// plugin) read this to disable their controls. Emits `PropertiesChanged`
+    /// on every plug/unplug edge (and on a live `ac_max_performance` toggle).
+    #[zbus(property)]
+    async fn ac_locked(&self) -> bool {
+        self.state_rx.borrow().ac_locked
+    }
+
+    /// The **"lock to maximum performance on AC"** preference (toggleable,
+    /// persisted). `true` (default) = plugging in pins Performance / Max /
+    /// Aggressive and locks the controls; `false` = AC is fully manual.
+    /// Distinct from `AcLocked`, which is the *live* lock state
+    /// (`ac_max_performance && on AC`). Emits `PropertiesChanged` when toggled.
+    #[zbus(property)]
+    async fn ac_max_performance(&self) -> bool {
+        self.state_rx.borrow().ac_max_performance
+    }
+
+    /// Toggle the "lock to maximum performance on AC" preference. Applied
+    /// immediately: enabling while plugged in forces max + locks; disabling
+    /// while plugged in restores your battery state and unlocks. **Not**
+    /// rejected while locked — this is how you release the lock.
+    ///
+    /// `polkit` action: `dev.cirodev.hpd.set-profile` (`auth_admin_keep`).
+    async fn set_ac_max_performance(
+        &self,
+        enabled: bool,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        debug!(
+            "D-Bus received request to set ac_max_performance: {}",
+            enabled
+        );
+        if !polkit::check(conn, &header, PolkitAction::SetProfile).await {
+            return Err(auth_denied());
+        }
+        self.send(Transition::SetAcMaxPerformance(enabled)).await
+    }
+
     /// Set the ACPI `platform_profile` manually (`power-saver`,
     /// `balanced`, `performance`, or a custom vendor string) — the EPP /
     /// power-bias lever, surfaced to users as "Power mode". Decoupled from
@@ -237,6 +305,7 @@ impl PowerDaemonInterface {
         #[zbus(connection)] conn: &zbus::Connection,
         #[zbus(header)] header: zbus::message::Header<'_>,
     ) -> zbus::fdo::Result<()> {
+        self.reject_if_locked()?;
         if !polkit::check(conn, &header, PolkitAction::SetProfile).await {
             return Err(auth_denied());
         }
@@ -261,6 +330,7 @@ impl PowerDaemonInterface {
         #[zbus(header)] header: zbus::message::Header<'_>,
     ) -> zbus::fdo::Result<()> {
         debug!("D-Bus received request to Set Cooling Level: {}", level);
+        self.reject_if_locked()?;
         let preset = FanCurvePreset::from_str(level)
             .map_err(|e| zbus::fdo::Error::InvalidArgs(e.to_string()))?;
         if !polkit::check(conn, &header, PolkitAction::SetProfile).await {
@@ -279,6 +349,7 @@ impl PowerDaemonInterface {
         #[zbus(connection)] conn: &zbus::Connection,
         #[zbus(header)] header: zbus::message::Header<'_>,
     ) -> zbus::fdo::Result<()> {
+        self.reject_if_locked()?;
         if !polkit::check(conn, &header, PolkitAction::SetProfile).await {
             return Err(auth_denied());
         }
@@ -297,6 +368,7 @@ impl PowerDaemonInterface {
         #[zbus(header)] header: zbus::message::Header<'_>,
     ) -> zbus::fdo::Result<()> {
         debug!("D-Bus received request to reset fan curve to firmware auto");
+        self.reject_if_locked()?;
         if !polkit::check(conn, &header, PolkitAction::SetProfile).await {
             return Err(auth_denied());
         }
@@ -469,9 +541,11 @@ mod tests {
             active_profile: hpd_capabilities::profile::ProfileName::Balanced,
             charge_end_threshold: 80,
             fan_follows_tdp: true,
-            last_dc_target: None,
+            last_dc_state: None,
             active_fan_curve: None,
             is_ac_connected: false,
+            ac_max_performance: true,
+            ac_locked: false,
         }
     }
 

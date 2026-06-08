@@ -110,7 +110,15 @@ impl<B: HwBackend> Executor<B> {
                 &self.config,
             ) {
                 Ok(output) => {
-                    if self.state_tx.send(output.new_state).is_err() {
+                    // `ac_locked` is derived, not persisted: recompute it from
+                    // the post-transition AC state + the (persisted, toggleable)
+                    // `ac_max_performance` preference so the D-Bus `AcLocked`
+                    // property always reflects reality. The reducer owns the
+                    // *behaviour* of the lock; the executor owns this reported
+                    // flag.
+                    let mut new_state = output.new_state;
+                    new_state.ac_locked = new_state.is_ac_connected && new_state.ac_max_performance;
+                    if self.state_tx.send(new_state).is_err() {
                         error!("State observers dropped, stopping executor.");
                         break;
                     }

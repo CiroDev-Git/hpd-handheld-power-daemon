@@ -334,8 +334,13 @@ where
                 charge_end_threshold: current_charge_limit,
                 fan_follows_tdp: true,
                 is_ac_connected: is_physically_plugged,
-                last_dc_target: None,
+                last_dc_state: None,
                 active_fan_curve: None,
+                // First boot: seed the lock preference from config (default
+                // on). After this it lives in state.toml and is toggled at
+                // runtime via set_ac_max_performance.
+                ac_max_performance: daemon_config.default_ac_max_performance,
+                ac_locked: false,
             }
         }
     };
@@ -661,6 +666,19 @@ async fn spawn_properties_changed_emitter(
         if new.is_ac_connected != last.is_ac_connected {
             if let Err(e) = iface.ac_connected_changed(ctx).await {
                 error!(error = %e, "Failed to emit ac_connected PropertiesChanged");
+            }
+        }
+        if new.ac_locked != last.ac_locked {
+            // Drives the plugin's "locked to max performance on AC" state so
+            // it can disable/re-enable the power + cooling controls live.
+            if let Err(e) = iface.ac_locked_changed(ctx).await {
+                error!(error = %e, "Failed to emit ac_locked PropertiesChanged");
+            }
+        }
+        if new.ac_max_performance != last.ac_max_performance {
+            // The lock *preference* toggled — drives the plugin's toggle state.
+            if let Err(e) = iface.ac_max_performance_changed(ctx).await {
+                error!(error = %e, "Failed to emit ac_max_performance PropertiesChanged");
             }
         }
 

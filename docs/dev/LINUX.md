@@ -196,7 +196,7 @@ The three action IDs and their **non-administrator** defaults:
 |---------------------------------|--------------------------------------|--------------------|
 | `dev.cirodev.hpd.set-tdp`       | `set_spl`, `set_preset`              | `auth_admin`       |
 | `dev.cirodev.hpd.set-charge`    | `set_charge_threshold`               | `auth_admin`       |
-| `dev.cirodev.hpd.set-profile`   | `set_profile`, `set_fan_auto`        | `auth_admin_keep`  |
+| `dev.cirodev.hpd.set-profile`   | `set_profile`, `set_cooling_level`, `set_fan_auto`, `reset_fan_curve`, `set_ac_max_performance` | `auth_admin_keep`  |
 
 `wheel`-group members (the device owner) bypass the table above:
 `package/polkit/49-hpd.rules` grants every `dev.cirodev.hpd.*` action

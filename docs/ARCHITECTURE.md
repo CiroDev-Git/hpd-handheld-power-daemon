@@ -192,6 +192,7 @@ Lote 38 made this uniform across all three apply effects (only
 | `SetProfile(ProfileName)`        | `hpdctl power set`, D-Bus `set_profile`           |
 | `SetCoolingLevel(FanCurvePreset)`| `hpdctl cool set`, D-Bus `set_cooling_level`      |
 | `EnableFanAuto`                  | `hpdctl cool auto`, D-Bus `set_fan_auto`          |
+| `SetAcMaxPerformance(bool)`      | `hpdctl ac-lock on/off`, D-Bus `set_ac_max_performance` |
 | `ChargeThresholdChanged(u8)`     | `hpdctl charge set`, D-Bus `set_charge_threshold` |
 | `AcPowerChanged(bool)`           | `hpd-netlink` udev event                          |
 | `SystemResumed`                  | logind `PrepareForSleep` (resume edge)            |
@@ -327,7 +328,7 @@ enum small and keeps zbus's signal machinery out of the reducer.
 | `SIGTERM`  | `systemctl stop`/`restart`  | Same as SIGINT.                                                                                                                                                                          |
 | `SIGHUP`   | `systemctl reload`          | Re-read `/etc/hpd/config.toml`; push `ConfigReload(new.to_runtime())`. Startup-only fields (`state_path`, `channel_capacity`, `default_charge_threshold`) are logged as "needs restart". |
 | Resume     | logind `PrepareForSleep`    | Push `SystemResumed`; reducer re-applies envelope + profile + charge threshold (kernel may have lost them across suspend).                                                               |
-| AC plug    | udev `power_supply`         | Push `AcPowerChanged(b)`; reducer snapshots `last_dc_target` on plug, restores it on unplug.                                                                                             |
+| AC plug    | udev `power_supply`         | Push `AcPowerChanged(b)`. With the `ac_max_performance` preference on (default): on plug, snapshot the battery state into `last_dc_state` + force **Performance / Max / Aggressive** + set the `AcLocked` lock; on unplug, restore the snapshot. With it off: both edges are a no-op (AC fully manual). Toggle via `set_ac_max_performance` / `hpdctl ac-lock`.                       |
 
 ### Shutdown safety
 
@@ -349,7 +350,7 @@ dependency.
 |------------------------------------|-------------------------------------------------|--------------------------|
 | `dev.cirodev.hpd.set-tdp`          | `set_spl`, `set_preset`                         | `auth_admin`             |
 | `dev.cirodev.hpd.set-charge`       | `set_charge_threshold`                          | `auth_admin`             |
-| `dev.cirodev.hpd.set-profile`      | `set_profile`, `set_fan_auto`                   | `auth_admin_keep`        |
+| `dev.cirodev.hpd.set-profile`      | `set_profile`, `set_cooling_level`, `set_fan_auto`, `reset_fan_curve`, `set_ac_max_performance` | `auth_admin_keep`        |
 
 `auth_admin_keep` caches the affirmative answer for 5 minutes, so
 flipping between profiles in quick succession does not pile up
@@ -419,12 +420,23 @@ resolved from the `STATE_DIRECTORY` env var injected by
 the config file's `state_path`.
 
 The on-disk schema is plain TOML, generated from `ProfileState` by
-serde. One field is intentionally skipped:
+serde. Two fields are intentionally skipped:
 
 ```rust
 #[serde(skip)]
 pub is_ac_connected: bool,
+#[serde(skip)]
+pub ac_locked: bool, // derived: is_ac_connected && config.ac_max_performance
 ```
+
+`ac_locked` is a pure function of the (re-queried) AC state and the
+persisted `ac_max_performance` preference, so it is recomputed by the
+executor on every publish and surfaced over D-Bus as the **`AcLocked`**
+property — it never lives on disk. (The persisted `last_dc_state:
+Option<DcSnapshot>` carries the user's battery TDP / power mode / cooling so
+the unplug restore survives a reboot, and the persisted toggleable
+`ac_max_performance` preference — seeded from `default_ac_max_performance` —
+is exposed as the **`AcMaxPerformance`** property.)
 
 The AC state is **re-queried from hardware on every boot** rather
 than trusted from disk. Stale persisted state could otherwise lie to

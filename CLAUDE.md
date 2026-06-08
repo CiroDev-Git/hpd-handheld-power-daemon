@@ -16,7 +16,7 @@ fan / temperature / power reporting on handheld PCs
 - `hpdctl` (from crate `hpd-cli`) — user-facing CLI that talks to the
   daemon over D-Bus.
 
-Current release: **`2.6.0`** (see `CHANGELOG.md`). The public
+Current release: **`2.7.0`** (see `CHANGELOG.md`). The public
 surface (D-Bus interface, CLI subcommands, on-disk state, polkit action
 IDs) is stable and follows SemVer.
 
@@ -178,6 +178,55 @@ handlers or monitors.
    90s `TimeoutStopSec`) before closing the D-Bus connection and
    returning.
 
+### AC = maximum performance (the lock)
+
+The **`ProfileState::ac_max_performance`** preference (persisted, default on,
+toggleable at runtime) decides whether wall power means "run flat out, hands
+off." It is seeded on first boot from `DaemonConfig::default_ac_max_performance`,
+then lives in `state.toml` and is flipped via `set_ac_max_performance`
+(`hpdctl ac-lock on|off`, or the plugin toggle) — **not** a config file edit.
+
+- **Force on plug (lock on).** `Transition::AcPowerChanged(true)` snapshots the
+  user's battery state into `ProfileState::last_dc_state` (a `DcSnapshot` of
+  TDP + power mode + cooling + auto-cooling), then `force_ac_max_performance`
+  pins **Performance / Max TDP / Aggressive** (`fan_follows_tdp` off — the
+  curve is pinned, not inferred). Effects order: power → profile → fan curve
+  **last** (writing `platform_profile` can drop the EC curve).
+- **Lock off = fully manual.** With the preference off, `AcPowerChanged` (both
+  edges) is a **no-op** — plugging/unplugging changes nothing and everything
+  stays editable.
+- **Restore on unplug (lock on).** `restore_dc_state` re-applies the
+  `last_dc_state` snapshot (diff-only effects) and **clears it**
+  (`last_dc_state = None`) so a later manual-mode unplug can't replay a stale
+  snapshot. **With no snapshot** — the first unplug after a device *installed /
+  booted while plugged in* — it synthesizes **quiet battery defaults**: the
+  **Balanced** TDP preset *and* re-engages auto-cooling (`fan_follows_tdp =
+  true`) so the curve drops from the forced `Aggressive`, rather than leaving
+  the fans roaring on battery. The power mode is left at `Performance` (the
+  daemon's always-on default). Both unplug paths reduce on an `is_ac_connected
+  = false` view so the lock doesn't gate their own internal `SetPreset`.
+- **The lock.** While `is_ac_connected && ac_max_performance`, the reducer
+  treats the seven user power/cooling writes (`SetSpl`, `SetPreset`,
+  `SetEnvelope`, `SetProfile`, `SetCoolingLevel`, `EnableFanAuto`,
+  `ResetFanCurve`) as **no-ops** (`is_locked_write`). The D-Bus setters also
+  `reject_if_locked()` up-front. `ChargeThresholdChanged` and
+  `SetAcMaxPerformance` are **never** gated — the battery limit stays editable,
+  and the toggle is how you *release* the lock. `Sync*` rollbacks,
+  AC/suspend/boot and `ConfigReload` are never gated.
+- **The toggle (`SetAcMaxPerformance`).** Applied immediately: turning it
+  **on** while plugged snapshots the current state (if `last_dc_state` is
+  `None`) and forces max; turning it **off** while plugged restores the
+  snapshot (so you are not stranded at max) and unlocks. On battery it just
+  stores the preference (applies on the next plug).
+- **Boot/resume on AC** re-asserts the forced-max policy via the
+  `SystemResumed` arm (no plug edge fires at boot), so a device that boots or
+  resumes straight into AC is already pinned + locked.
+- **Reported state.** `ProfileState::ac_locked` is **derived, never persisted**
+  (`#[serde(skip)]`): the executor recomputes it (`is_ac_connected &&
+  ac_max_performance`) on every state publish, and `hpd-dbus` exposes both
+  `AcMaxPerformance` (the preference) and `AcLocked` (the live lock) as
+  properties so the plugin can render its toggle and disable controls live.
+
 State is persisted to **`/var/lib/hpd/state.toml`** via atomic
 temp-file + rename. Under systemd the path is resolved from the
 `STATE_DIRECTORY` environment variable injected by `StateDirectory=hpd`
@@ -189,7 +238,8 @@ hardware at boot.
 ### Authorization
 
 Every privileged D-Bus setter (`set_spl`, `set_preset`,
-`set_charge_threshold`, `set_profile`, `set_fan_auto`) calls
+`set_charge_threshold`, `set_profile`, `set_cooling_level`, `set_fan_auto`,
+`reset_fan_curve`, `set_ac_max_performance`) calls
 `hpd_dbus::polkit::check(...)` *before* enqueuing its `Transition`.
 The check talks to `org.freedesktop.PolicyKit1.Authority` directly
 (no extra crate dep) and asks for one of:
@@ -364,7 +414,7 @@ to override defaults; existing `config.toml` is never overwritten by
 | SIGTERM    | systemd `stop` / `restart`   | Same as SIGINT.                                                                 |
 | SIGHUP     | `systemctl reload` / manual  | Reload `/etc/hpd/config.toml`; push `ConfigReload(new.to_runtime())`. Daemon keeps running. |
 | Resume     | logind `PrepareForSleep`     | Push `Transition::SystemResumed`; reducer re-applies envelope + profile + charge threshold (kernel may have lost them across suspend). |
-| AC plug    | udev `power_supply` event    | Push `Transition::AcPowerChanged(true/false)`; reducer snapshots `last_dc_target` on plug, restores it on unplug. |
+| AC plug    | udev `power_supply` event    | Push `Transition::AcPowerChanged(true/false)`. **When the `ac_max_performance` preference is on (default):** on plug, snapshot the battery (DC) state into `last_dc_state` and force **Performance / Max TDP / Aggressive** + lock; on unplug, restore the snapshot. **When off:** both edges are a no-op (AC fully manual). See "AC = maximum performance" below. |
 
 The daemon awaits the executor join after sending `Shutdown` with a
 5s timeout cap (`tokio::time::timeout`), well below systemd's
@@ -496,7 +546,8 @@ and exits cleanly rather than letting systemd `SIGKILL` it mid-write.
   renamed, since a rename would break the D-Bus/polkit surface + the
   persisted `state.toml`. Note the `set-profile` polkit action also gates
   the cooling levers (`set_cooling_level` / `set_fan_auto` /
-  `reset_fan_curve`) — it's the shared "low-impact, `auth_admin_keep`"
+  `reset_fan_curve`) and the AC-lock toggle (`set_ac_max_performance`) —
+  it's the shared "low-impact, `auth_admin_keep`"
   bucket, not only the power profile.
 
 ## Where to look for things

@@ -46,6 +46,17 @@ trait PowerDaemon {
     /// Hand fan control back to the firmware's automatic curve.
     async fn reset_fan_curve(&self) -> zbus::Result<()>;
 
+    /// Toggle the "lock to maximum performance on AC" preference.
+    async fn set_ac_max_performance(&self, enabled: bool) -> zbus::Result<()>;
+
+    /// The "lock to maximum performance on AC" preference (toggleable).
+    #[zbus(property)]
+    fn ac_max_performance(&self) -> zbus::Result<bool>;
+
+    /// Live AC-lock state (`ac_max_performance && on AC`).
+    #[zbus(property)]
+    fn ac_locked(&self) -> zbus::Result<bool>;
+
     /// Active fan-curve selection: a preset name, `custom`, or `auto`.
     #[zbus(property)]
     fn fan_curve(&self) -> zbus::Result<String>;
