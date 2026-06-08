@@ -261,6 +261,21 @@ pub fn reduce(
                 return Ok(output);
             }
 
+            // On battery (or lock off): if a battery snapshot exists, the
+            // persisted power/cooling levers are the **stale forced-max** from
+            // an AC-locked session that ended while still plugged in (then the
+            // device was unplugged while off/asleep). Restore the snapshot so
+            // we come back to the user's real battery state, not max — instead
+            // of re-applying the persisted (forced-max) levers verbatim.
+            if let Some(snapshot) = state.last_dc_state.clone() {
+                info!("Boot/resume on battery: restoring saved battery state (persisted levers were forced-max on AC)");
+                let mut output = restore_dc_state(state, &snapshot);
+                output
+                    .effects
+                    .push(Effect::ApplyChargeThreshold(state.charge_end_threshold));
+                return Ok(output);
+            }
+
             info!("Re-applying full power/cooling state to hardware (boot/resume)");
             let mut effects = vec![
                 Effect::ApplyPowerEnvelope(state.power_target.clone()),
@@ -1556,6 +1571,58 @@ mod tests {
         assert!(out
             .effects
             .contains(&Effect::ApplyPlatformProfile(ProfileName::Balanced)));
+    }
+
+    #[test]
+    fn test_system_resumed_on_battery_with_snapshot_restores_battery_state() {
+        // Scenarios B & D: the device was shut down / suspended on AC (locked
+        // at forced-max, with a battery snapshot saved), then unplugged while
+        // off/asleep, then boots / resumes on battery. The persisted levers are
+        // the stale forced-max — SystemResumed must restore the battery
+        // snapshot instead of re-applying max on battery.
+        let snap = DcSnapshot {
+            power_target: PowerEnvelopeTarget {
+                spl: PowerMilliwatts(15_000),
+                sppt: PowerMilliwatts(17_250),
+                fppt: Some(PowerMilliwatts(18_750)),
+            },
+            active_profile: ProfileName::Balanced,
+            active_fan_curve: None,
+            fan_follows_tdp: true,
+        };
+        // Persisted = forced-max from the AC session.
+        let mut state = setup_state();
+        state.is_ac_connected = false; // booted/resumed on battery
+        state.power_target = PowerEnvelopeTarget {
+            spl: PowerMilliwatts(35_000),
+            sppt: PowerMilliwatts(40_250),
+            fppt: Some(PowerMilliwatts(43_750)),
+        };
+        state.active_profile = ProfileName::Performance;
+        state.active_fan_curve = Some(FanCurveSelection::Preset(FanCurvePreset::Aggressive));
+        state.fan_follows_tdp = false;
+        state.last_dc_state = Some(snap.clone());
+
+        let out = reduce(
+            &state,
+            Transition::SystemResumed,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+
+        // Back to the battery state, not max.
+        assert_eq!(out.new_state.power_target, snap.power_target);
+        assert_eq!(out.new_state.active_profile, ProfileName::Balanced);
+        assert_eq!(out.new_state.active_fan_curve, None);
+        assert!(out.new_state.fan_follows_tdp);
+        // Snapshot consumed; charge re-applied; persisted.
+        assert!(out.new_state.last_dc_state.is_none());
+        assert!(out
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::ApplyChargeThreshold(_))));
+        assert!(out.effects.contains(&Effect::PersistState));
     }
 
     // ---------- SetAcMaxPerformance (the runtime toggle) ----------

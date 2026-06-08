@@ -307,8 +307,15 @@ ruido de traqueteo/rozamiento (problema físico).
     recuerdan normalmente.
 - **Volver de suspensión:** hpd re-aplica tu potencia, platform profile,
   tope de carga y curva de ventilador — arreglando el bug donde los fans
-  arrancaban a tope al despertar. Si volvés enchufado, el bloqueo de máximo
-  rendimiento se re-afirma.
+  arrancaban a tope al despertar. Además **chequea el estado real del
+  cargador al despertar** (por si enchufaste o desenchufaste mientras dormía):
+  volver enchufado re-afirma el bloqueo de máximo rendimiento; volver en
+  batería restaura tus ajustes de batería.
+- **Enchufado/desenchufado estando apagado o suspendido:** lo mismo aplica en
+  un arranque en frío. Si apagás enchufado y arrancás en batería, hpd vuelve a
+  tus ajustes de **batería** (no se queda en max); si arrancás enchufado,
+  arranca bloqueado en max. Gana el estado del cargador que el device
+  realmente tiene.
 - **Reinicio:** el daemon re-aplica tu estado completo guardado (TDP,
   power mode, tope de carga, curva) al hardware al arrancar, así lo que
   reporta siempre coincide con el device — aunque un boot en frío haya

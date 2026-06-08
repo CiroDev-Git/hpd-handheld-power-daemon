@@ -11,6 +11,29 @@ not part of the published repository.
 
 ---
 
+## [2.7.1] — 2026-06-08
+
+### Fixed
+
+- **AC-state consistency across a power-off / suspend boundary.** Plugging or
+  unplugging the charger while the device is shut down or suspended could
+  leave the daemon applying the wrong power policy on the next boot/resume:
+  - **Boot/resume on battery after an AC-locked session** re-applied the
+    *persisted forced-max* levers — so the device came up at **Max TDP +
+    Aggressive fans on battery** (loud, fast drain). `SystemResumed` now
+    restores the saved battery snapshot (`last_dc_state`) instead, so you come
+    back to your real battery state. (Closes the shutdown-on-AC → boot/resume-
+    on-battery and suspend-on-AC → unplug → resume cases.)
+  - **Resume re-reads the real AC state from hardware.** The in-memory
+    `is_ac_connected` could be stale across a suspend if the charger was
+    (un)plugged while asleep and the udev event was missed or arrived after
+    `SystemResumed`; the executor now re-queries the backend on every
+    boot/resume so the lock/unlock decision matches the actual power source
+    regardless of the netlink monitor's timing.
+  - Boot is unchanged (it already re-read AC from hardware); the existing
+    cold-install-on-AC behaviour (first unplug → quiet Balanced defaults when
+    no battery snapshot exists) is preserved.
+
 ## [2.7.0] — 2026-06-08
 
 ### Added

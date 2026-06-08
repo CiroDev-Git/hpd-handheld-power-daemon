@@ -101,7 +101,25 @@ impl<B: HwBackend> Executor<B> {
             // dispatched — that guarantees state hits disk before exit.
             let is_shutdown = matches!(transition, Transition::Shutdown);
 
-            let current_state = self.state_tx.borrow().clone();
+            let mut current_state = self.state_tx.borrow().clone();
+
+            // On boot/resume, re-read the *real* AC state from hardware before
+            // applying the policy. The in-memory `is_ac_connected` can be stale
+            // across a suspend if the charger was (un)plugged while suspended
+            // and the udev event was missed or arrives after `SystemResumed` —
+            // without this, the daemon could (un)lock against the wrong power
+            // source until the next live AC edge. Makes `SystemResumed`
+            // authoritative regardless of the netlink monitor's timing.
+            if matches!(transition, Transition::SystemResumed) {
+                if let Some(charge) = self.backend.charge() {
+                    match charge.is_ac_connected() {
+                        Ok(ac) => current_state.is_ac_connected = ac,
+                        Err(e) => {
+                            warn!(error = %e, "Resume: could not re-read AC state; using last known")
+                        }
+                    }
+                }
+            }
 
             match reduce(
                 &current_state,

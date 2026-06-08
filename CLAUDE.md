@@ -16,7 +16,7 @@ fan / temperature / power reporting on handheld PCs
 - `hpdctl` (from crate `hpd-cli`) — user-facing CLI that talks to the
   daemon over D-Bus.
 
-Current release: **`2.7.0`** (see `CHANGELOG.md`). The public
+Current release: **`2.7.1`** (see `CHANGELOG.md`). The public
 surface (D-Bus interface, CLI subcommands, on-disk state, polkit action
 IDs) is stable and follows SemVer.
 
@@ -218,9 +218,15 @@ then lives in `state.toml` and is flipped via `set_ac_max_performance`
   `None`) and forces max; turning it **off** while plugged restores the
   snapshot (so you are not stranded at max) and unlocks. On battery it just
   stores the preference (applies on the next plug).
-- **Boot/resume on AC** re-asserts the forced-max policy via the
-  `SystemResumed` arm (no plug edge fires at boot), so a device that boots or
-  resumes straight into AC is already pinned + locked.
+- **Boot/resume reconciles against the real AC state.** The executor
+  **re-reads `is_ac_connected` from the backend** before reducing
+  `SystemResumed` (it can be stale across a suspend if the charger was
+  (un)plugged while asleep). The arm then: **on AC** re-asserts the forced-max
+  lock (no plug edge fires at boot); **on battery with a `last_dc_state`
+  snapshot** restores it (the persisted levers are the stale forced-max from
+  the prior AC session — this is what stops a "shut down on AC, unplug, boot
+  on battery" device from coming up at max); **on battery with no snapshot**
+  re-applies the persisted (genuine battery) state.
 - **Reported state.** `ProfileState::ac_locked` is **derived, never persisted**
   (`#[serde(skip)]`): the executor recomputes it (`is_ac_connected &&
   ac_max_performance`) on every state publish, and `hpd-dbus` exposes both
@@ -413,7 +419,7 @@ to override defaults; existing `config.toml` is never overwritten by
 | SIGINT     | Ctrl+C in a terminal         | `Transition::Shutdown` → reducer emits `PersistState` → executor drains and exits → daemon closes D-Bus → process returns. |
 | SIGTERM    | systemd `stop` / `restart`   | Same as SIGINT.                                                                 |
 | SIGHUP     | `systemctl reload` / manual  | Reload `/etc/hpd/config.toml`; push `ConfigReload(new.to_runtime())`. Daemon keeps running. |
-| Resume     | logind `PrepareForSleep`     | Push `Transition::SystemResumed`; reducer re-applies envelope + profile + charge threshold (kernel may have lost them across suspend). |
+| Resume     | logind `PrepareForSleep`     | Push `Transition::SystemResumed`. The executor **re-reads the real AC state from hardware** first (it can be stale if the charger was (un)plugged while suspended), then the reducer re-applies the right policy: force max on AC, restore the battery snapshot (`last_dc_state`) on battery, else re-apply persisted (kernel may have lost levers across suspend). |
 | AC plug    | udev `power_supply` event    | Push `Transition::AcPowerChanged(true/false)`. **When the `ac_max_performance` preference is on (default):** on plug, snapshot the battery (DC) state into `last_dc_state` and force **Performance / Max TDP / Aggressive** + lock; on unplug, restore the snapshot. **When off:** both edges are a no-op (AC fully manual). See "AC = maximum performance" below. |
 
 The daemon awaits the executor join after sending `Shutdown` with a
