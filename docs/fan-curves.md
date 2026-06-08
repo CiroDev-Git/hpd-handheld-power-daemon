@@ -171,9 +171,10 @@ independent of power (see [the decouple](#6-decoupling-power-from-cooling)):
 - **`hpdctl cool auto`** lets the daemon infer the fan-curve preset from
   the TDP (low TDP → silent curve, high TDP → aggressive curve).
 - **`hpdctl cool reset`** hands the fans back to the firmware's own curve
-  (`ResetFanCurve`). `fan_curve_follows_profile` is now a **no-op** (kept
-  only so old configs still parse). *(The unused raw `set_fan_curve` D-Bus
-  method was retired in 2.5.0 — `cool set` / `cool reset` cover the curve.)*
+  (`ResetFanCurve`). *(The old `fan_curve_follows_profile` config knob was
+  removed in 2.6.0; a stale line in an existing config is silently ignored.
+  The unused raw `set_fan_curve` D-Bus method was retired in 2.5.0 — `cool
+  set` / `cool reset` cover the curve.)*
 
 ### 6. Decoupling power from cooling
 

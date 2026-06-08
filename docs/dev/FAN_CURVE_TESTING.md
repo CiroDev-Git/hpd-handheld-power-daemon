@@ -209,7 +209,8 @@ hpdctl status                        # fans sane, not pinned at max
 > drives the **fan curve only** and must **not** move the
 > `platform_profile`; auto-cooling infers the *fan curve* from TDP, not the
 > profile. The profile defaults to `performance` (config
-> `default_platform_profile`). `fan_curve_follows_profile` is a no-op. See
+> `default_platform_profile`). *(The old `fan_curve_follows_profile` config
+> knob was removed in 2.6.0.)* See
 > [`../fan-curves.md` §6](../fan-curves.md#6-decoupling-power-from-cooling).
 
 ```bash
@@ -235,18 +236,25 @@ hpdctl --help | grep -i profile   # or via D-Bus set_profile
 
 ---
 
-## 7. AC plug/unplug chain
+## 7. AC = maximum performance lock (daemon ≥ 2.7.0)
 
-With auto-cooling on, plugging AC ramps the TDP→max and the **fan curve**
-follows it to aggressive. The `platform_profile` stays at its default
-(`performance`) — it is not part of the AC chain any more.
+With the **`ac_max_performance`** preference ON (default), plugging in pins
+**Performance / Max TDP / Aggressive** and **locks** those controls until
+unplug; the battery (DC) state is snapshotted on plug and restored on unplug.
+The battery charge limit stays editable. The preference is toggleable and
+persisted (`hpdctl ac-lock on|off`, or the plugin's Settings toggle); OFF
+makes AC fully manual.
 
 | Step | Action | Expect |
 |---|---|---|
-| 7.1 | ensure `cool auto` + `fan_curve_follows_profile=true` (default) | — |
-| 7.2 | plug AC | TDP→max, profile→performance, curve→aggressive (`hpdctl status`) |
-| 7.3 | unplug AC | TDP restores DC target, profile/curve follow back down |
-| 7.4 | with follows **off** + a manual curve set | AC plug changes TDP/profile but the manual curve is **preserved** (re-asserted, not changed) |
+| 7.1 | `hpdctl ac-lock on` (the default) | preference enabled |
+| 7.2 | plug AC | TDP→max, profile→performance, curve→aggressive; **controls locked** (`hpdctl status` shows "🔒 locked at max performance") |
+| 7.3 | `hpdctl tdp set 15` while on AC | **rejected** with "locked on AC"; state unchanged |
+| 7.4 | `hpdctl charge set 70` while on AC | **applies** (charge is exempt from the lock) |
+| 7.5 | unplug AC | restores your battery TDP / power mode / cooling |
+| 7.6 | `hpdctl ac-lock off` while plugged | unlocks immediately; controls editable; AC now fully manual |
+| 7.7 | with the lock **off**: plug / unplug | nothing changes (fully manual) |
+| 7.8 | shut down on AC (locked) → unplug while off → boot on **battery** | comes up at your **battery** state, **not** max (consistency fix, 2.7.1) |
 
 ---
 

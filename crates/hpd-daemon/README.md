@@ -55,8 +55,8 @@ production and on the **session bus** when built with
 | `SIGINT`   | Ctrl+C in a terminal         | `Transition::Shutdown` → reducer emits `PersistState` → executor drains → exits.|
 | `SIGTERM`  | `systemctl stop`             | Same as SIGINT.                                                                 |
 | `SIGHUP`   | `systemctl reload`           | Re-read `/etc/hpd/config.toml`; push `ConfigReload(new.to_runtime())`.          |
-| Resume     | logind `PrepareForSleep`     | Push `SystemResumed`; reducer re-applies envelope + profile + charge.           |
-| AC plug    | udev `power_supply` event    | Push `AcPowerChanged(b)`; reducer snapshots/restores `last_dc_target`.          |
+| Resume     | logind `PrepareForSleep`     | Push `SystemResumed`; executor re-reads AC from hardware, then reducer re-asserts the right policy (force max on AC / restore `last_dc_state` on battery / re-apply persisted). |
+| AC plug    | udev `power_supply` event    | Push `AcPowerChanged(b)`. With the `ac_max_performance` preference on (default): snapshot the battery state into `last_dc_state` + force max on plug, restore on unplug. Off: AC fully manual. |
 
 Graceful shutdown drains the executor with a 5s timeout, well under
 systemd's default 90s `TimeoutStopSec`.

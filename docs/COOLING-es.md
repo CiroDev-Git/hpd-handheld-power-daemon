@@ -154,7 +154,8 @@ Regla mental:
 3. **El `platform_profile` arranca en `performance`** (config
    `default_platform_profile`) y ya no se deduce del TDP.
 4. `SetProfile` queda como la perilla manual de potencia (decoplada del
-   cooling). `fan_curve_follows_profile` quedó sin efecto (no-op).
+   cooling). *(La vieja config `fan_curve_follows_profile` fue eliminada en
+   2.6.0; una línea residual en un config existente se ignora.)*
 
 ### D-Bus (interfaz `dev.cirodev.hpd.PowerDaemon1`)
 

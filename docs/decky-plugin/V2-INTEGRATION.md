@@ -35,7 +35,7 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
 | `SetChargeThreshold` | `(y percent)` | Battery charge cap, `20..=100`. | `set-charge` |
 | `SetCoolingLevel` | `(s level)` | **The cooling lever — fans only.** `silent` / `balanced` / `aggressive` → sets the **fan curve** and switches to manual cooling. Does **not** change power (decoupled). | `set-profile` |
 | `SetFanAuto` | `()` | Auto cooling: the **fan curve** follows the TDP. | `set-profile` |
-| `ResetFanCurve` | `()` | Hand the fans back to the firmware's automatic curve. | `set-fan-curve` |
+| `ResetFanCurve` | `()` | Hand the fans back to the firmware's automatic curve. | `set-profile` |
 | `GetThermalStatus` | `() → (iiiii)` | Live `(cpu_temp_c, gpu_temp_c, cpu_rpm, gpu_rpm, soc_power_mw)`. `i32::MIN` = unavailable. **No signal — poll.** | — (read) |
 | `GetFanCurve` | `() → (a(uu) cpu, a(uu) gpu)` | The 8 `(temp_c, pwm)` points of each fan's active curve (pwm `0..=255`). Empty if firmware-only. **No signal.** | — (read) |
 | `GetHardwareLimits` | `() → (uuuu)` | `(spl_min, spl_max, sppt_max, fppt_max)` in watts — the valid TDP range. | — (read) |
@@ -43,6 +43,15 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
 | `GetVersion` | `() → (s)` | The daemon's version string (daemon ≥ 2.4.2). Errors on older daemons → show "unknown". | — (read) |
 | `GetDiagnostics` | `() → (b as)` | `(polkit_ok, missing_action_ids)`. `polkit_ok == false` ⇒ the polkit policy is not installed and **every** gated setter fails with `AuthFailed`. Live check; safe to poll. | — (read) |
 | `SetProfile` | `(s profile)` | **The power-profile lever** (ACPI platform profile / EPP): `power-saver`/`balanced`/`performance`. Decoupled from cooling; defaults to `performance` so the SPL is the real limit. Lower it only for an efficiency bias. | `set-profile` |
+| `SetAcMaxPerformance` | `(b enabled)` | Toggle the **"lock to max on AC"** preference (daemon ≥ 2.7.0). On = plugging in pins Performance/Max/Aggressive + locks power/cooling; off = AC fully manual. Persisted; applied immediately. **Not** rejected while locked (this releases the lock). | `set-profile` |
+
+> **The AC-lock contract (daemon ≥ 2.7.0).** While `AcLocked` is `true`, the
+> daemon **rejects** `SetSpl` / `SetPreset` / `SetProfile` / `SetCoolingLevel`
+> / `SetFanAuto` / `ResetFanCurve` with a "locked on AC" `Failed` error;
+> `SetChargeThreshold` and `SetAcMaxPerformance` still work. The plugin should
+> read `AcLocked` and disable those controls (it folds `!locked` into their
+> `enabled`), and use `AcMaxPerformance` to drive a "Lock to max on AC" toggle.
+> On a daemon < 2.7.0 both properties are absent → never locks, toggle hidden.
 
 ### Properties (read-only, emit `PropertiesChanged`)
 
@@ -54,6 +63,8 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
 | `ChargeEndThreshold` | `y` | Battery charge cap (%). |
 | `ActiveProfile` | `s` | The power-profile / EPP (`power-saver`/`balanced`/`performance`/custom). Defaults to `performance`. This is the **power** lever now (not cooling); surfaced as the first-class **Power mode** control (Performance/Balanced/Eco), separate from Cooling. |
 | `AcConnected` | `b` | Charger plugged in (daemon ≥ 2.4.0). **Emits `PropertiesChanged`** — subscribe instead of polling `IsAcConnected()`. Falls back to the method on older daemons. |
+| `AcLocked` | `b` | Power/cooling controls are **locked** because the device is on AC with the lock preference on (daemon ≥ 2.7.0). Disable the TDP/preset/power-mode/cooling controls while `true`; battery charge stays editable. |
+| `AcMaxPerformance` | `b` | The toggleable **"lock to max on AC" preference** itself (daemon ≥ 2.7.0), vs `AcLocked` (the live state). Drives the Settings toggle. |
 
 ## Feature → UI mapping, by priority
 

@@ -223,7 +223,8 @@ Ally X at a fixed SPL: `power-saver` drew ~13 W, `performance` ~29–40 W.
   now valid, including "full TDP + quiet fans".
 - The daemon still **re-asserts the active curve after any profile write**
   (and on resume), because writing the profile can make the EC drop the
-  custom curve. `fan_curve_follows_profile` is now a no-op.
+  custom curve. (The old `fan_curve_follows_profile` config knob was removed
+  in 2.6.0; a stale line in an existing `config.toml` is silently ignored.)
 
 **Full user manual:** [`docs/MANUAL.md`](docs/MANUAL.md) (English) ·
 [`docs/MANUAL-es.md`](docs/MANUAL-es.md) (Spanish) — every feature, every
