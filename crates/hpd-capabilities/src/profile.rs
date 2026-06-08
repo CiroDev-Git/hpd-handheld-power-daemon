@@ -123,15 +123,32 @@ pub struct RuntimeConfig {
     /// SPL→FPPT multiplier applied by smart-mode `Transition::SetSpl`.
     /// Result is then clamped to `device_limits.fppt_max`.
     pub fppt_factor: f32,
+
+    /// "AC = maximum performance, locked." When `true` (default), plugging
+    /// in the charger pins **Power mode → Performance, TDP → Max, cooling →
+    /// Aggressive** and rejects every user power/cooling write until unplug;
+    /// the device runs flat-out while on wall power and the user's battery
+    /// (DC) preferences are restored on unplug. The battery **charge
+    /// threshold stays editable** — it is the one knob that legitimately
+    /// varies on AC. When `false`, plugging in only bumps the TDP to Max
+    /// (the historic behaviour) and nothing is locked. Hot-reloadable, but a
+    /// toggle takes effect on the next AC plug/unplug edge (a live SIGHUP
+    /// only updates the reported `AcLocked` flag, it does not force/restore
+    /// mid-session).
+    pub ac_max_performance: bool,
 }
 
 impl RuntimeConfig {
     /// Defaults match the historic in-reducer constants: 1.15/1.25 boost
-    /// multipliers, 0.33/0.67 fan-curve inference cut-offs.
+    /// multipliers, 0.33/0.67 fan-curve inference cut-offs. `ac_max_performance`
+    /// defaults **on** — plugging in pins the device to maximum performance
+    /// (Performance / Max TDP / Aggressive) and locks the power/cooling
+    /// levers, extending the historic auto-max-TDP-on-AC behaviour.
     pub const DEFAULT: Self = Self {
         profile_thresholds: ProfileThresholds::DEFAULT,
         sppt_factor: 1.15,
         fppt_factor: 1.25,
+        ac_max_performance: true,
     };
 }
 

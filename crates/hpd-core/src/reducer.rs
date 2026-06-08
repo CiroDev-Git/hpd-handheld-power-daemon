@@ -4,17 +4,17 @@
 
 use tracing::info;
 
-use hpd_capabilities::fan_curve::FanCurveSelection;
+use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
 use hpd_capabilities::power::PowerEnvelopeLimits;
 use hpd_capabilities::power::PowerEnvelopeTarget;
-use hpd_capabilities::profile::{RuntimeConfig, TdpPreset};
+use hpd_capabilities::profile::{ProfileName, RuntimeConfig, TdpPreset};
 use hpd_capabilities::units::PowerMilliwatts;
 use hpd_error::HpdError;
 
 use crate::effect::Effect;
 use crate::inference::infer_fan_curve_from_spl;
 use crate::invariants::validate_power_envelope;
-use crate::state::ProfileState;
+use crate::state::{DcSnapshot, ProfileState};
 use crate::transition::Transition;
 
 /// Combined output of a single [`reduce`] call: the post-transition
@@ -43,6 +43,17 @@ pub fn reduce(
 ) -> Result<ReducerOutput, HpdError> {
     let mut new_state = state.clone();
     let mut effects = Vec::new();
+
+    // "AC = maximum performance" lock: while plugged in with
+    // `ac_max_performance` on, the power/cooling levers are pinned and user
+    // writes are ignored (the battery charge threshold is exempt). This is
+    // the reducer-level backstop; the D-Bus setters also reject up-front so
+    // the caller gets an immediate error. AC / suspend / boot / `Sync*`
+    // rollback / config-reload transitions are never gated.
+    if state.is_ac_connected && config.ac_max_performance && is_locked_write(&transition) {
+        info!(?transition, "Ignored: on AC, locked to maximum performance");
+        return Ok(ReducerOutput { new_state, effects });
+    }
 
     match transition {
         Transition::SetPreset(preset) => {
@@ -166,7 +177,9 @@ pub fn reduce(
         }
 
         Transition::AcPowerChanged(is_plugged) => {
-            // Debounce: ignore no-op transitions.
+            // Debounce: ignore no-op transitions. CRITICAL — without this a
+            // duplicate plug event would re-snapshot the *forced-max* state
+            // as the "DC" state, clobbering the user's real battery prefs.
             if state.is_ac_connected == is_plugged {
                 return Ok(ReducerOutput {
                     new_state: state.clone(),
@@ -175,30 +188,44 @@ pub fn reduce(
             }
 
             let mut output = if is_plugged {
-                info!(preset = %TdpPreset::Max, "Charger plugged: saving DC target and applying preset");
-                let mut temp_output = reduce(
-                    state,
-                    Transition::SetPreset(TdpPreset::Max),
-                    device_limits,
-                    config,
-                )?;
-                temp_output.new_state.last_dc_target = Some(state.power_target.clone());
-                temp_output
-            } else if let Some(ref prev_target) = state.last_dc_target {
+                // Snapshot the user's battery (DC) prefs first so unplug can
+                // restore the full set (TDP + power mode + cooling), then
+                // apply the AC policy.
+                let snapshot = DcSnapshot {
+                    power_target: state.power_target.clone(),
+                    active_profile: state.active_profile.clone(),
+                    active_fan_curve: state.active_fan_curve,
+                    fan_follows_tdp: state.fan_follows_tdp,
+                };
+                let mut o = if config.ac_max_performance {
+                    info!("Charger plugged: locking to maximum performance (Performance / Max / Aggressive)");
+                    force_ac_max_performance(state, device_limits, config)
+                } else {
+                    info!(preset = %TdpPreset::Max, "Charger plugged: applying Max TDP preset");
+                    reduce(
+                        state,
+                        Transition::SetPreset(TdpPreset::Max),
+                        device_limits,
+                        config,
+                    )?
+                };
+                o.new_state.last_dc_state = Some(snapshot);
+                o
+            } else if let Some(snapshot) = state.last_dc_state.clone() {
                 info!(
                     action = "restore_previous",
-                    "Charger unplugged: restoring previous DC target"
+                    "Charger unplugged: restoring battery (DC) state"
                 );
-                reduce(
-                    state,
-                    Transition::SetEnvelope(prev_target.clone()),
-                    device_limits,
-                    config,
-                )?
+                restore_dc_state(state, &snapshot)
             } else {
-                info!(preset = %TdpPreset::Balanced, "Charger unplugged: applying default preset");
+                info!(preset = %TdpPreset::Balanced, "Charger unplugged: no saved DC state, applying default preset");
+                // Reduce on an already-unplugged view so the AC lock (still
+                // showing `is_ac_connected = true` on `state`) doesn't gate
+                // this internal SetPreset into a no-op.
+                let mut dc_view = state.clone();
+                dc_view.is_ac_connected = false;
                 reduce(
-                    state,
+                    &dc_view,
                     Transition::SetPreset(TdpPreset::Balanced),
                     device_limits,
                     config,
@@ -208,9 +235,9 @@ pub fn reduce(
             output.new_state.is_ac_connected = is_plugged;
 
             // Persist even when power_target didn't actually change: we still
-            // mutated last_dc_target / is_ac_connected and those must survive
-            // a reboot. apply_power_target only emits PersistState when
-            // the target changed, so we top it up here if missing.
+            // mutated last_dc_state / is_ac_connected and those must survive
+            // a reboot. The force/legacy paths may not emit PersistState, so
+            // top it up here if missing.
             if !output
                 .effects
                 .iter()
@@ -226,6 +253,22 @@ pub fn reduce(
             // Used by both resume-from-suspend and the daemon's boot
             // re-assert: re-apply the full intended state to hardware so
             // the reported state always matches the device.
+            //
+            // On AC with the lock enabled, re-assert the maximum-performance
+            // policy instead of the persisted levers — we may have booted or
+            // resumed straight into AC (where no `AcPowerChanged` edge fires),
+            // and the device should already be pinned + locked. The charge
+            // threshold is always re-applied (it is exempt from the lock).
+            if state.is_ac_connected && config.ac_max_performance {
+                info!("Boot/resume on AC: re-asserting maximum-performance lock");
+                let mut output = force_ac_max_performance(state, device_limits, config);
+                output
+                    .effects
+                    .push(Effect::ApplyChargeThreshold(state.charge_end_threshold));
+                output.effects.push(Effect::PersistState);
+                return Ok(output);
+            }
+
             info!("Re-applying full power/cooling state to hardware (boot/resume)");
             let mut effects = vec![
                 Effect::ApplyPowerEnvelope(state.power_target.clone()),
@@ -335,6 +378,94 @@ fn reassert_curve_after_profile(new_state: &mut ProfileState, effects: &mut Vec<
     }
 }
 
+/// Whether a transition is a user-initiated power/cooling write that the
+/// "AC = maximum performance" lock suppresses. The battery charge threshold
+/// change, the AC / suspend / boot events, the internal `Sync*` rollbacks
+/// and config reloads are deliberately NOT gated — only the levers a user
+/// would adjust to trade performance for quiet/efficiency.
+fn is_locked_write(transition: &Transition) -> bool {
+    matches!(
+        transition,
+        Transition::SetSpl(_)
+            | Transition::SetPreset(_)
+            | Transition::SetEnvelope(_)
+            | Transition::SetProfile(_)
+            | Transition::SetCoolingLevel(_)
+            | Transition::EnableFanAuto
+            | Transition::ResetFanCurve
+    )
+}
+
+/// Build the forced "AC = maximum performance" state: TDP at the hardware
+/// ceiling (with SPPT/FPPT derived via the boost factors), power mode
+/// `Performance`, cooling curve `Aggressive`, and auto-cooling off (the
+/// curve is pinned explicitly). Returns the new state plus the ordered
+/// `Apply*` effects — power, then profile, then the fan curve **last**
+/// (writing `platform_profile` can make the EC drop the custom curve, so it
+/// must be re-written afterwards). Does **not** emit `PersistState`: callers
+/// add it (and any charge re-apply) so the effect list stays composable.
+fn force_ac_max_performance(
+    base: &ProfileState,
+    device_limits: &PowerEnvelopeLimits,
+    config: &RuntimeConfig,
+) -> ReducerOutput {
+    let spl = device_limits.spl_max;
+    let sppt =
+        PowerMilliwatts(((spl.0 as f32 * config.sppt_factor) as u32).min(device_limits.sppt_max.0));
+    let fppt =
+        PowerMilliwatts(((spl.0 as f32 * config.fppt_factor) as u32).min(device_limits.fppt_max.0));
+    let target = PowerEnvelopeTarget {
+        spl,
+        sppt,
+        fppt: Some(fppt),
+    };
+    let profile = ProfileName::Performance;
+    let curve = FanCurveSelection::Preset(FanCurvePreset::Aggressive);
+
+    let mut new_state = base.clone();
+    new_state.power_target = target.clone();
+    new_state.active_profile = profile.clone();
+    new_state.active_fan_curve = Some(curve);
+    new_state.fan_follows_tdp = false;
+
+    let effects = vec![
+        Effect::ApplyPowerEnvelope(target),
+        Effect::ApplyPlatformProfile(profile),
+        Effect::ApplyFanCurve(curve),
+    ];
+    ReducerOutput { new_state, effects }
+}
+
+/// Restore a previously-captured battery (DC) snapshot on AC unplug,
+/// emitting only the `Apply*` effects for the rails that actually differ
+/// from the current (forced-max) state. Always ends with `PersistState`.
+fn restore_dc_state(current: &ProfileState, snapshot: &DcSnapshot) -> ReducerOutput {
+    let mut new_state = current.clone();
+    let mut effects = Vec::new();
+
+    if new_state.power_target != snapshot.power_target {
+        new_state.power_target = snapshot.power_target.clone();
+        effects.push(Effect::ApplyPowerEnvelope(snapshot.power_target.clone()));
+    }
+    if new_state.active_profile != snapshot.active_profile {
+        new_state.active_profile = snapshot.active_profile.clone();
+        effects.push(Effect::ApplyPlatformProfile(
+            snapshot.active_profile.clone(),
+        ));
+    }
+    if new_state.active_fan_curve != snapshot.active_fan_curve {
+        new_state.active_fan_curve = snapshot.active_fan_curve;
+        match snapshot.active_fan_curve {
+            Some(selection) => effects.push(Effect::ApplyFanCurve(selection)),
+            None => effects.push(Effect::ResetFanCurve),
+        }
+    }
+    new_state.fan_follows_tdp = snapshot.fan_follows_tdp;
+    effects.push(Effect::PersistState);
+
+    ReducerOutput { new_state, effects }
+}
+
 #[cfg(test)]
 mod tests {
     // Test code may use `.unwrap()` / `.expect()` / `panic!` freely;
@@ -359,8 +490,9 @@ mod tests {
             is_ac_connected: false,
             charge_end_threshold: DEFAULT_CHARGE_THRESHOLD,
             fan_follows_tdp: true,
-            last_dc_target: None,
+            last_dc_state: None,
             active_fan_curve: None,
+            ac_locked: false,
         }
     }
 
@@ -455,36 +587,35 @@ mod tests {
     }
 
     #[test]
-    fn test_ac_plugged_persists_last_dc_target_even_when_target_unchanged() {
-        // Regression for Audit §3.5 / Lote 6: when the system is already at
-        // the Turbo target (e.g., a stale boot-time state) and the charger is
-        // plugged in, apply_power_target sees no envelope change and
-        // skips PersistState. But we DO mutate last_dc_target and
-        // is_ac_connected, so we MUST persist or they're lost on reboot.
+    fn test_ac_plugged_persists_dc_snapshot_even_when_envelope_unchanged() {
+        // Regression for Audit §3.5 / Lote 6, updated for the AC-lock feature:
+        // when the system is already at the max envelope and the charger is
+        // plugged in, the power write may emit no envelope change — but we DO
+        // capture last_dc_state and flip is_ac_connected, so PersistState MUST
+        // still fire or those are lost on reboot.
         let limits = PowerEnvelopeLimits {
             spl_min: PowerMilliwatts(7000),
             spl_max: PowerMilliwatts(35000),
             sppt_max: PowerMilliwatts(43000),
             fppt_max: PowerMilliwatts(55000),
         };
-        let config = RuntimeConfig::DEFAULT;
+        let config = RuntimeConfig::DEFAULT; // ac_max_performance = true
 
-        // Start with the exact target that AcPowerChanged(true) -> SetPreset(Turbo)
-        // would produce (35W SPL, sppt = 35000*1.15 = 40250, fppt = 35000*1.25 = 43750).
-        // apply_power_target sees no change and emits no PersistState.
-        let turbo_target = PowerEnvelopeTarget {
+        // Already at the forced-max envelope (35W SPL, sppt=40250, fppt=43750).
+        let max_target = PowerEnvelopeTarget {
             spl: PowerMilliwatts(35_000),
             sppt: PowerMilliwatts(40_250),
             fppt: Some(PowerMilliwatts(43_750)),
         };
         let state = ProfileState {
-            power_target: turbo_target.clone(),
+            power_target: max_target.clone(),
             active_profile: ProfileName::Performance,
             is_ac_connected: false,
             charge_end_threshold: 80,
             fan_follows_tdp: true,
-            last_dc_target: None,
+            last_dc_state: None,
             active_fan_curve: None,
+            ac_locked: false,
         };
 
         let output = reduce(&state, Transition::AcPowerChanged(true), &limits, &config)
@@ -495,10 +626,19 @@ mod tests {
                 .effects
                 .iter()
                 .any(|e| matches!(e, Effect::PersistState)),
-            "AcPowerChanged must emit PersistState even when target is unchanged; got effects={:?}",
+            "AcPowerChanged must emit PersistState even when the envelope is unchanged; got effects={:?}",
             output.effects
         );
-        assert_eq!(output.new_state.last_dc_target, Some(turbo_target));
+        // The DC snapshot captures the pre-plug state verbatim.
+        assert_eq!(
+            output.new_state.last_dc_state,
+            Some(DcSnapshot {
+                power_target: max_target,
+                active_profile: ProfileName::Performance,
+                active_fan_curve: None,
+                fan_follows_tdp: true,
+            })
+        );
         assert!(output.new_state.is_ac_connected);
     }
 
@@ -538,9 +678,10 @@ mod tests {
     }
 
     #[test]
-    fn test_ac_plugged_saves_dc_target_and_applies_max_preset() {
-        // Charger goes in: snapshot the current DC target and ramp SPL to spl_max.
-        let state = setup_state(); // DC, target (15,15,15)
+    fn test_ac_plugged_forces_max_performance_and_snapshots_dc() {
+        // Charger goes in (ac_max_performance default on): snapshot the DC
+        // prefs and pin Performance / Max TDP / Aggressive.
+        let state = setup_state(); // DC: Balanced, fan_follows_tdp=true, curve None
         let out = reduce(
             &state,
             Transition::AcPowerChanged(true),
@@ -548,26 +689,96 @@ mod tests {
             &setup_config(),
         )
         .unwrap();
+
         assert!(out.new_state.is_ac_connected);
+        // DC snapshot captured verbatim for restore on unplug.
         assert_eq!(
-            out.new_state.last_dc_target,
-            Some(state.power_target.clone())
+            out.new_state.last_dc_state,
+            Some(DcSnapshot {
+                power_target: state.power_target.clone(),
+                active_profile: ProfileName::Balanced,
+                active_fan_curve: None,
+                fan_follows_tdp: true,
+            })
         );
+        // Forced to maximum performance on every lever.
         assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(35_000));
+        assert_eq!(out.new_state.active_profile, ProfileName::Performance);
+        assert_eq!(
+            out.new_state.active_fan_curve,
+            Some(FanCurveSelection::Preset(FanCurvePreset::Aggressive))
+        );
+        assert!(!out.new_state.fan_follows_tdp);
+        // Effects push all three levers + persist.
+        assert!(out
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::ApplyPowerEnvelope(_))));
+        assert!(out
+            .effects
+            .contains(&Effect::ApplyPlatformProfile(ProfileName::Performance)));
+        assert!(out
+            .effects
+            .contains(&Effect::ApplyFanCurve(FanCurveSelection::Preset(
+                FanCurvePreset::Aggressive
+            ))));
         assert!(out.effects.contains(&Effect::PersistState));
     }
 
     #[test]
-    fn test_ac_unplugged_restores_saved_dc_target() {
-        // Unplug with a remembered DC target: restore that exact envelope.
-        let saved = PowerEnvelopeTarget {
-            spl: PowerMilliwatts(10_000),
-            sppt: PowerMilliwatts(12_000),
-            fppt: Some(PowerMilliwatts(14_000)),
+    fn test_ac_plugged_legacy_mode_only_maxes_tdp() {
+        // With ac_max_performance OFF, the historic behaviour: only the TDP
+        // ramps to max; power mode + cooling are untouched, nothing is forced.
+        let mut config = setup_config();
+        config.ac_max_performance = false;
+        let state = setup_state(); // Balanced profile, curve None
+
+        let out = reduce(
+            &state,
+            Transition::AcPowerChanged(true),
+            &setup_limits(),
+            &config,
+        )
+        .unwrap();
+
+        assert!(out.new_state.is_ac_connected);
+        assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(35_000));
+        // Profile + cooling left as they were (no forcing).
+        assert_eq!(out.new_state.active_profile, ProfileName::Balanced);
+        assert!(!out
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::ApplyPlatformProfile(_))));
+        // DC snapshot still captured for symmetric restore on unplug.
+        assert!(out.new_state.last_dc_state.is_some());
+    }
+
+    #[test]
+    fn test_ac_unplugged_restores_full_dc_snapshot() {
+        // Unplug with a remembered DC snapshot: restore TDP + power mode +
+        // cooling exactly as they were on battery.
+        let saved = DcSnapshot {
+            power_target: PowerEnvelopeTarget {
+                spl: PowerMilliwatts(10_000),
+                sppt: PowerMilliwatts(12_000),
+                fppt: Some(PowerMilliwatts(14_000)),
+            },
+            active_profile: ProfileName::PowerSaver,
+            active_fan_curve: Some(FanCurveSelection::Preset(FanCurvePreset::Silent)),
+            fan_follows_tdp: false,
         };
         let mut state = setup_state();
+        // Currently locked at forced-max (as if just plugged).
         state.is_ac_connected = true;
-        state.last_dc_target = Some(saved.clone());
+        state.power_target = PowerEnvelopeTarget {
+            spl: PowerMilliwatts(35_000),
+            sppt: PowerMilliwatts(40_250),
+            fppt: Some(PowerMilliwatts(43_750)),
+        };
+        state.active_profile = ProfileName::Performance;
+        state.active_fan_curve = Some(FanCurveSelection::Preset(FanCurvePreset::Aggressive));
+        state.fan_follows_tdp = false;
+        state.last_dc_state = Some(saved.clone());
 
         let out = reduce(
             &state,
@@ -576,18 +787,23 @@ mod tests {
             &setup_config(),
         )
         .unwrap();
+
         assert!(!out.new_state.is_ac_connected);
-        assert_eq!(out.new_state.power_target, saved);
+        assert_eq!(out.new_state.power_target, saved.power_target);
+        assert_eq!(out.new_state.active_profile, ProfileName::PowerSaver);
+        assert_eq!(out.new_state.active_fan_curve, saved.active_fan_curve);
+        assert!(!out.new_state.fan_follows_tdp);
         assert!(out.effects.contains(&Effect::PersistState));
     }
 
     #[test]
-    fn test_ac_unplugged_without_saved_target_applies_balanced_preset() {
-        // Cold case: no DC memory. Fall back to the Balanced preset, which on
-        // [7,35]W is midpoint = 21W.
+    fn test_ac_unplugged_without_snapshot_applies_balanced_preset() {
+        // Cold case: no DC memory (e.g. booted while plugged, then unplugged).
+        // Fall back to the Balanced preset (midpoint of [7,35]W = 21W). The
+        // AC lock must NOT gate this internal restore.
         let mut state = setup_state();
         state.is_ac_connected = true;
-        state.last_dc_target = None;
+        state.last_dc_state = None;
 
         let out = reduce(
             &state,
@@ -1083,5 +1299,140 @@ mod tests {
         .unwrap();
         assert_eq!(out.new_state, state);
         assert!(out.effects.is_empty());
+    }
+
+    // ---------- AC = maximum-performance lock ----------
+
+    /// Helper: a state that is on AC and therefore subject to the lock when
+    /// `ac_max_performance` is on. Mirrors what the executor produces right
+    /// after a plug edge (Performance / Max / Aggressive).
+    fn locked_on_ac_state() -> ProfileState {
+        let mut s = setup_state();
+        s.is_ac_connected = true;
+        s.power_target = PowerEnvelopeTarget {
+            spl: PowerMilliwatts(35_000),
+            sppt: PowerMilliwatts(40_250),
+            fppt: Some(PowerMilliwatts(43_750)),
+        };
+        s.active_profile = ProfileName::Performance;
+        s.active_fan_curve = Some(FanCurveSelection::Preset(FanCurvePreset::Aggressive));
+        s.fan_follows_tdp = false;
+        s
+    }
+
+    #[test]
+    fn test_lock_ignores_power_and_cooling_writes_on_ac() {
+        // Every user power/cooling write is a no-op while locked.
+        let state = locked_on_ac_state();
+        let cfg = setup_config(); // ac_max_performance = true
+        let writes = [
+            Transition::SetSpl(10),
+            Transition::SetPreset(TdpPreset::Eco),
+            Transition::SetEnvelope(PowerEnvelopeTarget {
+                spl: PowerMilliwatts(8_000),
+                sppt: PowerMilliwatts(9_000),
+                fppt: Some(PowerMilliwatts(10_000)),
+            }),
+            Transition::SetProfile(ProfileName::PowerSaver),
+            Transition::SetCoolingLevel(FanCurvePreset::Silent),
+            Transition::EnableFanAuto,
+            Transition::ResetFanCurve,
+        ];
+        for t in writes {
+            let label = format!("{t:?}");
+            let out = reduce(&state, t, &setup_limits(), &cfg).unwrap();
+            assert!(
+                out.effects.is_empty(),
+                "{label} must produce no effects while locked, got {:?}",
+                out.effects
+            );
+            assert_eq!(
+                out.new_state, state,
+                "{label} must not mutate state while locked"
+            );
+        }
+    }
+
+    #[test]
+    fn test_lock_allows_charge_threshold_on_ac() {
+        // The battery charge threshold is exempt from the lock.
+        let state = locked_on_ac_state();
+        let out = reduce(
+            &state,
+            Transition::ChargeThresholdChanged(70),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert_eq!(out.new_state.charge_end_threshold, 70);
+        assert!(out.effects.contains(&Effect::ApplyChargeThreshold(70)));
+    }
+
+    #[test]
+    fn test_lock_inactive_when_feature_disabled() {
+        // On AC but ac_max_performance off → writes apply normally (no lock).
+        let state = locked_on_ac_state();
+        let mut cfg = setup_config();
+        cfg.ac_max_performance = false;
+        let out = reduce(
+            &state,
+            Transition::SetProfile(ProfileName::PowerSaver),
+            &setup_limits(),
+            &cfg,
+        )
+        .unwrap();
+        assert_eq!(out.new_state.active_profile, ProfileName::PowerSaver);
+        assert!(out
+            .effects
+            .contains(&Effect::ApplyPlatformProfile(ProfileName::PowerSaver)));
+    }
+
+    #[test]
+    fn test_system_resumed_on_ac_forces_max_and_charge() {
+        // Boot/resume straight into AC (no plug edge) must re-assert the
+        // forced-max policy plus re-apply the charge threshold.
+        let mut state = setup_state(); // Balanced, curve None, fan_follows true
+        state.is_ac_connected = true;
+        state.charge_end_threshold = 75;
+
+        let out = reduce(
+            &state,
+            Transition::SystemResumed,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+
+        assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(35_000));
+        assert_eq!(out.new_state.active_profile, ProfileName::Performance);
+        assert_eq!(
+            out.new_state.active_fan_curve,
+            Some(FanCurveSelection::Preset(FanCurvePreset::Aggressive))
+        );
+        assert!(out.effects.contains(&Effect::ApplyChargeThreshold(75)));
+        assert!(out.effects.contains(&Effect::PersistState));
+    }
+
+    #[test]
+    fn test_system_resumed_on_battery_reapplies_persisted_state() {
+        // On battery, SystemResumed re-applies the persisted levers verbatim
+        // (no forcing), regardless of ac_max_performance.
+        let mut state = setup_state();
+        state.is_ac_connected = false;
+        state.active_profile = ProfileName::Balanced;
+
+        let out = reduce(
+            &state,
+            Transition::SystemResumed,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+
+        assert_eq!(out.new_state.power_target, state.power_target);
+        assert_eq!(out.new_state.active_profile, ProfileName::Balanced);
+        assert!(out
+            .effects
+            .contains(&Effect::ApplyPlatformProfile(ProfileName::Balanced)));
     }
 }

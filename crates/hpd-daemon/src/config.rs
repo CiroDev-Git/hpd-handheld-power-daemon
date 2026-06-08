@@ -237,6 +237,7 @@ high_frac = 0.80
                 },
                 sppt_factor: 1.10,
                 fppt_factor: 1.30,
+                ac_max_performance: true,
             },
         };
         assert_eq!(cfg.to_runtime(), cfg.runtime);

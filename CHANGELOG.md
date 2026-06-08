@@ -11,6 +11,38 @@ not part of the published repository.
 
 ---
 
+## [2.7.0] — 2026-06-08
+
+### Added
+
+- **"AC = maximum performance, locked."** Plugging in the charger now pins
+  the device to its ceiling — **Power mode → Performance, TDP → Max, cooling
+  → Aggressive** — and **rejects every power/cooling change until unplug**.
+  The user's battery (DC) preferences (TDP + power mode + cooling) are
+  snapshotted on the plug edge and restored verbatim on unplug. The **battery
+  charge threshold stays editable** on AC — it is the one knob that
+  legitimately varies on wall power. On by default; set `ac_max_performance =
+  false` in `/etc/hpd/config.toml` for the historic behaviour (plugging in
+  only bumps the TDP to Max, nothing locked).
+  - **New config flag** `ac_max_performance` (runtime-tunable, default
+    `true`).
+  - **New D-Bus property** `AcLocked: b` — emits `PropertiesChanged` on every
+    plug/unplug edge so clients (the Decky plugin) can disable their controls
+    while locked. The six power/cooling setters (`set_spl`, `set_preset`,
+    `set_profile`, `set_cooling_level`, `set_fan_auto`, `reset_fan_curve`)
+    fail fast with a clear "locked on AC" error while `AcLocked`;
+    `set_charge_threshold` is exempt. The reducer enforces the same rule as a
+    backstop for any client.
+  - **Boot/resume on AC** re-asserts the forced-max policy (the same
+    `SystemResumed` path), so a device booted or resumed straight into AC is
+    already pinned + locked.
+  - **State:** the persisted `last_dc_target` (envelope only) became
+    `last_dc_state` — a full `DcSnapshot` (TDP + power mode + cooling +
+    auto-cooling) so the unplug restore brings back every lever, not just the
+    watts. Old `state.toml` files load cleanly (the field defaults to "no
+    snapshot"; the first unplug after upgrade falls back to the Balanced
+    preset).
+
 ## [2.6.0] — 2026-06-07
 
 ### Removed

@@ -49,6 +49,17 @@
 # sppt_factor = 1.15
 # fppt_factor = 1.25
 
+# "AC = maximum performance, locked." When true (the default), plugging in
+# the charger pins Power mode → Performance, TDP → Max and cooling →
+# Aggressive, and REJECTS every power/cooling change until you unplug — the
+# device runs flat-out on wall power and your battery (DC) preferences are
+# restored on unplug. The battery charge threshold stays editable (it is the
+# one knob that legitimately varies on AC). Set false to keep the historic
+# behaviour (plugging in only bumps the TDP to Max; nothing is locked).
+# A live SIGHUP toggle only updates the reported lock flag; the
+# force/restore applies on the next plug/unplug edge.
+# ac_max_performance = true
+
 # Auto-cooling inference: when `fan_follows_tdp` is on, the daemon maps
 # SPL's position within the hardware range to a FAN CURVE preset (not the
 # platform profile — power and cooling are decoupled). Below `low_frac` →

@@ -88,9 +88,22 @@ impl<B: HwBackend> Executor<B> {
                         fppt_factor = new_config.fppt_factor,
                         low_frac = new_config.profile_thresholds.low_frac,
                         high_frac = new_config.profile_thresholds.high_frac,
+                        ac_max_performance = new_config.ac_max_performance,
                         "ConfigReload applied"
                     );
                     self.config = new_config;
+
+                    // Refresh the derived `ac_locked` flag so a live toggle of
+                    // `ac_max_performance` is reflected in `AcLocked` without
+                    // waiting for the next AC edge. (The forced-max / restore
+                    // *behaviour* still applies on the next plug/unplug — a
+                    // SIGHUP does not force or restore mid-session.)
+                    let mut state = self.state_tx.borrow().clone();
+                    let locked = state.is_ac_connected && self.config.ac_max_performance;
+                    if state.ac_locked != locked {
+                        state.ac_locked = locked;
+                        let _ = self.state_tx.send(state);
+                    }
                 }
                 continue;
             }
@@ -110,7 +123,15 @@ impl<B: HwBackend> Executor<B> {
                 &self.config,
             ) {
                 Ok(output) => {
-                    if self.state_tx.send(output.new_state).is_err() {
+                    // `ac_locked` is derived, not persisted: recompute it from
+                    // the post-transition AC state + live config so the D-Bus
+                    // `AcLocked` property always reflects reality. The reducer
+                    // owns the *behaviour* of the lock; the executor owns this
+                    // reported flag (it holds the authoritative config).
+                    let mut new_state = output.new_state;
+                    new_state.ac_locked =
+                        new_state.is_ac_connected && self.config.ac_max_performance;
+                    if self.state_tx.send(new_state).is_err() {
                         error!("State observers dropped, stopping executor.");
                         break;
                     }

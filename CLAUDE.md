@@ -16,7 +16,7 @@ fan / temperature / power reporting on handheld PCs
 - `hpdctl` (from crate `hpd-cli`) — user-facing CLI that talks to the
   daemon over D-Bus.
 
-Current release: **`2.6.0`** (see `CHANGELOG.md`). The public
+Current release: **`2.7.0`** (see `CHANGELOG.md`). The public
 surface (D-Bus interface, CLI subcommands, on-disk state, polkit action
 IDs) is stable and follows SemVer.
 
@@ -177,6 +177,41 @@ handlers or monitors.
    daemon awaits the executor join (5s timeout, well under systemd's
    90s `TimeoutStopSec`) before closing the D-Bus connection and
    returning.
+
+### AC = maximum performance (the lock)
+
+When `RuntimeConfig::ac_max_performance` is on (**default**), being on wall
+power means "run flat out, hands off":
+
+- **Force on plug.** `Transition::AcPowerChanged(true)` snapshots the user's
+  battery state into `ProfileState::last_dc_state` (a `DcSnapshot` of TDP +
+  power mode + cooling + auto-cooling), then `force_ac_max_performance` pins
+  **Performance / Max TDP / Aggressive** (`fan_follows_tdp` off — the curve is
+  pinned, not inferred). Effects order: power → profile → fan curve **last**
+  (writing `platform_profile` can drop the EC curve). With the flag off, plug
+  only ramps the TDP to Max (the historic behaviour) and nothing locks.
+- **Restore on unplug.** `restore_dc_state` re-applies the `last_dc_state`
+  snapshot (diff-only effects); with no snapshot it falls back to the Balanced
+  preset. The fallback reduces on an `is_ac_connected = false` view so the lock
+  doesn't gate its own internal `SetPreset`.
+- **The lock.** While `is_ac_connected && ac_max_performance`, the reducer
+  treats the seven user power/cooling writes (`SetSpl`, `SetPreset`,
+  `SetEnvelope`, `SetProfile`, `SetCoolingLevel`, `EnableFanAuto`,
+  `ResetFanCurve`) as **no-ops** (`is_locked_write`). The D-Bus setters also
+  `reject_if_locked()` up-front so the caller gets an immediate error.
+  `ChargeThresholdChanged` is **never** gated — the battery limit stays
+  editable. `Sync*` rollbacks, AC/suspend/boot and `ConfigReload` are never
+  gated.
+- **Boot/resume on AC** re-asserts the forced-max policy via the
+  `SystemResumed` arm (no plug edge fires at boot), so a device that boots or
+  resumes straight into AC is already pinned + locked.
+- **Reported state.** `ProfileState::ac_locked` is **derived, never
+  persisted** (`#[serde(skip)]`): the executor recomputes it
+  (`is_ac_connected && config.ac_max_performance`) on every state publish and
+  on `ConfigReload`, and `hpd-dbus` exposes it as the `AcLocked` property so
+  the plugin can disable its controls live. A live SIGHUP toggle of the flag
+  updates `AcLocked` but does **not** force/restore mid-session — that applies
+  on the next AC edge.
 
 State is persisted to **`/var/lib/hpd/state.toml`** via atomic
 temp-file + rename. Under systemd the path is resolved from the
@@ -364,7 +399,7 @@ to override defaults; existing `config.toml` is never overwritten by
 | SIGTERM    | systemd `stop` / `restart`   | Same as SIGINT.                                                                 |
 | SIGHUP     | `systemctl reload` / manual  | Reload `/etc/hpd/config.toml`; push `ConfigReload(new.to_runtime())`. Daemon keeps running. |
 | Resume     | logind `PrepareForSleep`     | Push `Transition::SystemResumed`; reducer re-applies envelope + profile + charge threshold (kernel may have lost them across suspend). |
-| AC plug    | udev `power_supply` event    | Push `Transition::AcPowerChanged(true/false)`; reducer snapshots `last_dc_target` on plug, restores it on unplug. |
+| AC plug    | udev `power_supply` event    | Push `Transition::AcPowerChanged(true/false)`. **On plug** the reducer snapshots the user's battery (DC) state into `last_dc_state` and — when `ac_max_performance` is on (default) — forces **Performance / Max TDP / Aggressive** and sets the lock; **on unplug** it restores the `last_dc_state` snapshot. With `ac_max_performance = false` it only bumps the TDP to Max (historic behaviour). See "AC = maximum performance" below. |
 
 The daemon awaits the executor join after sending `Shutdown` with a
 5s timeout cap (`tokio::time::timeout`), well below systemd's

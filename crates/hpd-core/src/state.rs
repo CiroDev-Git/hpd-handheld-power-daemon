@@ -7,6 +7,27 @@ use hpd_capabilities::power::PowerEnvelopeTarget;
 use hpd_capabilities::profile::ProfileName;
 use serde::{Deserialize, Serialize};
 
+/// Snapshot of the user's **battery (DC)** power + cooling preferences,
+/// captured the moment AC is plugged in and restored verbatim on unplug.
+///
+/// It exists so the "AC = maximum performance" policy can override every
+/// power/cooling lever while plugged and still bring the user's own choices
+/// back when they unplug. Persisted (not `#[serde(skip)]`) so the restore
+/// survives a reboot taken while on AC. Replaces the old TDP-only
+/// `last_dc_target`, which could only remember the envelope.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DcSnapshot {
+    /// Power envelope (SPL / SPPT / FPPT) the user ran on battery.
+    pub power_target: PowerEnvelopeTarget,
+    /// ACPI platform profile (Power mode) the user ran on battery.
+    pub active_profile: ProfileName,
+    /// Fan-curve selection the user ran on battery (`None` = firmware auto).
+    #[serde(default)]
+    pub active_fan_curve: Option<FanCurveSelection>,
+    /// Whether auto-cooling (fan curve follows TDP) was on, on battery.
+    pub fan_follows_tdp: bool,
+}
+
 /// Immutable snapshot of everything the L3 executor needs to know
 /// across transitions and across reboots. Wrapped in a
 /// `tokio::sync::watch` channel and serialised to TOML on disk.
@@ -25,9 +46,11 @@ pub struct ProfileState {
     /// by `EnableFanAuto`. A manual `set_profile` does **not** touch it —
     /// power and cooling are independent.
     pub fan_follows_tdp: bool,
-    /// Last envelope used while running on battery, restored on AC
-    /// unplug. `None` until the first AC plug event mutates it.
-    pub last_dc_target: Option<PowerEnvelopeTarget>,
+    /// The user's battery (DC) power + cooling preferences, snapshotted on
+    /// the battery→AC edge and restored on unplug. `None` until the first
+    /// AC plug event captures it. See [`DcSnapshot`].
+    #[serde(default)]
+    pub last_dc_state: Option<DcSnapshot>,
 
     /// Active custom fan-curve selection. `None` means the firmware's
     /// automatic curve is in charge (the daemon is not managing the fan
@@ -43,4 +66,16 @@ pub struct ProfileState {
     /// rather than trusting a possibly-stale value from disk.
     #[serde(skip)]
     pub is_ac_connected: bool,
+
+    /// **Derived, never persisted.** `true` when the daemon is pinning every
+    /// power/cooling lever to maximum performance because it is on AC and
+    /// `ac_max_performance` is enabled — in which case the reducer (and the
+    /// D-Bus setters) reject user power/cooling writes (the battery charge
+    /// threshold stays editable). The executor recomputes it on every state
+    /// publish (`is_ac_connected && config.ac_max_performance`); it is
+    /// surfaced over D-Bus as `AcLocked` so clients can disable their
+    /// controls. `#[serde(skip)]` because it is a pure function of
+    /// `is_ac_connected` (re-read at boot) and live config.
+    #[serde(skip)]
+    pub ac_locked: bool,
 }

@@ -143,7 +143,7 @@ The daemon writes the **fan curve** at these moments:
 | You run `cool auto` | Switches to auto; the curve is then derived from the current TDP. |
 | In **auto**, you change the TDP (`tdp set` / `preset`) | The fan curve is re-derived from where the TDP sits in your hardware range — `< 33 %` → silent, `33–67 %` → balanced, `> 67 %` → aggressive. The platform profile is **not** touched. |
 | Resume from suspend | The active fan curve (and the profile) are re-applied (the firmware can drop them across sleep). |
-| Plug in AC | The TDP ramps up; in auto, the fan curve follows it. |
+| Plug in AC | By default (`ac_max_performance`) the device **locks to maximum performance**: Power mode → Performance, TDP → Max, cooling → Aggressive, and power/cooling changes are refused until you unplug (the charge limit stays editable). Unplugging restores your battery state. |
 | Boot | The daemon re-applies your **full saved state** (TDP, power mode → configured default, charge limit, fan curve) to the hardware — so it matches the device even after a cold boot reset the firmware to its defaults. |
 
 The **platform profile** is the power/EPP lever. It defaults to
@@ -282,11 +282,22 @@ or a rattling/grinding noise (physical issue).
 
 ## Behaviour on AC, battery and resume
 
-- **Plug in AC:** hpd ramps the power up (and, in auto cooling, the fan
-  curve follows it), then restores your battery setting when you unplug.
+- **Plug in AC — locked to maximum performance.** By default, plugging in
+  the charger pins the device to its ceiling: **Power mode → Performance,
+  TDP → Max, cooling → Aggressive**, and **locks** those controls so nothing
+  can change them while you're on wall power (the CLI and plugin will refuse
+  power/cooling changes with a "locked on AC" message). Your **battery
+  charge limit stays adjustable** — it's the one setting that still makes
+  sense to change while plugged in. When you **unplug**, your exact battery
+  (DC) settings — TDP, Power mode and cooling — are restored.
+  - Don't want the lock? Set `ac_max_performance = false` in
+    `/etc/hpd/config.toml` (then `sudo systemctl reload hpd`). With it off,
+    plugging in only raises the TDP to Max and nothing is locked — the
+    historic behaviour.
 - **Resume from suspend:** hpd re-applies your power, platform profile,
   charge limit and fan curve — fixing the bug where fans could blast at
-  full speed after waking.
+  full speed after waking. If you resume on AC, the maximum-performance lock
+  is re-asserted.
 - **Reboot:** the daemon re-applies your full saved state (TDP, power
   mode, charge limit, fan curve) to the hardware on startup, so what it
   reports always matches the device — even if a cold boot reset the

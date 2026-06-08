@@ -323,12 +323,10 @@ sequenceDiagram
     participant UI as Plugin (UI)
 
     K->>D: evento power_supply (AC0 online=1)
-    D->>D: AcPowerChanged(true) → guarda TDP DC, sube a máx
-    Note over D: is_ac_connected NO emite señal
-    PY->>D: (poll cada ~10 s) is_ac_connected()
-    D-->>PY: true
-    PY-->>UI: push → indicador "⚡ AC"
-    Note over PY,UI: el TDP sí emite señal → el slider se actualiza al instante
+    D->>D: AcPowerChanged(true) → snapshot estado DC, fuerza Performance / Max / Aggressive, set AcLocked
+    D-->>PY: PropertiesChanged: AcConnected=true, AcLocked=true, CurrentSpl, ActiveProfile, FanCurve
+    PY-->>UI: indicador "⚡ AC" + deshabilita TDP / preset / power-mode / cooling (carga sigue editable)
+    Note over D,UI: mientras AcLocked, el daemon rechaza escrituras de potencia/cooling; al desenchufar restaura el snapshot DC
 ```
 
 ### 3.5 Caso de uso — cambio externo (hpdctl en una terminal)
