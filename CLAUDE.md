@@ -238,7 +238,8 @@ hardware at boot.
 ### Authorization
 
 Every privileged D-Bus setter (`set_spl`, `set_preset`,
-`set_charge_threshold`, `set_profile`, `set_fan_auto`) calls
+`set_charge_threshold`, `set_profile`, `set_cooling_level`, `set_fan_auto`,
+`reset_fan_curve`, `set_ac_max_performance`) calls
 `hpd_dbus::polkit::check(...)` *before* enqueuing its `Transition`.
 The check talks to `org.freedesktop.PolicyKit1.Authority` directly
 (no extra crate dep) and asks for one of:
@@ -545,7 +546,8 @@ and exits cleanly rather than letting systemd `SIGKILL` it mid-write.
   renamed, since a rename would break the D-Bus/polkit surface + the
   persisted `state.toml`. Note the `set-profile` polkit action also gates
   the cooling levers (`set_cooling_level` / `set_fan_auto` /
-  `reset_fan_curve`) — it's the shared "low-impact, `auth_admin_keep`"
+  `reset_fan_curve`) and the AC-lock toggle (`set_ac_max_performance`) —
+  it's the shared "low-impact, `auth_admin_keep`"
   bucket, not only the power profile.
 
 ## Where to look for things

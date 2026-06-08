@@ -258,7 +258,7 @@ flowchart LR
         PYc["Python backend"]
     end
     subgraph DAEMON["Daemon hpd"]
-        SET["Setters (polkit-gated):<br/>set_spl, set_preset, set_charge_threshold,<br/>set_cooling_level, set_fan_auto,<br/>reset_fan_curve, set_profile"]
+        SET["Setters (polkit-gated):<br/>set_spl, set_preset, set_charge_threshold,<br/>set_cooling_level, set_fan_auto,<br/>reset_fan_curve, set_profile, set_ac_max_performance"]
         GET["Reads (no polkit):<br/>get_thermal_status, get_fan_curve,<br/>get_hardware_limits, is_ac_connected,<br/>get_diagnostics, get_power_conflicts"]
         PROP["Properties (PropertiesChanged):<br/>current_spl, active_profile,<br/>charge_end_threshold, auto_cooling, fan_curve"]
     end
@@ -431,13 +431,15 @@ What the same thing is called on each side (it all ends at the daemon):
 | Power preset | `preset eco/balanced/max` | `SetPreset(s)` | Eco/Balanced/Max buttons | `set-tdp` |
 | **Cooling (fans)** | `cool set <level>` | `SetCoolingLevel(s)` | Cooling selector | `set-profile` |
 | Auto cooling | `cool auto` | `SetFanAuto()` | Auto toggle | `set-profile` |
-| Cooling to firmware | `cool reset` | `ResetFanCurve()` | Reset button | `set-fan-curve` |
+| Cooling to firmware | `cool reset` | `ResetFanCurve()` | Reset button | `set-profile` |
 | **Power mode (advanced)** | `power set <mode>` | `SetProfile(s)` | Advanced → Power mode | `set-profile` |
+| **AC lock** | `ac-lock on/off` | `SetAcMaxPerformance(b)` | Settings toggle | `set-profile` |
 | **Battery** | `charge set <%>` | `SetChargeThreshold(y)` | battery control | `set-charge` |
 | See temps/RPM/W | `status` / `monitor` | `GetThermalStatus()` | telemetry (poll) | — |
 | See curve | `cool curve` | `GetFanCurve()` | graph | — |
 | See HW range | `limits` | `GetHardwareLimits()` | slider range | — |
 | See AC | `status` | `AcConnected` (prop) / `IsAcConnected()` | indicator (reactive) | — |
+| See AC lock | `ac-lock` | `AcLocked` / `AcMaxPerformance` (props) | banner + Settings toggle | — |
 | Health / polkit | `doctor` | `GetDiagnostics()` | Setup banner | — |
 | Rivals | `doctor` | `GetPowerConflicts()` | Conflict banner | — |
 

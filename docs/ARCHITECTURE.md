@@ -192,6 +192,7 @@ Lote 38 made this uniform across all three apply effects (only
 | `SetProfile(ProfileName)`        | `hpdctl power set`, D-Bus `set_profile`           |
 | `SetCoolingLevel(FanCurvePreset)`| `hpdctl cool set`, D-Bus `set_cooling_level`      |
 | `EnableFanAuto`                  | `hpdctl cool auto`, D-Bus `set_fan_auto`          |
+| `SetAcMaxPerformance(bool)`      | `hpdctl ac-lock on/off`, D-Bus `set_ac_max_performance` |
 | `ChargeThresholdChanged(u8)`     | `hpdctl charge set`, D-Bus `set_charge_threshold` |
 | `AcPowerChanged(bool)`           | `hpd-netlink` udev event                          |
 | `SystemResumed`                  | logind `PrepareForSleep` (resume edge)            |
@@ -349,7 +350,7 @@ dependency.
 |------------------------------------|-------------------------------------------------|--------------------------|
 | `dev.cirodev.hpd.set-tdp`          | `set_spl`, `set_preset`                         | `auth_admin`             |
 | `dev.cirodev.hpd.set-charge`       | `set_charge_threshold`                          | `auth_admin`             |
-| `dev.cirodev.hpd.set-profile`      | `set_profile`, `set_fan_auto`                   | `auth_admin_keep`        |
+| `dev.cirodev.hpd.set-profile`      | `set_profile`, `set_cooling_level`, `set_fan_auto`, `reset_fan_curve`, `set_ac_max_performance` | `auth_admin_keep`        |
 
 `auth_admin_keep` caches the affirmative answer for 5 minutes, so
 flipping between profiles in quick succession does not pile up

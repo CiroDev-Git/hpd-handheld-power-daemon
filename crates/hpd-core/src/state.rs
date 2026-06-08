@@ -86,14 +86,14 @@ pub struct ProfileState {
     pub is_ac_connected: bool,
 
     /// **Derived, never persisted.** `true` when the daemon is pinning every
-    /// power/cooling lever to maximum performance because it is on AC and
-    /// `ac_max_performance` is enabled — in which case the reducer (and the
-    /// D-Bus setters) reject user power/cooling writes (the battery charge
-    /// threshold stays editable). The executor recomputes it on every state
-    /// publish (`is_ac_connected && config.ac_max_performance`); it is
-    /// surfaced over D-Bus as `AcLocked` so clients can disable their
-    /// controls. `#[serde(skip)]` because it is a pure function of
-    /// `is_ac_connected` (re-read at boot) and live config.
+    /// power/cooling lever to maximum performance because it is on AC and the
+    /// `ac_max_performance` preference is enabled — in which case the reducer
+    /// (and the D-Bus setters) reject user power/cooling writes (the battery
+    /// charge threshold stays editable). The executor recomputes it on every
+    /// state publish (`is_ac_connected && ac_max_performance`); it is surfaced
+    /// over D-Bus as `AcLocked` so clients can disable their controls.
+    /// `#[serde(skip)]` because it is a pure function of `is_ac_connected`
+    /// (re-read at boot) and the persisted `ac_max_performance` preference.
     #[serde(skip)]
     pub ac_locked: bool,
 }

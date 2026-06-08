@@ -545,8 +545,14 @@ async fn print_dashboard(proxy: &PowerDaemonProxy<'_>) -> zbus::Result<()> {
     let (cpu_temp, gpu_temp, cpu_rpm, gpu_rpm, soc_power_mw) = proxy.get_thermal_status().await?;
 
     let is_ac = proxy.is_ac_connected().await?;
+    let ac_locked = proxy.ac_locked().await?;
     let power_icon = if is_ac {
-        "⚡ Connected (AC)"
+        if ac_locked {
+            // Explain why power/cooling can't be changed right now.
+            "⚡ Connected (AC) · 🔒 locked at max performance (hpdctl ac-lock off to edit)"
+        } else {
+            "⚡ Connected (AC)"
+        }
     } else {
         "🔋 Battery (DC)"
     };
