@@ -61,6 +61,12 @@ production and on the **session bus** when built with
 Graceful shutdown drains the executor with a 5s timeout, well under
 systemd's default 90s `TimeoutStopSec`.
 
+Both event monitors (netlink AC + logind suspend) run an **outer reconnect
+loop**: if their stream ends or errors (a suspend can perturb the socket),
+they log, back off, and rebuild the subscription rather than dying silently —
+so live AC detection and resume detection survive a suspend (since 2.7.2; see
+[`docs/dev/LIFECYCLE.md`](../../docs/dev/LIFECYCLE.md)).
+
 ## Filesystem layout (production)
 
 | Path                              | Purpose                                            |

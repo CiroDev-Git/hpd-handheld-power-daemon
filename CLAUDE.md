@@ -437,6 +437,16 @@ and exits cleanly rather than letting systemd `SIGKILL` it mid-write.
   monitor runs on a **dedicated std::thread** with its own
   current-thread tokio runtime + `LocalSet`. Don't try to spawn it on
   the main tokio runtime — that's why the manual thread exists.
+- **Both event monitors self-reconnect (since 2.7.2).** The netlink AC
+  monitor and the logind suspend monitor wrap their `stream.next()` loop
+  in an **outer reconnect loop**: a single `Err`/`None` from the stream
+  (a suspend can perturb the socket) used to fall out of the old
+  `while let Some(...)` and silently kill the monitor for the rest of the
+  process — stopping live AC detection or resume detection until a daemon
+  restart. They now log, back off (2 s), and rebuild; the netlink monitor
+  also reconciles the mains node on every (re)connect so a missed edge is
+  still emitted. Don't "simplify" either back to a bare `while let`. The
+  full lifecycle matrix lives in `docs/dev/LIFECYCLE.md`.
 - The `spawn_properties_changed_emitter` task watches the executor's
   `watch::Receiver<ProfileState>` and emits zbus-generated
   `<prop>_changed` notifiers when the underlying field of each D-Bus
