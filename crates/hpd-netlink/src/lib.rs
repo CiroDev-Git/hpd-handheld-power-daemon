@@ -60,88 +60,109 @@ mod linux {
     use super::*;
     use futures_util::StreamExt;
     use tokio_udev::{AsyncMonitorSocket, MonitorBuilder};
-    use tracing::{debug, error};
+    use tracing::{debug, error, warn};
 
     const SUBSYS_POWER: &str = "power_supply";
 
-    /// Block the current task on the udev `power_supply` subsystem and
-    /// forward every AC-plug / AC-unplug edge to `tx` as a
-    /// [`Transition::AcPowerChanged`].
-    ///
-    /// Returns when either (a) the udev socket errors out terminally or
-    /// (b) the executor on the other end of `tx` is dropped (daemon
-    /// shutting down). All other errors are logged and the loop keeps
-    /// running — AC events are recoverable.
-    pub async fn spawn_power_monitor(tx: mpsc::Sender<Transition>) {
-        info!("Starting Netlink monitor (udev) for energy events...");
+    /// Backoff before re-establishing the udev monitor after the stream ends
+    /// or a build fails. Short (AC edges should be picked up promptly) but
+    /// non-zero so a hard failure can't busy-loop.
+    const RECONNECT_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 
-        // 1. Only detect changes in "power_supply"
-        let builder = match MonitorBuilder::new() {
-            Ok(b) => b,
-            Err(e) => {
-                error!("Failed to create udev monitor: {}", e);
-                return;
-            }
-        };
+    /// Build a fresh `power_supply` async monitor socket.
+    fn build_monitor() -> Result<AsyncMonitorSocket, String> {
+        let builder = MonitorBuilder::new().map_err(|e| format!("create monitor: {e}"))?;
+        let builder = builder
+            .match_subsystem(SUBSYS_POWER)
+            .map_err(|e| format!("filter power_supply: {e}"))?;
+        let monitor = builder
+            .listen()
+            .map_err(|e| format!("open udev socket: {e}"))?;
+        AsyncMonitorSocket::new(monitor).map_err(|e| format!("async monitor: {e}"))
+    }
 
-        let builder = match builder.match_subsystem(SUBSYS_POWER) {
-            Ok(b) => b,
-            Err(e) => {
-                error!("Failed to filter power_supply subsystem: {}", e);
-                return;
-            }
-        };
-
-        // 2. Open Netlink socket
-        let monitor = match builder.listen() {
-            Ok(m) => m,
-            Err(e) => {
-                error!("Failed to open udev socket: {}", e);
-                return;
-            }
-        };
-
-        let mut async_monitor = match AsyncMonitorSocket::new(monitor) {
-            Ok(m) => m,
-            Err(e) => {
-                error!("Failed to convert udev monitor into async monitor: {}", e);
-                return;
-            }
-        };
-
-        debug!("Netlink monitor ready. Awaiting for AC/DC events...");
-
-        let root = Path::new(POWER_SUPPLY_ROOT);
-
-        // Seed the last-known state from sysfs so the first real edge — not
-        // the monitor's own startup — is what produces a transition.
-        let mut last_state = read_mains_online_at(root);
-
-        // 3. Infinite sleeping loop (0% CPU). Only awake when an event
-        //    happens. We do NOT trust the event's own node/ONLINE: on USB-C
-        //    handhelds the edge fires on the PD port, not the mains node, so
-        //    on *any* power_supply event we re-read the canonical mains node
-        //    and forward only genuine plug/unplug edges (deduped).
-        while let Some(Ok(_event)) = async_monitor.next().await {
-            let current = read_mains_online_at(root);
-            if let Some(is_ac_plugged) = current {
-                if last_state != current {
-                    last_state = current;
-                    info!(
-                        "⚡ Hardware event detected: Charger connected = {}",
-                        is_ac_plugged
-                    );
-
-                    if tx
-                        .send(Transition::AcPowerChanged(is_ac_plugged))
-                        .await
-                        .is_err()
-                    {
-                        error!("Netlink monitor: Main executor not available. Stopping monitor.");
-                        break;
-                    }
+    /// Re-read the canonical mains node; if it changed vs `last`, forward the
+    /// edge to `tx`. `Err(())` means the executor channel is closed (daemon
+    /// shutting down) — the signal to stop the monitor for good.
+    async fn emit_if_changed(
+        tx: &mpsc::Sender<Transition>,
+        root: &Path,
+        last: &mut Option<bool>,
+    ) -> Result<(), ()> {
+        let current = read_mains_online_at(root);
+        if let Some(is_ac_plugged) = current {
+            if *last != current {
+                *last = current;
+                info!(
+                    "⚡ Hardware event detected: Charger connected = {}",
+                    is_ac_plugged
+                );
+                if tx
+                    .send(Transition::AcPowerChanged(is_ac_plugged))
+                    .await
+                    .is_err()
+                {
+                    error!("Netlink monitor: executor unavailable. Stopping monitor.");
+                    return Err(());
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// Run the udev `power_supply` monitor, forwarding every AC-plug /
+    /// AC-unplug edge to `tx` as a [`Transition::AcPowerChanged`].
+    ///
+    /// Wrapped in an **outer reconnect loop**: an `AsyncMonitorSocket` stream
+    /// can end (`None`) or yield an `Err` — e.g. when a suspend perturbs the
+    /// netlink socket. The old `while let Some(Ok(_))` fell straight out on
+    /// the first such item and silently killed the monitor for the rest of
+    /// the process, stopping live AC detection until the daemon restarted
+    /// (GAP #1 of the 2026-06 lifecycle audit). We now log, back off, rebuild
+    /// the socket, and on every (re)connect reconcile the canonical mains node
+    /// so an edge that happened while we were down (e.g. unplugged mid-suspend)
+    /// is still emitted. Only a dropped `tx` (executor gone, daemon shutting
+    /// down) stops the monitor for good.
+    pub async fn spawn_power_monitor(tx: mpsc::Sender<Transition>) {
+        info!("Starting Netlink monitor (udev) for energy events...");
+        let root = Path::new(POWER_SUPPLY_ROOT);
+        // Seed last-known state from sysfs so the monitor's own startup is not
+        // mistaken for an edge — only genuine plug/unplug edges fire.
+        let mut last_state = read_mains_online_at(root);
+
+        loop {
+            match build_monitor() {
+                Ok(mut async_monitor) => {
+                    debug!("Netlink monitor ready. Awaiting AC/DC events...");
+                    // Reconcile on (re)connect: emit any edge missed while down.
+                    if emit_if_changed(&tx, root, &mut last_state).await.is_err() {
+                        return;
+                    }
+                    // We do NOT trust the event's own node/ONLINE: on USB-C
+                    // handhelds the edge fires on the PD port, not the mains
+                    // node, so on *any* power_supply event we re-read the
+                    // canonical mains node and forward only deduped edges.
+                    loop {
+                        match async_monitor.next().await {
+                            Some(Ok(_event)) => {
+                                if emit_if_changed(&tx, root, &mut last_state).await.is_err() {
+                                    return;
+                                }
+                            }
+                            Some(Err(e)) => {
+                                warn!("udev monitor error: {}; rebuilding socket...", e);
+                                break;
+                            }
+                            None => {
+                                warn!("udev monitor stream ended; rebuilding socket...");
+                                break;
+                            }
+                        }
+                    }
+                }
+                Err(e) => error!("Failed to build udev monitor: {}; retrying...", e),
+            }
+            tokio::time::sleep(RECONNECT_DELAY).await;
         }
     }
 }

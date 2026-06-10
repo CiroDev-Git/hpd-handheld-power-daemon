@@ -22,6 +22,15 @@ On non-Linux targets the crate compiles to a single `async fn` that
 awaits a never-resolving future, so the daemon binary stays buildable
 on macOS / dev hosts without `tokio-udev`.
 
+**Resilience (since 2.7.2):** the monitor runs an outer reconnect loop. A
+udev `AsyncMonitorSocket` stream can end (`None`) or yield an `Err` — e.g.
+when a suspend perturbs the netlink socket — which previously fell out of the
+`while let Some(Ok(_))` and killed live AC detection until a daemon restart.
+It now logs, backs off (2 s), rebuilds the socket, and **reconciles the
+canonical mains node on every (re)connect** so an edge missed while it was
+down (unplugged mid-suspend) is still emitted. Only a dropped `tx` (executor
+gone) stops it for good.
+
 ## Concurrency caveat
 
 `tokio_udev::AsyncMonitorSocket` is **`!Send`**. The daemon hosts

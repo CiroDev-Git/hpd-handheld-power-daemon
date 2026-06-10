@@ -11,6 +11,36 @@ not part of the published repository.
 
 ---
 
+## [2.7.2] — 2026-06-10
+
+### Fixed
+
+- **Event monitors now reconnect instead of dying silently.** Both the
+  netlink/udev AC monitor (`hpd-netlink`) and the logind suspend monitor
+  (`hpd-daemon/src/suspend.rs`) looped on `while let Some(...) = stream.next()`
+  with no recovery: a single `Err`/`None` from the stream — which a suspend
+  can produce by perturbing the underlying socket — fell out of the loop and
+  **killed that monitor for the rest of the process**, silently stopping live
+  AC detection (or resume detection) until the daemon restarted. Each monitor
+  is now wrapped in an **outer reconnect loop**: on a dropped stream it logs,
+  backs off (2 s), and rebuilds the subscription. The netlink monitor
+  additionally **reconciles the canonical mains node on every (re)connect**, so
+  an AC edge that happened while it was down (e.g. unplugged mid-suspend) is
+  still emitted. Only a dropped executor channel (daemon shutting down) stops a
+  monitor for good. Found in the 2026-06 lifecycle audit (GAP #1); see
+  [`docs/dev/LIFECYCLE.md`](docs/dev/LIFECYCLE.md).
+- `hpd-netlink`'s `tokio` dependency gains the `time` feature (for the
+  reconnect backoff).
+
+### Notes
+
+- The post-resume AC re-read (2.7.1) was **confirmed correct on-device** during
+  the audit — the daemon re-reads `is_ac_connected` on every `SystemResumed`
+  and logs `Boot/resume on AC|battery` accordingly; there is no AC-read race at
+  the daemon level. The "AC not taken after suspend" symptom was traced to the
+  plugin's connection going stale (fixed in plugin 2.10.1), plus this monitor
+  fragility.
+
 ## [2.7.1] — 2026-06-08
 
 ### Fixed

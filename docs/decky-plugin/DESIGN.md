@@ -386,6 +386,16 @@ The monitor:
 3. If the bus connection itself drops, falls back to a 5-second poll
    loop until reconnected, then re-subscribes.
 
+> **Connection recovery (implemented; see [`docs/dev/LIFECYCLE.md`](../dev/LIFECYCLE.md)).**
+> Three distinct triggers, because `is_connected` only proves the dbus-next
+> objects exist, not that the socket is alive: (a) `NameOwnerChanged` — the
+> *daemon* left/returned → keep the bus + re-prime; (b) `wait_for_disconnect()`
+> — **our own** socket dropped (e.g. across a suspend, daemon still up, so no
+> `NameOwnerChanged`) → tear the bus down + rebuild (`_handle_bus_lost`);
+> (c) the health watchdog — `is_connected` but the AC poll is dead (re-prime)
+> or alive-but-failing (`_ac_poll_fail_streak ≥ AC_POLL_BROKEN_THRESHOLD` →
+> rebuild). (c)'s alive-but-failing arm is the plugin 2.10.1 post-suspend fix.
+
 Output is a `HealthSnapshot` dataclass pushed to the frontend any
 time it changes:
 

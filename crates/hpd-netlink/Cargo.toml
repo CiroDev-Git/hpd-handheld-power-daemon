@@ -10,7 +10,7 @@ rust-version.workspace = true
 description          = "udev power-supply event monitor for hpd (layer L0; Linux-only, no-op stub on other platforms)."
 
 [dependencies]
-tokio        = { workspace = true, features = ["rt", "macros", "net"] }
+tokio        = { workspace = true, features = ["rt", "macros", "net", "time"] }
 futures-util = { workspace = true }
 tracing      = { workspace = true }
 hpd-core     = { path = "../hpd-core" }
