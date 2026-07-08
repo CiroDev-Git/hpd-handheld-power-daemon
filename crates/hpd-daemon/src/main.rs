@@ -273,7 +273,17 @@ where
             l
         }
         Err(e) => {
-            error!("CRITICAL: Cannot read hardware limits: {}. Exiting.", e);
+            error!(
+                error = %e,
+                "CRITICAL: Cannot read hardware power limits from \
+                 /sys/class/firmware-attributes/asus-armoury/attributes — exiting. This almost \
+                 always means the kernel's `asus-armoury` firmware-attributes driver is not \
+                 loaded (too old a kernel, or booted into a rescue/LTS kernel that predates it). \
+                 Check `journalctl -k | grep asus` and `ls /sys/class/firmware-attributes/`; \
+                 booting the distro's regular (non-LTS) kernel usually resolves this. Under \
+                 systemd this failure repeats on every restart — StartLimitBurst in hpd.service \
+                 caps the loop; see `systemctl status hpd` once it trips."
+            );
             return Err(e.into());
         }
     };

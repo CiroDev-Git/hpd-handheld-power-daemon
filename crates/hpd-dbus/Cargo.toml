@@ -29,7 +29,15 @@ tracing          = { workspace = true }
 # `check_comments` enabled it rejects `--` inside `<!-- ... -->`, the exact
 # rule Python's expat (used by the Decky plugin's dbus-next) enforces and
 # that lenient parsers like libxml2 / gdbus silently tolerate.
-quick-xml        = "0.36"
+#
+# Floor pinned to 0.41 (not the crate's MSRV floor) to clear two HIGH
+# (7.5) RUSTSEC advisories in 0.36.2 — RUSTSEC-2026-0194 (quadratic
+# runtime on duplicate start-tag attributes) and RUSTSEC-2026-0195
+# (unbounded namespace-declaration allocation, memory-exhaustion DoS).
+# Dev-only (never ships in the release binary), but `cargo audit` scans
+# the full Cargo.lock including dev-deps, so an unpatched version still
+# fails the supply-chain CI gate.
+quick-xml        = "0.41"
 # Pull in `testing::MockBackend` so a `PowerDaemonInterface` can be built in
 # the test and its introspection XML rendered.
 hpd-capabilities = { path = "../hpd-capabilities", features = ["testing"] }

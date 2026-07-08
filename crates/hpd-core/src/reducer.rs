@@ -304,16 +304,24 @@ pub fn reduce(
         }
 
         Transition::EnableFanAuto => {
+            // Infer and apply the curve directly (mirrors SetCoolingLevel)
+            // instead of recursing into SetEnvelope(power_target): that
+            // recursion only emitted effects when the envelope "changed",
+            // so re-engaging auto-cooling at an unchanged TDP silently left
+            // the stale manual curve on the EC and never persisted the flag.
             if !new_state.fan_follows_tdp {
                 info!("Enabling auto cooling profile (follows TDP)");
                 new_state.fan_follows_tdp = true;
 
-                return reduce(
-                    &new_state,
-                    Transition::SetEnvelope(new_state.power_target.clone()),
+                let inferred_curve = infer_fan_curve_from_spl(
+                    &new_state.power_target,
                     device_limits,
-                    config,
+                    &config.profile_thresholds,
                 );
+                let selection = FanCurveSelection::Preset(inferred_curve);
+                new_state.active_fan_curve = Some(selection);
+                effects.push(Effect::ApplyFanCurve(selection));
+                effects.push(Effect::PersistState);
             }
         }
 
@@ -454,15 +462,26 @@ fn is_locked_write(transition: &Transition) -> bool {
 /// the configured boost factors, each clamped to its hardware `*_max` rail.
 /// Single source of the "smart-mode" envelope maths shared by
 /// `Transition::SetSpl` and [`force_ac_max_performance`].
+///
+/// Also floors SPPT at `spl` and FPPT at `sppt`: `RuntimeConfig::sppt_factor`
+/// / `fppt_factor` are operator-tunable (`config.toml`, hot-reloaded via
+/// SIGHUP) and `RuntimeConfig::sanitized` only rejects clearly-broken values,
+/// not every factor combination that could undershoot at a given SPL/rail
+/// ceiling. Without this floor a legal-looking factor could still produce
+/// `SPPT < SPL` or `FPPT < SPPT`, which `validate_power_envelope` then
+/// rejects — silently failing *every* `SetSpl`/`SetPreset` (and the AC-lock's
+/// own forced-max envelope) until the operator noticed the config was bad.
 fn derive_boosted_envelope(
     spl: PowerMilliwatts,
     device_limits: &PowerEnvelopeLimits,
     config: &RuntimeConfig,
 ) -> PowerEnvelopeTarget {
-    let sppt =
+    let sppt_raw =
         PowerMilliwatts(((spl.0 as f32 * config.sppt_factor) as u32).min(device_limits.sppt_max.0));
-    let fppt =
+    let sppt = PowerMilliwatts(sppt_raw.0.max(spl.0));
+    let fppt_raw =
         PowerMilliwatts(((spl.0 as f32 * config.fppt_factor) as u32).min(device_limits.fppt_max.0));
+    let fppt = PowerMilliwatts(fppt_raw.0.max(sppt.0));
     PowerEnvelopeTarget {
         spl,
         sppt,
@@ -987,22 +1006,27 @@ mod tests {
     // ---------- EnableFanAuto ----------
 
     #[test]
-    fn test_enable_fan_auto_flips_flag_when_previously_disabled() {
-        // Today the re-evaluation produces zero effects because the inferred
-        // profile is only re-applied behind an envelope change in
-        // apply_power_target; the contract for this transition is just
-        // that the flag flips. Persistence of the flag itself is a separate
-        // concern tracked in the audit.
-        let mut state = setup_state();
+    fn test_enable_fan_auto_infers_and_applies_curve_and_persists() {
+        // Regression for Audit §2.1 (2026-07): re-engaging auto-cooling must
+        // land on the curve matching the *current* TDP immediately, not wait
+        // for the next SetSpl/SetEnvelope to happen to change the envelope —
+        // and it must persist, or the flag reverts to manual on restart.
+        use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
+        let mut state = setup_state(); // spl = 15_000mW
         state.fan_follows_tdp = false;
         let out = reduce(
             &state,
             Transition::EnableFanAuto,
-            &setup_limits(),
-            &setup_config(),
+            &setup_limits(), // [7_000, 35_000]mW
+            &setup_config(), // low_frac=0.33, high_frac=0.67
         )
         .unwrap();
         assert!(out.new_state.fan_follows_tdp);
+        // 15_000mW in [7_000, 35_000] -> fraction ~0.286 -> Silent.
+        let silent = FanCurveSelection::Preset(FanCurvePreset::Silent);
+        assert_eq!(out.new_state.active_fan_curve, Some(silent));
+        assert!(out.effects.contains(&Effect::ApplyFanCurve(silent)));
+        assert!(out.effects.contains(&Effect::PersistState));
     }
 
     #[test]
@@ -1102,6 +1126,40 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(35_000));
+    }
+
+    #[test]
+    fn test_set_spl_near_hw_ceiling_floors_sppt_fppt_at_spl() {
+        // Regression for Audit §2.3 (2026-07): `derive_boosted_envelope`'s
+        // clamp-to-`*_max` can put SPPT/FPPT *below* SPL on hardware whose
+        // boost rails don't leave much headroom above `spl_max`, even with
+        // an entirely valid (>= 1.0) boost factor — e.g. sppt_max = 36W is
+        // only 1W above spl_max = 35W, so 35W * 1.15 = 40.25W clamps down to
+        // 36W, which is still >= 35W here but a tighter rail would dip below
+        // it. Without the floor this would fail validate_power_envelope's
+        // `SPPT >= SPL` invariant and reject *every* SetSpl near the
+        // ceiling. Use a pathological rail (sppt_max == spl_max) to force
+        // the floor to actually bind.
+        let state = setup_state();
+        let tight_limits = PowerEnvelopeLimits {
+            spl_min: PowerMilliwatts(7_000),
+            spl_max: PowerMilliwatts(35_000),
+            sppt_max: PowerMilliwatts(35_000), // no headroom above SPL
+            fppt_max: PowerMilliwatts(35_000),
+        };
+        let out = reduce(
+            &state,
+            Transition::SetSpl(35),
+            &tight_limits,
+            &setup_config(), // sppt_factor=1.15, fppt_factor=1.25 (both >= 1.0)
+        )
+        .expect("floored envelope must satisfy FPPT >= SPPT >= SPL, not be rejected");
+        assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(35_000));
+        assert_eq!(out.new_state.power_target.sppt, PowerMilliwatts(35_000));
+        assert_eq!(
+            out.new_state.power_target.fppt,
+            Some(PowerMilliwatts(35_000))
+        );
     }
 
     // ---------- SetEnvelope invariant (FPPT >= SPPT) ----------

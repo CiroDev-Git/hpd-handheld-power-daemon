@@ -566,7 +566,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hpd-backend-asus"
-version = "2.7.2"
+version = "2.7.3"
 dependencies = [
  "hpd-capabilities",
  "hpd-error",
@@ -575,7 +575,7 @@ dependencies = [
 
 [[package]]
 name = "hpd-capabilities"
-version = "2.7.2"
+version = "2.7.3"
 dependencies = [
  "hpd-error",
  "serde",
@@ -583,16 +583,17 @@ dependencies = [
 
 [[package]]
 name = "hpd-cli"
-version = "2.7.2"
+version = "2.7.3"
 dependencies = [
  "clap",
+ "hpd-dbus",
  "tokio",
  "zbus",
 ]
 
 [[package]]
 name = "hpd-core"
-version = "2.7.2"
+version = "2.7.3"
 dependencies = [
  "hpd-capabilities",
  "hpd-error",
@@ -604,7 +605,7 @@ dependencies = [
 
 [[package]]
 name = "hpd-daemon"
-version = "2.7.2"
+version = "2.7.3"
 dependencies = [
  "futures-util",
  "hpd-backend-asus",
@@ -623,7 +624,7 @@ dependencies = [
 
 [[package]]
 name = "hpd-dbus"
-version = "2.7.2"
+version = "2.7.3"
 dependencies = [
  "hpd-capabilities",
  "hpd-core",
@@ -635,14 +636,14 @@ dependencies = [
 
 [[package]]
 name = "hpd-error"
-version = "2.7.2"
+version = "2.7.3"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "hpd-netlink"
-version = "2.7.2"
+version = "2.7.3"
 dependencies = [
  "futures-util",
  "hpd-core",
@@ -653,7 +654,7 @@ dependencies = [
 
 [[package]]
 name = "hpd-sysfs"
-version = "2.7.2"
+version = "2.7.3"
 dependencies = [
  "hpd-error",
  "tempfile",
@@ -966,9 +967,9 @@ dependencies = [
 
 [[package]]
 name = "quick-xml"
-version = "0.36.2"
+version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7649a7b4df05aed9ea7ec6f628c67c9953a43869b8bc50929569b2999d443fe"
+checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
 dependencies = [
  "memchr",
 ]

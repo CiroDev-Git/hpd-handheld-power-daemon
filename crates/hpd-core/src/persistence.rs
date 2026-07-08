@@ -5,6 +5,7 @@
 use crate::state::ProfileState;
 use std::path::PathBuf;
 use tokio::fs;
+use tokio::io::AsyncWriteExt;
 use tracing::{debug, error};
 
 /// Owns the path to the TOML state file and handles atomic writes
@@ -45,9 +46,18 @@ impl StatePersister {
         }
     }
 
-    /// Writes `state` to disk via temp-file + rename for atomicity.
-    /// Errors are logged but never propagated: a persistence failure
-    /// must not bring the daemon down.
+    /// Writes `state` to disk via temp-file + `fsync` + rename for
+    /// durability, not just crash-atomicity. Errors are logged but never
+    /// propagated: a persistence failure must not bring the daemon down.
+    ///
+    /// The rename alone only protects against a crash mid-write (the old
+    /// name still points at the last complete file); it does nothing for a
+    /// power loss between the write returning and the bytes actually
+    /// reaching disk — a real scenario on a handheld that can lose power by
+    /// draining its battery to zero rather than shutting down cleanly.
+    /// `sync_all` forces both the temp file's data and its metadata to
+    /// stable storage before the rename lands, so a hard power-cut can
+    /// never leave `state.toml` truncated or empty.
     pub async fn save(&self, state: &ProfileState) {
         let content = match toml::to_string_pretty(state) {
             Ok(c) => c,
@@ -58,10 +68,22 @@ impl StatePersister {
         };
 
         let tmp_path = self.path.with_extension("tmp");
-        if let Err(e) = fs::write(&tmp_path, content).await {
+        let mut file = match fs::File::create(&tmp_path).await {
+            Ok(f) => f,
+            Err(e) => {
+                error!("Failed to create temporary state file: {}", e);
+                return;
+            }
+        };
+        if let Err(e) = file.write_all(content.as_bytes()).await {
             error!("Failed to write temporary state file: {}", e);
             return;
         }
+        if let Err(e) = file.sync_all().await {
+            error!("Failed to fsync temporary state file: {}", e);
+            return;
+        }
+        drop(file); // close before rename; some platforms disallow renaming an open handle
 
         if let Err(e) = fs::rename(&tmp_path, &self.path).await {
             error!("Failed to commit state file: {}", e);

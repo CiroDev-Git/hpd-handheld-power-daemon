@@ -36,4 +36,14 @@ impl SysfsIo for RealSysfs {
     fn exists(&self, path: impl AsRef<Path>) -> bool {
         path.as_ref().exists()
     }
+
+    fn read_dir_names(&self, path: impl AsRef<Path>) -> Vec<String> {
+        let Ok(entries) = fs::read_dir(path.as_ref()) else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .collect()
+    }
 }

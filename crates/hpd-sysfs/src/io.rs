@@ -23,4 +23,13 @@ pub trait SysfsIo: Send + Sync {
     /// code to detect whether a feature is available on the running
     /// hardware.
     fn exists(&self, path: impl AsRef<Path>) -> bool;
+
+    /// Lists the entry names (just the final path component, not full
+    /// paths) directly under `path`, or an empty `Vec` if the directory
+    /// does not exist or cannot be read. Infallible like [`Self::exists`]
+    /// rather than `Result`-returning like [`Self::read_string`]: callers
+    /// scanning a sysfs class directory (e.g. `power_supply`) for nodes
+    /// matching a runtime attribute treat "directory missing" the same as
+    /// "no matching nodes", so there is no error state worth distinguishing.
+    fn read_dir_names(&self, path: impl AsRef<Path>) -> Vec<String>;
 }

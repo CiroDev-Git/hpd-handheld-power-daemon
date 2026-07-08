@@ -285,6 +285,14 @@ impl<B: HwBackend> Executor<B> {
     /// it (hardware fully unreadable) leaves state diverged and logs a
     /// CRITICAL — by then we have no authoritative value to converge
     /// on, and refusing to drop pending effects is safer than guessing.
+    ///
+    /// Enqueues the `Sync*` transition with `try_send`, not `send().await`:
+    /// this runs on the executor's own task, on the *same* bounded channel
+    /// (`TRANSITION_CHANNEL_CAPACITY`) it drains, so an `.await` here would
+    /// block the only consumer that could ever free up capacity — a full
+    /// channel would deadlock the executor (and with it the whole daemon)
+    /// forever. Dropping a rollback under saturation is safe: the next
+    /// boot/resume re-assert reconciles state against hardware anyway.
     async fn rollback<F>(&self, effect_label: &'static str, err: HpdError, build_sync_transition: F)
     where
         F: FnOnce() -> Result<Transition, HpdError>,
@@ -296,11 +304,17 @@ impl<B: HwBackend> Executor<B> {
                     effect = effect_label,
                     "Rolling back in-memory state to match hardware"
                 );
-                if self.internal_tx.send(transition).await.is_err() {
-                    error!(
+                match self.internal_tx.try_send(transition) {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Full(_)) => error!(
+                        effect = effect_label,
+                        "Rollback transition dropped: executor channel is full \
+                         (state will reconcile on the next boot/resume re-assert)"
+                    ),
+                    Err(mpsc::error::TrySendError::Closed(_)) => error!(
                         effect = effect_label,
                         "Rollback transition could not be sent (executor channel closed)"
-                    );
+                    ),
                 }
             }
             Err(read_err) => error!(
@@ -309,5 +323,103 @@ impl<B: HwBackend> Executor<B> {
                 "CRITICAL: hardware state unreadable after write failure"
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Test code may use `.unwrap()` / `.expect()` / `panic!` freely; the
+    // strict bar in `[workspace.lints.clippy]` applies to production code
+    // only.
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use hpd_capabilities::power::PowerEnvelopeTarget;
+    use hpd_capabilities::profile::ProfileName;
+    use hpd_capabilities::testing::MockBackend;
+    use hpd_capabilities::units::PowerMilliwatts;
+    use std::time::Duration;
+
+    fn limits() -> PowerEnvelopeLimits {
+        PowerEnvelopeLimits {
+            spl_min: PowerMilliwatts(7_000),
+            spl_max: PowerMilliwatts(35_000),
+            sppt_max: PowerMilliwatts(43_000),
+            fppt_max: PowerMilliwatts(55_000),
+        }
+    }
+
+    fn sample_state() -> ProfileState {
+        ProfileState {
+            power_target: PowerEnvelopeTarget {
+                spl: PowerMilliwatts(15_000),
+                sppt: PowerMilliwatts(15_000),
+                fppt: Some(PowerMilliwatts(15_000)),
+            },
+            active_profile: ProfileName::Balanced,
+            is_ac_connected: false,
+            charge_end_threshold: 80,
+            fan_follows_tdp: true,
+            last_dc_state: None,
+            active_fan_curve: None,
+            ac_max_performance: true,
+            ac_locked: false,
+        }
+    }
+
+    /// Regression for Audit §2.2 (2026-07): `rollback` used to `.await` a
+    /// `send()` on the *same* bounded channel the executor's own `run()`
+    /// loop drains. Had that channel ever been saturated when a rollback
+    /// fired, the `.await` would never resolve — the only task that could
+    /// free capacity is the one blocked on the send — deadlocking the
+    /// executor, and with it the whole daemon, forever. `try_send` must
+    /// return immediately instead, regardless of channel state.
+    #[tokio::test]
+    async fn rollback_does_not_block_when_channel_is_saturated() {
+        let backend = MockBackend::new(sample_state().power_target.clone(), limits());
+
+        let path = std::env::temp_dir().join(format!(
+            "hpd_executor_rollback_test_{}.toml",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let persister = crate::persistence::StatePersister::new(&path);
+
+        // Capacity-1 channel, saturated by a transition nothing ever drains
+        // (this test never spawns `run()`), so any `.await`-based send
+        // would hang forever.
+        let (tx, rx) = mpsc::channel(1);
+        tx.try_send(Transition::Shutdown)
+            .expect("first send into an empty capacity-1 channel must succeed");
+
+        let (executor, _state_rx) = Executor::new(
+            backend,
+            sample_state(),
+            limits(),
+            RuntimeConfig::DEFAULT,
+            rx,
+            tx,
+            persister,
+        );
+
+        let sync_target = PowerEnvelopeTarget {
+            spl: PowerMilliwatts(10_000),
+            sppt: PowerMilliwatts(11_500),
+            fppt: Some(PowerMilliwatts(12_500)),
+        };
+        let result = tokio::time::timeout(
+            Duration::from_millis(500),
+            executor.rollback("Test", HpdError::FeatureUnsupported, || {
+                Ok(Transition::SyncPowerTarget(sync_target.clone()))
+            }),
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "rollback must return promptly on a saturated channel, not hang"
+        );
+
+        let _ = std::fs::remove_file(&path);
     }
 }
