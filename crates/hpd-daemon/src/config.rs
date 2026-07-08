@@ -128,9 +128,15 @@ impl DaemonConfig {
     /// * parse error  → defaults (warn log).
     ///
     /// Never returns `Err` and never panics: daemon survival outranks
-    /// honouring an operator's typo.
+    /// honouring an operator's typo. This includes an operator's *valid*
+    /// TOML with out-of-range runtime values (e.g. `sppt_factor = 0.1`,
+    /// `high_frac < low_frac`) — those parse cleanly but would otherwise
+    /// silently break the reducer, so the parsed `runtime` subset is passed
+    /// through [`RuntimeConfig::sanitized`] before returning, on both this
+    /// initial load and every `SIGHUP` reload (`hpd-daemon/src/main.rs`
+    /// calls `load` again, not a raw parse).
     pub fn load(path: &Path) -> Self {
-        match std::fs::read_to_string(path) {
+        let mut cfg = match std::fs::read_to_string(path) {
             Ok(contents) => match toml::from_str::<Self>(&contents) {
                 Ok(cfg) => {
                     info!(path = %path.display(), "Loaded config");
@@ -149,7 +155,18 @@ impl DaemonConfig {
                 warn!(path = %path.display(), error = %e, "Cannot read config, using defaults");
                 Self::default()
             }
+        };
+
+        let sanitized = cfg.runtime.clone().sanitized();
+        if sanitized != cfg.runtime {
+            warn!(
+                path = %path.display(),
+                "Config has out-of-range runtime values (sppt_factor/fppt_factor < 1.0, or an \
+                 inverted/out-of-bounds profile_thresholds range); clamped to safe defaults"
+            );
+            cfg.runtime = sanitized;
         }
+        cfg
     }
 
     /// Project the hot-swappable subset that travels with

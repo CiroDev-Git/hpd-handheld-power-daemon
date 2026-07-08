@@ -89,6 +89,29 @@ impl ProfileThresholds {
         low_frac: 0.33,
         high_frac: 0.67,
     };
+
+    /// Repair operator-supplied values that would otherwise silently break
+    /// the reducer's auto-cooling curve inference (`hpd-core`'s
+    /// `infer_fan_curve_from_spl`): each fraction is clamped into
+    /// `[0.0, 1.0]`, and if the result still has `low_frac > high_frac` (or
+    /// either input was NaN/infinite) the whole pair falls back to
+    /// [`Self::DEFAULT`] rather than leaving an inverted range that would
+    /// make the tier lookup pick the wrong preset. Never errors — a config
+    /// typo must never stop the daemon from starting.
+    pub fn sanitized(self) -> Self {
+        if !self.low_frac.is_finite() || !self.high_frac.is_finite() {
+            return Self::DEFAULT;
+        }
+        let low_frac = self.low_frac.clamp(0.0, 1.0);
+        let high_frac = self.high_frac.clamp(0.0, 1.0);
+        if low_frac > high_frac {
+            return Self::DEFAULT;
+        }
+        Self {
+            low_frac,
+            high_frac,
+        }
+    }
 }
 
 impl Default for ProfileThresholds {
@@ -133,6 +156,34 @@ impl RuntimeConfig {
         sppt_factor: 1.15,
         fppt_factor: 1.25,
     };
+
+    /// Repair operator-supplied values from `config.toml` that would
+    /// otherwise silently misbehave. `sppt_factor`/`fppt_factor` below `1.0`
+    /// (or non-finite) fall back to [`Self::DEFAULT`]'s multiplier: a
+    /// factor `< 1.0` asks for SPPT/FPPT *below* SPL, which the reducer's
+    /// `derive_boosted_envelope` already floors defensively at apply time,
+    /// but a config that requests it is almost certainly a typo (e.g.
+    /// `1.15` fat-fingered as `.115`) rather than intent, so we replace it
+    /// outright instead of silently relying on the floor everywhere.
+    /// `profile_thresholds` is delegated to
+    /// [`ProfileThresholds::sanitized`]. Never errors — a config typo must
+    /// never stop the daemon from starting.
+    pub fn sanitized(self) -> Self {
+        let valid_factor = |f: f32| f.is_finite() && f >= 1.0;
+        Self {
+            profile_thresholds: self.profile_thresholds.sanitized(),
+            sppt_factor: if valid_factor(self.sppt_factor) {
+                self.sppt_factor
+            } else {
+                Self::DEFAULT.sppt_factor
+            },
+            fppt_factor: if valid_factor(self.fppt_factor) {
+                self.fppt_factor
+            } else {
+                Self::DEFAULT.fppt_factor
+            },
+        }
+    }
 }
 
 impl Default for RuntimeConfig {
@@ -310,5 +361,89 @@ mod tests {
                 err
             );
         }
+    }
+
+    // ---------- sanitized() — Audit §2.3 (2026-07) ----------
+
+    #[test]
+    fn thresholds_sanitized_passes_through_valid_values() {
+        let t = ProfileThresholds {
+            low_frac: 0.25,
+            high_frac: 0.75,
+        };
+        assert_eq!(t.clone().sanitized(), t);
+    }
+
+    #[test]
+    fn thresholds_sanitized_clamps_out_of_range_fractions() {
+        let t = ProfileThresholds {
+            low_frac: -0.5,
+            high_frac: 1.5,
+        };
+        assert_eq!(
+            t.sanitized(),
+            ProfileThresholds {
+                low_frac: 0.0,
+                high_frac: 1.0,
+            }
+        );
+    }
+
+    #[test]
+    fn thresholds_sanitized_falls_back_to_default_when_inverted() {
+        let t = ProfileThresholds {
+            low_frac: 0.9,
+            high_frac: 0.1,
+        };
+        assert_eq!(t.sanitized(), ProfileThresholds::DEFAULT);
+    }
+
+    #[test]
+    fn thresholds_sanitized_falls_back_to_default_on_non_finite() {
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let t = ProfileThresholds {
+                low_frac: bad,
+                high_frac: 0.67,
+            };
+            assert_eq!(t.sanitized(), ProfileThresholds::DEFAULT);
+        }
+    }
+
+    #[test]
+    fn runtime_config_sanitized_passes_through_valid_factors() {
+        let cfg = RuntimeConfig {
+            profile_thresholds: ProfileThresholds::DEFAULT,
+            sppt_factor: 1.20,
+            fppt_factor: 1.40,
+        };
+        assert_eq!(cfg.clone().sanitized(), cfg);
+    }
+
+    #[test]
+    fn runtime_config_sanitized_replaces_sub_unity_factors() {
+        // Regression for Audit §2.3: a factor below 1.0 (e.g. `1.15`
+        // fat-fingered as `.115`) would otherwise ask for SPPT/FPPT below
+        // SPL — the reducer's floor clamp catches it defensively at apply
+        // time, but the config layer should not hand out a broken value.
+        let cfg = RuntimeConfig {
+            profile_thresholds: ProfileThresholds::DEFAULT,
+            sppt_factor: 0.115,
+            fppt_factor: 0.0,
+        };
+        let sanitized = cfg.sanitized();
+        assert_eq!(sanitized.sppt_factor, RuntimeConfig::DEFAULT.sppt_factor);
+        assert_eq!(sanitized.fppt_factor, RuntimeConfig::DEFAULT.fppt_factor);
+    }
+
+    #[test]
+    fn runtime_config_sanitized_replaces_non_finite_factors() {
+        let cfg = RuntimeConfig {
+            profile_thresholds: ProfileThresholds::DEFAULT,
+            sppt_factor: f32::NAN,
+            fppt_factor: f32::INFINITY,
+        };
+        let sanitized = cfg.sanitized();
+        assert_eq!(sanitized.sppt_factor, RuntimeConfig::DEFAULT.sppt_factor);
+        assert_eq!(sanitized.fppt_factor, RuntimeConfig::DEFAULT.fppt_factor);
     }
 }
