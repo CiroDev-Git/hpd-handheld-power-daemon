@@ -357,6 +357,12 @@ la unit para no reintentar indefinidamente.
 
 ## 6. Paridad con Armoury Crate SE + Radeon Adrenalin — roadmap
 
+> **Actualización 2026-07-08**: esta sección tiene ahora un documento
+> de diseño sucesor que la detalla, re-prioriza y amplía con features
+> nuevas (perfiles por juego, diagnóstico de cuellos de botella,
+> asistente de calibración): [`GAMING-ROADMAP-es.md`](GAMING-ROADMAP-es.md).
+> Ante discrepancias, manda el roadmap.
+
 Lo que ya tienes equivalente: modos de operación (presets TDP + curvas
 Silent/Balanced/Aggressive mejores que el firmware), TDP manual
 SPL/SPPT/FPPT (Armoury solo lo da en "Manual"), límite de carga de
