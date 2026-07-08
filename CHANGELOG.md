@@ -11,6 +11,73 @@ not part of the published repository.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **`EnableFanAuto` now applies and persists immediately.** Re-engaging
+  auto-cooling (`hpdctl cool auto`) recursed into `SetEnvelope(power_target)`
+  to re-trigger the curve inference, but that only produces effects when the
+  envelope actually *changes* — so at an unchanged TDP it silently emitted
+  zero effects: the EC kept running the stale manual curve, and with no
+  `PersistState` the auto-cooling flag itself could be lost on a restart
+  before any other transition happened to persist it. The reducer now infers
+  and applies the matching curve directly (mirroring `SetCoolingLevel`).
+- **Rollback could deadlock the executor under channel saturation.**
+  `Executor::rollback` used `send().await` on the same bounded transition
+  channel its own `run()` loop drains; if that channel were ever full when a
+  rollback fired, the await could never resolve. Switched to `try_send` —
+  a dropped rollback under saturation is safe, since the next boot/resume
+  re-assert reconciles state against hardware anyway.
+- **Out-of-range `config.toml` values could silently reject every TDP
+  change.** `derive_boosted_envelope` now floors SPPT at SPL and FPPT at
+  SPPT (defends against tight hardware boost rails even with a valid
+  factor), and `RuntimeConfig`/`ProfileThresholds` gain a `sanitized()` step
+  — wired into `DaemonConfig::load` (covers both initial load and `SIGHUP`
+  reload) — that clamps/repairs an operator's out-of-range `sppt_factor` /
+  `fppt_factor` / `profile_thresholds` instead of letting a typo make
+  `validate_power_envelope` reject every `SetSpl`/`SetPreset`.
+- **State persistence now `fsync`s before the atomic rename.** The
+  temp-file-then-rename pattern only protected against a crash mid-write;
+  a hard power loss (a handheld draining its battery to zero, not a clean
+  shutdown) between the write returning and the bytes reaching disk could
+  still leave `state.toml` truncated. `StatePersister::save` now calls
+  `sync_all` on the temp file first.
+- **`AsusChargeBackend::is_ac_connected` unified with the live AC-event
+  detection.** It probed a fixed 6-path list of well-known mains node
+  names; `hpd-netlink`'s live udev monitor instead scans `power_supply` for
+  `type == "Mains"`, which is how the Xbox Ally X's `AC0` node was found
+  in the first place. The two paths were quietly using different
+  algorithms for the same fact — a future device with a differently-named
+  mains node would report DC at boot and AC once a live event fired. Both
+  now scan by `type`; `hpd-sysfs::SysfsIo` gains `read_dir_names` to make
+  this possible without hard-coding paths.
+- **`hpdctl doctor --fix` no longer masks `hhd@.service` unconditionally.**
+  On the Xbox Ally X, hhd (Handheld Daemon) also owns gamepad remapping, so
+  an unconditional mask could win hpd sole TDP ownership while silently
+  taking away controller input. `doctor --fix` now masks it only when
+  `inputplumber.service` is active (confirmed as the input replacement on
+  CachyOS); otherwise it explains the two alternatives instead of masking.
+- **`hpdctl doctor --fix` now also neutralizes `tuned-ppd.service` and
+  detects/masks `tlp.service`.** tuned's PPD-compatibility shim runs as its
+  own systemd unit, so masking `tuned.service` alone left it running; TLP
+  is a standalone power daemon popular on Arch/CachyOS that writes the same
+  charge/profile/governor surfaces hpd does.
+- Improved the startup error when hardware power limits can't be read
+  (usually a missing/too-old `asus-armoury` kernel driver) to name the
+  likely cause and point at the fix, and capped `hpd.service`'s restart
+  loop (`StartLimitIntervalSec`/`StartLimitBurst`) so that failure mode
+  trips systemd's failure state instead of restarting forever.
+
+### Added
+
+- Two anti-drift tests (`hpd-cli`, dev-dependency only) that cross-check
+  `doctor::RIVAL_UNITS` against what `hpd_dbus::conflicts` detects, so the
+  hand-mirrored mask list can't silently fall out of sync with detection
+  again.
+
+Full audit at [`docs/dev/AUDITORIA-2026-07-es.md`](docs/dev/AUDITORIA-2026-07-es.md).
+
 ## [2.7.2] — 2026-06-10
 
 ### Fixed
