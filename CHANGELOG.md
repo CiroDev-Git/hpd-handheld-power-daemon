@@ -11,7 +11,14 @@ not part of the published repository.
 
 ---
 
-## [Unreleased]
+## [2.7.3] — 2026-07-07
+
+### Added
+
+- Two anti-drift tests (`hpd-cli`, dev-dependency only) that cross-check
+  `doctor::RIVAL_UNITS` against what `hpd_dbus::conflicts` detects, so the
+  hand-mirrored mask list can't silently fall out of sync with detection
+  again.
 
 ### Fixed
 
@@ -69,12 +76,15 @@ not part of the published repository.
   loop (`StartLimitIntervalSec`/`StartLimitBurst`) so that failure mode
   trips systemd's failure state instead of restarting forever.
 
-### Added
+### Security
 
-- Two anti-drift tests (`hpd-cli`, dev-dependency only) that cross-check
-  `doctor::RIVAL_UNITS` against what `hpd_dbus::conflicts` detects, so the
-  hand-mirrored mask list can't silently fall out of sync with detection
-  again.
+- **`quick-xml` bumped 0.36.2 → 0.41.0** (`hpd-dbus` dev-dependency,
+  never ships in the release binary). 0.36.2 carried two HIGH (7.5)
+  advisories: quadratic runtime on duplicate start-tag attributes
+  (RUSTSEC-2026-0194) and unbounded namespace-declaration allocation /
+  memory-exhaustion DoS (RUSTSEC-2026-0195). Found running the
+  pre-release `cargo audit` gate; `cargo audit --target-os linux` and
+  `cargo deny check` are clean after the bump.
 
 Full audit at [`docs/dev/AUDITORIA-2026-07-es.md`](docs/dev/AUDITORIA-2026-07-es.md).
 
