@@ -386,7 +386,10 @@ mod tests {
     fn every_detected_rival_has_a_mask_target() {
         use hpd_dbus::conflicts::{RIVAL_POWER_DAEMONS, RIVAL_UNITS as DETECTED_RIVAL_UNITS};
 
-        for (friendly_name, _) in RIVAL_POWER_DAEMONS.iter().chain(DETECTED_RIVAL_UNITS.iter()) {
+        for (friendly_name, _) in RIVAL_POWER_DAEMONS
+            .iter()
+            .chain(DETECTED_RIVAL_UNITS.iter())
+        {
             // hhd is masked conditionally (only when InputPlumber covers
             // input — see `neutralize_hhd_as_root`), not via the flat
             // RIVAL_UNITS list, so it is exempt from the naive
