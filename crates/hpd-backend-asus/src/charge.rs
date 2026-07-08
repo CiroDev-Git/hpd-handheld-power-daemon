@@ -5,28 +5,24 @@ use hpd_error::{BackendError, HpdError};
 use hpd_sysfs::SysfsIo;
 
 const BATTERY_PATH: &str = "/sys/class/power_supply/BAT0";
-// Well-known AC/mains sysfs nodes across the ASUS handheld family. The
-// node name is firmware/kernel dependent: the ROG Xbox Ally X (board
-// RC73XA) exposes `AC0`, while earlier Ally/Ally X images use the bare
-// `AC` or an `ADP*` node. We probe in order and take the first readable
-// node — missing the device's actual name makes `is_ac_connected` fall
-// through to the fail-safe `false`, so the daemon would report DC while
-// physically on AC (the cause of the "AC status never updates" bug on
-// the Xbox Ally X, whose node is `AC0`).
-const AC_PATHS: [&str; 6] = [
-    "/sys/class/power_supply/AC0/online",
-    "/sys/class/power_supply/AC1/online",
-    "/sys/class/power_supply/AC/online",
-    "/sys/class/power_supply/ACAD/online",
-    "/sys/class/power_supply/ADP0/online",
-    "/sys/class/power_supply/ADP1/online",
-];
+// The kernel power-supply class root. AC/mains node *names* are
+// firmware/kernel dependent (the ROG Xbox Ally X exposes `AC0`; earlier
+// Ally/Ally X images use `AC` or an `ADP*` node), so instead of a fixed
+// list of candidate names we scan every node under here and match on the
+// `type` attribute — mirroring `hpd-netlink`'s `read_mains_online_at`,
+// which independently arrived at the same "scan by type, not by name"
+// approach for the *same* reason (a fixed name list previously caused the
+// "AC status never updates" bug on the Xbox Ally X, whose node is `AC0`
+// and wasn't in the old list). Any `type == "Mains"` node reporting
+// `online == 1` counts as plugged in; no readable Mains node at all falls
+// through to the fail-safe `false`.
+const POWER_SUPPLY_ROOT: &str = "/sys/class/power_supply";
 
 /// [`ChargeControl`] implementation for ASUS handhelds.
 ///
-/// Reads `BAT0/charge_control_end_threshold` for the limit and probes
-/// the well-known AC sysfs nodes (`AC`, `ACAD`, `ADP0`, `ADP1`) to
-/// decide whether the charger is currently plugged in.
+/// Reads `BAT0/charge_control_end_threshold` for the limit and scans
+/// `power_supply` for a `type == "Mains"` node to decide whether the
+/// charger is currently plugged in.
 pub struct AsusChargeBackend<S: SysfsIo> {
     sysfs: S,
 }
@@ -42,13 +38,26 @@ impl<S: SysfsIo> AsusChargeBackend<S> {
 
 impl<S: SysfsIo> ChargeControl for AsusChargeBackend<S> {
     fn is_ac_connected(&self) -> Result<bool, HpdError> {
-        for path in AC_PATHS.iter() {
-            if let Ok(val_str) = self.sysfs.read_string(path) {
-                return Ok(val_str.trim() == "1");
+        for node in self.sysfs.read_dir_names(POWER_SUPPLY_ROOT) {
+            let base = format!("{POWER_SUPPLY_ROOT}/{node}");
+            let kind = self
+                .sysfs
+                .read_string(format!("{base}/type"))
+                .unwrap_or_default();
+            if kind.trim() != "Mains" {
+                continue;
+            }
+            let online = self
+                .sysfs
+                .read_string(format!("{base}/online"))
+                .unwrap_or_default();
+            if online.trim() == "1" {
+                return Ok(true);
             }
         }
 
-        // Fail-Safe
+        // Fail-safe: either no Mains node exists, or every Mains node
+        // present reports offline.
         Ok(false)
     }
 
@@ -87,20 +96,22 @@ mod tests {
     #[test]
     fn detects_ac0_node_on_xbox_ally_x() {
         // Regression: the Xbox Ally X exposes its mains node as `AC0`,
-        // not the bare `AC`/`ADP*` names. Missing it made is_ac_connected
-        // always report false (DC) while physically plugged.
+        // not the bare `AC`/`ADP*` names. Scanning by `type == "Mains"`
+        // (instead of a fixed name list) finds it regardless of name.
         let mock = MockSysfs::new();
+        mock.create_file("sys/class/power_supply/AC0/type", "Mains");
         mock.create_file("sys/class/power_supply/AC0/online", "1");
         let backend = AsusChargeBackend::new(mock.clone());
         assert!(
             backend.is_ac_connected().unwrap(),
-            "AC0/online == 1 must read as plugged"
+            "a Mains node with online == 1 must read as plugged"
         );
     }
 
     #[test]
     fn ac_unplugged_reads_false() {
         let mock = MockSysfs::new();
+        mock.create_file("sys/class/power_supply/AC0/type", "Mains");
         mock.create_file("sys/class/power_supply/AC0/online", "0");
         let backend = AsusChargeBackend::new(mock.clone());
         assert!(!backend.is_ac_connected().unwrap());
@@ -109,11 +120,51 @@ mod tests {
     #[test]
     fn missing_ac_node_falls_back_to_dc() {
         let mock = MockSysfs::new();
-        // No AC node seeded at all.
+        // No power_supply nodes seeded at all.
         let backend = AsusChargeBackend::new(mock.clone());
         assert!(
             !backend.is_ac_connected().unwrap(),
             "absent mains node must fail safe to DC"
         );
+    }
+
+    #[test]
+    fn usb_c_pd_node_is_not_mistaken_for_mains() {
+        // Regression for Audit §4.1 (2026-07): before the scan-by-type
+        // unification, a USB-C PD port reporting online=1 under a name
+        // that happened to look AC-ish would never have been read (the
+        // old fixed-path list only probed AC*/ADP* names) — but the risk
+        // ran the other way too: a naive "any online==1 node" scan (unlike
+        // one gated on type=="Mains") would wrongly count a charging-only
+        // USB device as AC. Pin the actual contract: a `type == "USB"`
+        // node with online=1 must NOT count as AC.
+        let mock = MockSysfs::new();
+        mock.create_file(
+            "sys/class/power_supply/ucsi-source-psy-USBC000:002/type",
+            "USB",
+        );
+        mock.create_file(
+            "sys/class/power_supply/ucsi-source-psy-USBC000:002/online",
+            "1",
+        );
+        let backend = AsusChargeBackend::new(mock.clone());
+        assert!(
+            !backend.is_ac_connected().unwrap(),
+            "a USB (non-Mains) node reporting online=1 must not count as AC"
+        );
+    }
+
+    #[test]
+    fn one_offline_mains_node_among_several_does_not_shadow_an_online_one() {
+        // Multiple Mains-typed nodes (e.g. AC0 + AC1) must be scanned in
+        // full, not short-circuited on the first one found: whichever
+        // node is actually online should still be detected as plugged.
+        let mock = MockSysfs::new();
+        mock.create_file("sys/class/power_supply/AC0/type", "Mains");
+        mock.create_file("sys/class/power_supply/AC0/online", "0");
+        mock.create_file("sys/class/power_supply/AC1/type", "Mains");
+        mock.create_file("sys/class/power_supply/AC1/online", "1");
+        let backend = AsusChargeBackend::new(mock.clone());
+        assert!(backend.is_ac_connected().unwrap());
     }
 }

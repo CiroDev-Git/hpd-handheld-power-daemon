@@ -38,7 +38,8 @@
 //! `steamos-manager` (+ `gamescope`, + optional `gamemoded`); GNOME/KDE
 //! desktops ship `power-profiles-daemon` or, increasingly, `tuned`; ASUS
 //! installs `asusd` (which also owns RGB/Aura, hence advisory); Bazzite's
-//! Ally image ships `hhd` (Handheld Daemon).
+//! Ally image ships `hhd` (Handheld Daemon); Arch/CachyOS users commonly
+//! reach for TLP as a standalone power manager.
 //!
 //! Surfaced at daemon startup (a loud warning for hard rivals) and live
 //! over D-Bus via `get_power_conflicts` (rivals) and `get_advisory_daemons`
@@ -75,7 +76,13 @@ pub const RIVAL_POWER_DAEMONS: &[(&str, &str)] = &[
 /// * `hhd` — Feral-independent Handheld Daemon (hhd-dev), Bazzite's default
 ///   on the ROG Ally; a full handheld daemon that owns TDP and the platform
 ///   profile. Runs as the templated `hhd@<user>.service`.
-pub const RIVAL_UNITS: &[(&str, &str)] = &[("hhd", "hhd@*.service")];
+/// * `tlp` — TLP, a popular standalone power-management daemon on
+///   Arch/CachyOS. Writes `charge_control_end_threshold`, `platform_profile`
+///   / EPP and the CPU governor on every AC/battery edge — the same
+///   surfaces and the same "react to the plug event" shape as hpd's own
+///   AC-lock, so the two fight on every plug/unplug. No well-known bus
+///   name, hence the unit-pattern check.
+pub const RIVAL_UNITS: &[(&str, &str)] = &[("hhd", "hhd@*.service"), ("tlp", "tlp.service")];
 
 /// Advisory daemons detected by a well-known **D-Bus name** — they only
 /// touch power-adjacent surfaces and are legitimately wanted, so hpd reports

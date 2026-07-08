@@ -25,6 +25,19 @@ Wants=dbus.service
 #     `hpdctl doctor --fix`, never an automatic unit Conflicts= or hook.
 Conflicts=power-profiles-daemon.service
 
+# Cap the Restart=on-failure loop below: without a limit, a daemon that
+# exits at startup on every attempt (e.g. the `asus-armoury` firmware-
+# attributes driver is missing — a kernel too old for this board, or a
+# rescue/LTS kernel) restarts every RestartSec=5s forever, spamming
+# journald indefinitely. 5 restarts inside 5 minutes is generous for any
+# transient failure (a slow udev settle, a racy boot dependency) while
+# still tripping well before "forever"; once tripped, systemd marks the
+# unit failed and `systemctl status hpd` shows why instead of a silent
+# restart loop. Clear with `systemctl reset-failed hpd` after fixing the
+# underlying cause.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/hpd-daemon

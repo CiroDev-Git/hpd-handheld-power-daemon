@@ -76,4 +76,15 @@ impl SysfsIo for MockSysfs {
     fn exists(&self, path: impl AsRef<Path>) -> bool {
         self.resolve(path).exists()
     }
+
+    fn read_dir_names(&self, path: impl AsRef<Path>) -> Vec<String> {
+        let real_path = self.resolve(path);
+        let Ok(entries) = fs::read_dir(&real_path) else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .collect()
+    }
 }

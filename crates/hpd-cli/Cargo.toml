@@ -19,5 +19,13 @@ clap  = { workspace = true }
 zbus  = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
+[dev-dependencies]
+# hpdctl deliberately does not depend on hpd-dbus at *runtime* — see the
+# module doc on `doctor::RIVAL_UNITS` — but a dev-only dependency lets a
+# test cross-check that doctor's hand-mirrored mask list stays in sync
+# with what hpd_dbus::conflicts actually detects, without adding any
+# runtime coupling to the shipped `hpdctl` binary.
+hpd-dbus = { path = "../hpd-dbus" }
+
 [lints]
 workspace = true
