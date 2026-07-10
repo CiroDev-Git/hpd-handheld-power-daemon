@@ -4,19 +4,9 @@ use hpd_capabilities::charge::{ChargeControl, MAX_CHARGE_THRESHOLD, MIN_CHARGE_T
 use hpd_error::{BackendError, HpdError};
 use hpd_sysfs::SysfsIo;
 
+use crate::power_supply::find_nodes_by_type;
+
 const BATTERY_PATH: &str = "/sys/class/power_supply/BAT0";
-// The kernel power-supply class root. AC/mains node *names* are
-// firmware/kernel dependent (the ROG Xbox Ally X exposes `AC0`; earlier
-// Ally/Ally X images use `AC` or an `ADP*` node), so instead of a fixed
-// list of candidate names we scan every node under here and match on the
-// `type` attribute — mirroring `hpd-netlink`'s `read_mains_online_at`,
-// which independently arrived at the same "scan by type, not by name"
-// approach for the *same* reason (a fixed name list previously caused the
-// "AC status never updates" bug on the Xbox Ally X, whose node is `AC0`
-// and wasn't in the old list). Any `type == "Mains"` node reporting
-// `online == 1` counts as plugged in; no readable Mains node at all falls
-// through to the fail-safe `false`.
-const POWER_SUPPLY_ROOT: &str = "/sys/class/power_supply";
 
 /// [`ChargeControl`] implementation for ASUS handhelds.
 ///
@@ -38,27 +28,23 @@ impl<S: SysfsIo> AsusChargeBackend<S> {
 
 impl<S: SysfsIo> ChargeControl for AsusChargeBackend<S> {
     fn is_ac_connected(&self) -> Result<bool, HpdError> {
-        for node in self.sysfs.read_dir_names(POWER_SUPPLY_ROOT) {
-            let base = format!("{POWER_SUPPLY_ROOT}/{node}");
-            let kind = self
-                .sysfs
-                .read_string(format!("{base}/type"))
-                .unwrap_or_default();
-            if kind.trim() != "Mains" {
-                continue;
-            }
-            let online = self
-                .sysfs
+        // AC/mains node *names* are firmware/kernel dependent (the ROG
+        // Xbox Ally X exposes `AC0`; earlier Ally/Ally X images use `AC`
+        // or an `ADP*` node), so scan by `type` instead of a fixed name
+        // list — mirroring `hpd-netlink`'s `read_mains_online_at`, which
+        // independently arrived at the same approach for the same reason
+        // (a fixed name list previously caused the "AC status never
+        // updates" bug on the Xbox Ally X, whose node is `AC0` and
+        // wasn't in the old list). Every `Mains`-typed node is checked
+        // (not just the first): a board with more than one (e.g. `AC0` +
+        // `AC1`) counts as plugged in if any reports `online == 1`.
+        Ok(find_nodes_by_type(&self.sysfs, "Mains").iter().any(|base| {
+            self.sysfs
                 .read_string(format!("{base}/online"))
-                .unwrap_or_default();
-            if online.trim() == "1" {
-                return Ok(true);
-            }
-        }
-
-        // Fail-safe: either no Mains node exists, or every Mains node
-        // present reports offline.
-        Ok(false)
+                .unwrap_or_default()
+                .trim()
+                == "1"
+        }))
     }
 
     fn get_end_threshold(&self) -> Result<u8, HpdError> {

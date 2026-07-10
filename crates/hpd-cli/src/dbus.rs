@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use std::collections::HashMap;
 use zbus::proxy;
+use zbus::zvariant::OwnedValue;
 
 /// The eight `(temp_c, pwm)` points of one fan's curve.
 pub type CurvePoints = Vec<(u32, u32)>;
@@ -65,6 +67,12 @@ trait PowerDaemon {
     /// gpu_fan_rpm, soc_power_mw)`. The last field is the actual SoC
     /// power draw in milliwatts. Any field is `i32::MIN` when unavailable.
     fn get_thermal_status(&self) -> zbus::Result<(i32, i32, i32, i32, i32)>;
+
+    /// Extended telemetry (daemon ≥ 2.8.0): battery power/percent/status/
+    /// health/cycles, CPU/GPU frequency, GPU load, VRAM. A key is present
+    /// only when the hardware exposes that reading. Errors against an
+    /// older daemon — callers degrade to what `get_thermal_status` covers.
+    fn get_telemetry(&self) -> zbus::Result<HashMap<String, OwnedValue>>;
 
     /// The 8 `(temp_c, pwm)` points of the active CPU and GPU fan
     /// curves: `(cpu_points, gpu_points)`. Empty when no curve is

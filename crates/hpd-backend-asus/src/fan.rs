@@ -5,7 +5,7 @@ use hpd_capabilities::units::Rpm;
 use hpd_error::{BackendError, HpdError};
 use hpd_sysfs::SysfsIo;
 
-use crate::hwmon::find_hwmon_by_name;
+use crate::hwmon::HwmonCache;
 
 /// hwmon `name` of the ASUS sensor node that exposes `fanN_input`.
 /// Distinct from `asus_custom_fan_curve` (the writable curve node) and
@@ -29,32 +29,28 @@ enum FanIndex {
 /// reads `fanN_input` under it.
 pub struct AsusFanBackend<S: SysfsIo> {
     sysfs: S,
+    hwmon_cache: HwmonCache,
 }
 
 impl<S: SysfsIo> AsusFanBackend<S> {
     /// Wrap a `SysfsIo` handle (see [`AsusBackend::new`](crate::AsusBackend::new)).
     pub fn new(sysfs: S) -> Self {
-        Self { sysfs }
-    }
-
-    /// Resolve the `fanN_input` path under the `asus` hwmon node.
-    /// Returns [`HpdError::FeatureUnsupported`] when the node is absent
-    /// (non-ASUS hardware) or the requested fan index is not exposed
-    /// (single-fan models lack `fan2_input`).
-    fn find_fan_path(&self, fan: FanIndex) -> Result<String, HpdError> {
-        let base = find_hwmon_by_name(&self.sysfs, ASUS_FAN_HWMON_NAME)
-            .ok_or(HpdError::FeatureUnsupported)?;
-        let path = format!("{}/fan{}_input", base, fan as u8);
-        if self.sysfs.exists(&path) {
-            Ok(path)
-        } else {
-            Err(HpdError::FeatureUnsupported)
+        Self {
+            sysfs,
+            hwmon_cache: HwmonCache::new(),
         }
     }
 
+    /// Read `fanN_input` under the `asus` hwmon node.
+    /// Returns [`HpdError::FeatureUnsupported`] when the node is absent
+    /// (non-ASUS hardware) or the requested fan index is not exposed
+    /// (single-fan models lack `fan2_input`).
     fn read_rpm(&self, fan: FanIndex) -> Result<Rpm, HpdError> {
-        let path = self.find_fan_path(fan)?;
-        let val_str = self.sysfs.read_string(&path)?;
+        let attr = format!("fan{}_input", fan as u8);
+        let val_str = self
+            .hwmon_cache
+            .read_attr(&self.sysfs, ASUS_FAN_HWMON_NAME, &attr)?
+            .ok_or(HpdError::FeatureUnsupported)?;
         let rpm: u16 = val_str.parse().map_err(|_| BackendError::ParseFailed {
             field: "fan_rpm",
             raw: val_str.clone(),

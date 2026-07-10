@@ -16,7 +16,7 @@ fan / temperature / power reporting on handheld PCs
 - `hpdctl` (from crate `hpd-cli`) — user-facing CLI that talks to the
   daemon over D-Bus.
 
-Current release: **`2.7.3`** (see `CHANGELOG.md`). The public
+Current release: **`2.8.0`** (see `CHANGELOG.md`). The public
 surface (D-Bus interface, CLI subcommands, on-disk state, polkit action
 IDs) is stable and follows SemVer.
 
@@ -571,7 +571,7 @@ and exits cleanly rather than letting systemd `SIGKILL` it mid-write.
 | You want…                                          | Look in                                              |
 |---------------------------------------------------|------------------------------------------------------|
 | The state machine (transitions / reducer / effects) | `hpd-core/src/{transition,reducer,effect,executor}.rs` |
-| Hardware-write contracts                          | `hpd-capabilities/src/{power,charge,fan,fan_curve,thermal,platform_profile}.rs` |
+| Hardware-write contracts                          | `hpd-capabilities/src/{power,charge,fan,fan_curve,thermal,platform_profile,telemetry}.rs` |
 | ASUS firmware-attribute paths                     | `hpd-backend-asus/src/{power,charge,fan,fan_curve,thermal,profile}.rs`  |
 | D-Bus method / property surface                   | `hpd-dbus/src/service.rs`                            |
 | Polkit action IDs                                 | `hpd-dbus/src/actions.rs`                            |

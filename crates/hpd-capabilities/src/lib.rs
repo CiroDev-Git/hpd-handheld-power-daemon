@@ -35,6 +35,7 @@ pub mod platform_profile;
 pub mod power;
 pub mod probe;
 pub mod profile;
+pub mod telemetry;
 pub mod thermal;
 pub mod units;
 
