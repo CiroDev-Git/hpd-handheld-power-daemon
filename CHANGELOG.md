@@ -11,6 +11,64 @@ not part of the published repository.
 
 ---
 
+## [2.10.0] — 2026-07-10
+
+### Added
+
+- **`net.hadess.PowerProfiles` compatibility shim** — Fase 4 of the
+  gaming/performance roadmap
+  ([`docs/dev/GAMING-ROADMAP-es.md`](docs/dev/GAMING-ROADMAP-es.md) §4).
+  `hpd` masks the real `power-profiles-daemon` (PPD) because both write
+  the same `platform_profile`/EPP files, but that orphans every client
+  that only ever talks to *whoever owns the PPD bus name* — the KDE
+  Plasma battery applet's Eco/Balanced/Performance selector,
+  `powerprofilesctl`, CachyOS's `game-performance` launch wrapper. hpd
+  now puts on PPD's mask itself: at startup it best-effort claims
+  `net.hadess.PowerProfiles` (only if genuinely free — `DoNotQueue`, no
+  `ReplaceExisting`, so a real unmasked PPD/tuned-ppd is never stolen
+  from) and implements the real-world subset of its D-Bus API —
+  `ActiveProfile` (read-write), `Profiles`, `Actions`,
+  `ActiveProfileHolds`, `PerformanceInhibited`, `PerformanceDegraded`,
+  `HoldProfile`/`ReleaseProfile`, and the `ProfileReleased` signal —
+  verified against upstream's own interface XML. Every request maps to
+  an ordinary `Transition::SetProfile` through the same reducer,
+  AC-lock, and rollback as any other caller; this is not a second source
+  of truth.
+  - **`HoldProfile`** (what `game-performance` uses) snapshots the
+    current profile, forces `power-saver` or `performance` until
+    released, and restores the snapshot once every hold drains.
+    Concurrent holds resolve with upstream's own precedence
+    (`power-saver` outranks `performance`). A holder disconnecting
+    without calling `ReleaseProfile` (a crashed game) is detected via
+    `NameOwnerChanged` and releases its holds the same way. Per
+    upstream's documented contract, `ProfileReleased` fires **only**
+    when a hold is cancelled by an *external* profile change (e.g. a
+    direct `ActiveProfile` set, or `hpdctl`/the plugin) — never for a
+    voluntary `ReleaseProfile` call.
+  - **No polkit on this surface, by design** — upstream PPD requires no
+    authorization for `ActiveProfile` or `HoldProfile`/`ReleaseProfile`,
+    and gating them behind hpd's own `set-profile` action would silently
+    regress every client this shim exists to revive. hpd's own
+    `dev.cirodev.hpd.PowerDaemon1` interface is unaffected.
+  - `hpdctl status` / `doctor` gain a "compat PPD: active/inactive"
+    line (new `get_ppd_shim_active` D-Bus method).
+  - `package/dev.cirodev.hpd.conf` grants hpd's `root` policy `own` of
+    the new name and opens it to the same unauthenticated
+    method-call/property/introspection access as hpd's own interface.
+
+### Fixed
+
+- **Competing-daemon detection no longer flags hpd's own PPD shim as a
+  rival.** `power_conflicts()` checked `NameHasOwner` for
+  `net.hadess.PowerProfiles`, which — now that hpd can own that name
+  itself — would always report `power-profiles-daemon` as "live" once
+  the shim above activated. Switched to `GetNameOwner` compared against
+  the connection's own unique name, so only a name owned by *someone
+  else* counts as a rival.
+
+Full audit at [`docs/dev/AUDITORIA-2026-07-es.md`](docs/dev/AUDITORIA-2026-07-es.md);
+full design at [`docs/dev/GAMING-ROADMAP-es.md`](docs/dev/GAMING-ROADMAP-es.md).
+
 ## [2.9.0] — 2026-07-10
 
 ### Added

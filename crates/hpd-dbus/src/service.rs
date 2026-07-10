@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, error};
@@ -44,6 +45,13 @@ pub struct PowerDaemonInterface {
     /// temperatures) on demand. Command mutations still flow through
     /// `tx` into the executor — this handle is never used to write.
     backend: Arc<dyn HwBackend>,
+    /// Whether `hpd_dbus::ppd_shim` actually claimed
+    /// `net.hadess.PowerProfiles`. Shared with the daemon's startup code
+    /// (an `Arc` rather than a plain `bool`) because whether the claim
+    /// succeeds is only known *after* this interface object already had
+    /// to exist (the object server needs it before `request_name` can be
+    /// attempted) — the daemon flips this once it has an answer.
+    ppd_shim_active: Arc<AtomicBool>,
 }
 
 impl PowerDaemonInterface {
@@ -51,18 +59,23 @@ impl PowerDaemonInterface {
     /// command lane into the [`Executor`](hpd_core::executor::Executor);
     /// `state_rx` is the live state mirror property getters read from;
     /// `limits` is the immutable hardware envelope detected at startup;
-    /// `backend` is the shared handle used for live telemetry reads.
+    /// `backend` is the shared handle used for live telemetry reads;
+    /// `ppd_shim_active` is flipped by the daemon once it knows whether
+    /// the `net.hadess.PowerProfiles` compat shim actually claimed its
+    /// name (see the field doc).
     pub fn new(
         tx: mpsc::Sender<Transition>,
         state_rx: watch::Receiver<ProfileState>,
         limits: PowerEnvelopeLimits,
         backend: Arc<dyn HwBackend>,
+        ppd_shim_active: Arc<AtomicBool>,
     ) -> Self {
         Self {
             tx,
             state_rx,
             limits,
             backend,
+            ppd_shim_active,
         }
     }
 
@@ -746,6 +759,17 @@ impl PowerDaemonInterface {
     ) -> Vec<String> {
         crate::conflicts::advisory_daemons(conn).await
     }
+
+    /// Whether the `net.hadess.PowerProfiles` compat shim
+    /// (`hpd_dbus::ppd_shim`) actually claimed its bus name at startup —
+    /// `false` means a real `power-profiles-daemon`/`tuned-ppd` was live
+    /// and not masked, so the KDE power applet and `game-performance`
+    /// still see no owner. `hpdctl status`/`doctor` render this as
+    /// "compat PPD: active/inactive". Rendered by `hpdctl status` /
+    /// `hpdctl doctor`.
+    async fn get_ppd_shim_active(&self) -> bool {
+        self.ppd_shim_active.load(Ordering::Relaxed)
+    }
 }
 
 #[cfg(test)]
@@ -801,7 +825,13 @@ mod tests {
             sample_state().power_target,
             sample_limits(),
         ));
-        let iface = PowerDaemonInterface::new(tx, state_rx, sample_limits(), backend);
+        let iface = PowerDaemonInterface::new(
+            tx,
+            state_rx,
+            sample_limits(),
+            backend,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
 
         let mut body = String::new();
         iface.introspect_to_writer(&mut body, 2);
@@ -980,7 +1010,13 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
         let (_state_tx, state_rx) = tokio::sync::watch::channel(sample_state());
         let backend: Arc<dyn HwBackend> = Arc::new(TelemetryFixture);
-        let iface = PowerDaemonInterface::new(tx, state_rx, sample_limits(), backend);
+        let iface = PowerDaemonInterface::new(
+            tx,
+            state_rx,
+            sample_limits(),
+            backend,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
 
         let telemetry = iface.get_telemetry().await;
 
@@ -1029,7 +1065,13 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
         let (_state_tx, state_rx) = tokio::sync::watch::channel(sample_state());
         let backend: Arc<dyn HwBackend> = Arc::new(TelemetryFixture);
-        PowerDaemonInterface::new(tx, state_rx, sample_limits(), backend)
+        PowerDaemonInterface::new(
+            tx,
+            state_rx,
+            sample_limits(),
+            backend,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
     }
 
     #[tokio::test]

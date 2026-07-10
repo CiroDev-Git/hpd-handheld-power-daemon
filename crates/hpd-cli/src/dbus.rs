@@ -109,4 +109,12 @@ trait PowerDaemon {
     /// none is live. The call errors against a daemon predating this method;
     /// callers degrade to "unknown / update hpd".
     fn get_advisory_daemons(&self) -> zbus::Result<Vec<String>>;
+
+    /// Whether the `net.hadess.PowerProfiles` compat shim (daemon ≥
+    /// 2.10.0) claimed its bus name at startup — `false` means a real
+    /// `power-profiles-daemon`/`tuned-ppd` was live and not masked, so
+    /// the KDE power applet and `game-performance` still see no owner.
+    /// The call errors against an older daemon; callers degrade to
+    /// "unknown / update hpd".
+    fn get_ppd_shim_active(&self) -> zbus::Result<bool>;
 }

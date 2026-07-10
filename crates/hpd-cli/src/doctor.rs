@@ -137,6 +137,7 @@ pub async fn print_health(proxy: &PowerDaemonProxy<'_>) -> bool {
     let diagnostics = proxy.get_diagnostics().await;
     let conflicts = proxy.get_power_conflicts().await;
     let advisory = proxy.get_advisory_daemons().await;
+    let ppd_shim_active = proxy.get_ppd_shim_active().await;
 
     let polkit_bad = match &diagnostics {
         Ok((true, _)) => {
@@ -188,6 +189,23 @@ pub async fn print_health(proxy: &PowerDaemonProxy<'_>) -> bool {
             );
         }
         // Older daemon without get_advisory_daemons: omit the line silently.
+        Err(_) => {}
+    }
+
+    // Informational only — never flips `healthy`. An inactive shim caused
+    // by a real, unmasked PPD/tuned-ppd is already surfaced above via the
+    // "competing daemons" line; this just reports the shim's own state.
+    match ppd_shim_active {
+        Ok(true) => {
+            println!("  compat PPD:         ✅ active (hpd answers for power-profiles-daemon)");
+        }
+        Ok(false) => {
+            println!(
+                "  compat PPD:         ➖ inactive (a real PPD/tuned-ppd is not masked — see \
+                 'competing daemons' above)"
+            );
+        }
+        // Older daemon without get_ppd_shim_active: omit the line silently.
         Err(_) => {}
     }
 

@@ -16,7 +16,7 @@ fan / temperature / power reporting on handheld PCs
 - `hpdctl` (from crate `hpd-cli`) — user-facing CLI that talks to the
   daemon over D-Bus.
 
-Current release: **`2.9.0`** (see `CHANGELOG.md`). The public
+Current release: **`2.10.0`** (see `CHANGELOG.md`). The public
 surface (D-Bus interface, CLI subcommands, on-disk state, polkit action
 IDs) is stable and follows SemVer.
 
@@ -383,6 +383,34 @@ only informs:**
   `hpdctl doctor --fix`. The header comment in `package/hpd.service`
   records this so it is not "helpfully" re-added.
 
+### PPD compatibility shim (`hpd_dbus::ppd_shim`)
+
+hpd masks the real `power-profiles-daemon` (above) but that orphans
+every client that only ever talks to *whoever owns the
+`net.hadess.PowerProfiles` bus name* — the KDE Plasma battery applet's
+profile selector, `powerprofilesctl`, CachyOS's `game-performance`
+launch wrapper. `hpd-daemon` claims that name itself, best-effort
+(`request_name_with_flags(DoNotQueue)`, deliberately **without**
+`ReplaceExisting` — a real unmasked PPD/tuned-ppd must never be stolen
+from), and `hpd_dbus::ppd_shim::PowerProfilesShim` implements the
+real-world subset of PPD's D-Bus API at `/net/hadess/PowerProfiles`.
+Every request becomes an ordinary `Transition::SetProfile` through the
+same reducer/AC-lock/rollback as any other caller — **not** a second
+source of truth. `HoldProfile`/`ReleaseProfile` (what `game-performance`
+uses) snapshot-and-restore like the AC-lock, resolve concurrent holds
+with upstream's own precedence (`power-saver` > `performance`), and
+release a hold whose holder disconnected without calling
+`ReleaseProfile` (watches `NameOwnerChanged`). Deliberately **no
+polkit** on this surface — upstream requires none, and gating it would
+silently regress the exact clients the shim exists to revive. Because
+`hpd_dbus::conflicts::power_conflicts` checks the *same* bus name to
+detect a live PPD rival, it compares the name's owner against the
+connection's own unique name (`GetNameOwner`, not `NameHasOwner`) so the
+shim claiming that name is never misreported as the rival it stands in
+for. `hpdctl status`/`doctor` show "compat PPD: active/inactive"
+(`get_ppd_shim_active`). Full design (with sequence diagrams):
+`docs/dev/GAMING-ROADMAP-es.md` §4.
+
 ### Configuration
 
 `DaemonConfig` (`hpd-daemon/src/config.rs`) is the on-disk
@@ -579,6 +607,7 @@ and exits cleanly rather than letting systemd `SIGKILL` it mid-write.
 | Polkit registration self-check                    | `hpd-dbus/src/polkit.rs::missing_actions` + `hpd-daemon/src/main.rs` startup check + `install.sh` step 5 |
 | Polkit one-command repair (`hpdctl fix-polkit`)   | `hpd-cli/src/fix.rs`                                 |
 | Competing power-daemon detection                  | `hpd-dbus/src/conflicts.rs` + `hpd-daemon/src/main.rs` startup check + `get_power_conflicts` / `get_advisory_daemons` in `hpd-dbus/src/service.rs` |
+| PPD compat shim (`net.hadess.PowerProfiles`)      | `hpd-dbus/src/ppd_shim.rs` + name-claim/task-spawn in `hpd-daemon/src/main.rs` + `get_ppd_shim_active` in `hpd-dbus/src/service.rs` |
 | Power-ownership repair + shared health block      | `hpd-cli/src/doctor.rs` (`doctor::print_health`, reused by `hpdctl status`) |
 | Config schema + reload behaviour                  | `hpd-daemon/src/config.rs`                           |
 | Composition root / signal wiring                  | `hpd-daemon/src/main.rs`                             |

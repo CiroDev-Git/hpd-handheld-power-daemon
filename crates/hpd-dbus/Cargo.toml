@@ -23,6 +23,8 @@ hpd-capabilities = { path = "../hpd-capabilities" }
 zbus             = { workspace = true }
 tokio            = { workspace = true, features = ["sync"] }
 tracing          = { workspace = true }
+# Only for the ppd_shim's NameOwnerChanged signal stream (`StreamExt::next`).
+futures-util     = { workspace = true }
 
 [dev-dependencies]
 # Strict XML parser for the introspection regression test. With
