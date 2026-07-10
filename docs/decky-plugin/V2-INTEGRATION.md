@@ -36,8 +36,11 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
 | `SetCoolingLevel` | `(s level)` | **The cooling lever — fans only.** `silent` / `balanced` / `aggressive` → sets the **fan curve** and switches to manual cooling. Does **not** change power (decoupled). | `set-profile` |
 | `SetFanAuto` | `()` | Auto cooling: the **fan curve** follows the TDP. | `set-profile` |
 | `ResetFanCurve` | `()` | Hand the fans back to the firmware's automatic curve. | `set-profile` |
-| `GetThermalStatus` | `() → (iiiii)` | Live `(cpu_temp_c, gpu_temp_c, cpu_rpm, gpu_rpm, soc_power_mw)`. `i32::MIN` = unavailable. **No signal — poll.** | — (read) |
+| `GetThermalStatus` | `() → (iiiii)` | Live `(cpu_temp_c, gpu_temp_c, cpu_rpm, gpu_rpm, soc_power_mw)`. `i32::MIN` = unavailable. **No signal — poll.** Prefer `GetTelemetry` in new code. | — (read) |
+| `GetTelemetry` | `() → a{sv}` | Extensible telemetry (daemon ≥ 2.8.0): everything `GetThermalStatus` has (`cpu_temp_c`, `gpu_temp_c`, `cpu_fan_rpm`, `gpu_fan_rpm`, `soc_power_mw`) plus `battery_power_mw` (discharge only), `battery_percent`, `battery_status`, `battery_health_pct`, `battery_cycles`, `cpu_freq_mhz`, `gpu_freq_mhz`, `gpu_busy_pct`, `vram_used_mb`/`vram_total_mb`. A key is **present only if the hardware exposes it** — absence, not a placeholder, means unsupported. **No signal — poll.** | — (read) |
 | `GetFanCurve` | `() → (a(uu) cpu, a(uu) gpu)` | The 8 `(temp_c, pwm)` points of each fan's active curve (pwm `0..=255`). Empty if firmware-only. **No signal.** | — (read) |
+| `SetFanCurve` | `(a(yy) cpu, a(yy) gpu)` | **Custom curve editor backend** (daemon ≥ 2.9.0). Exactly 8 `(temp_c, pwm)` points per fan; latches manual cooling like `SetCoolingLevel`. Validated against `GetFanCurveConstraints` — a violation returns `InvalidArgs` naming the offending point (e.g. "point 8: 92°C requires pwm ≥ 200"). | `set-profile` |
+| `GetFanCurveConstraints` | `() → a{sv}` | This device's curve limits (daemon ≥ 2.9.0): `points` (`u`, always 8), `temp_min_c`/`temp_max_c` (`y`), `pwm_min`/`pwm_max` (`y`), `safety_floor` (`a(yy)` of `(temp_threshold_c, min_pwm)` — at/above the threshold, pwm must be at least that minimum). Drive the editor's axes and forbidden zone from this, never hardcoded constants. Empty map if the device has no programmable curve. | — (read) |
 | `GetHardwareLimits` | `() → (uuuu)` | `(spl_min, spl_max, sppt_max, fppt_max)` in watts — the valid TDP range. | — (read) |
 | `IsAcConnected` | `() → (b)` | Whether the charger is plugged in. | — (read) |
 | `GetVersion` | `() → (s)` | The daemon's version string (daemon ≥ 2.4.2). Errors on older daemons → show "unknown". | — (read) |
@@ -129,10 +132,25 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
 
 ### 🟢 Opcionales / avanzadas
 
+12. **Custom fan-curve editor** (daemon ≥ 2.9.0) — drag the 8 points of a
+    hand-drawn curve, per fan or shared. Seed the graph from
+    `GetFanCurve()` (the currently active curve) or a preset as a
+    starting template. Build the editor's axes and forbidden (unsafe)
+    zone from **`GetFanCurveConstraints()`** — never hardcode
+    `temp_min_c`/`temp_max_c`/`safety_floor`, so a future device with a
+    different zone just works. Clamp drags to the safe zone client-side
+    for a good UX, but the daemon is the source of truth: `SetFanCurve`
+    still validates and returns `InvalidArgs` naming the offending point
+    on anything that slips through.
 13. **Power-mode hint (folded into #5)** — when `ActiveProfile` is
     `balanced`/`power-saver`, the Power mode control shows an informative
     note that real power is held below the TDP, with the current TDP
     value. (Cooling never limits power — only the platform profile does.)
+14. **Extended telemetry section** (daemon ≥ 2.8.0) — battery discharge
+    wattage/percent/health/cycles, CPU/GPU clocks, GPU load, VRAM via
+    **`GetTelemetry()`**. Render each field independently; a device that
+    doesn't expose a given key (e.g. no discrete GPU, no battery) simply
+    omits it — hide that row rather than showing a placeholder.
 15. **Reassurance copy** — temp/RPM "normal vs. worry" tooltips (e.g. high
     temps under a heavy game with fans maxed are normal; temperature
     tracks your **TDP** now, and cooling just trades fan noise for a few
@@ -142,10 +160,13 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
 ## Update strategy
 
 - **Properties (5):** event-driven via `PropertiesChanged`. No polling.
-- **`GetThermalStatus`:** poll **~1 Hz only while the panel is visible**;
-  stop when hidden/closed (battery + perf). It has no change signal.
+- **`GetThermalStatus` / `GetTelemetry`:** poll **~1 Hz only while the
+  panel is visible**; stop when hidden/closed (battery + perf). Neither
+  has a change signal.
 - **`GetFanCurve`:** on-demand (open the curve view / after a cooling
   change). Static between changes.
+- **`GetFanCurveConstraints`:** on-demand, once per session (opening the
+  curve editor) — it's a static per-device fact, not live state.
 
 ## Conditional capability surfacing (graceful degradation)
 
@@ -154,24 +175,23 @@ The plugin should not assume every reading exists:
 | Condition | Behaviour |
 |---|---|
 | `GetThermalStatus` field == `i32::MIN` | render "n/a" (sensor/fan absent). |
+| `GetTelemetry` key absent | hide that row entirely — never show a placeholder like `0`. |
 | `GetFanCurve` returns empty vectors | hide the curve graph (firmware-only / no programmable curve). |
 | `GetThermalStatus` `gpu_*` == `i32::MIN` | single-fan / no discrete GPU sensor → show CPU only. |
+| `GetFanCurveConstraints` returns an empty map | hide the curve editor (no programmable curve on this device). |
 | `ChargeEndThreshold` unreadable | hide the battery-cap control. |
 
-## ⚠️ Limitations in v2.0.0 (so you don't design around them)
+## ⚠️ Limitations (so you don't design around them)
 
-- **No custom (hand-drawn) curve push.** `SetCoolingLevel` takes a
-  **preset name** only (`silent`/`balanced`/`aggressive`). There is **no**
-  D-Bus method that accepts arbitrary
-  16-point curves. So the plugin can **select presets** and **draw the
-  active curve** (`GetFanCurve`), but **cannot** offer a curve editor. A
-  future daemon method (e.g. `SetCustomFanCurve(a(uu) cpu, a(uu) gpu)`)
-  would be needed — file a request if the editor is wanted.
-- **Telemetry is poll-only** (`GetThermalStatus`, `GetFanCurve`) — no
-  signals; poll while visible.
+- **Telemetry is poll-only** (`GetThermalStatus`, `GetTelemetry`,
+  `GetFanCurve`, `GetFanCurveConstraints`) — no signals; poll while
+  visible.
 - **Units / sentinels:** TDP & temps are whole units; **power is
   milliwatts**; `i32::MIN` is the "unavailable" sentinel in
-  `GetThermalStatus`.
+  `GetThermalStatus` (`GetTelemetry` instead omits the key entirely).
+- **`GetTelemetry` keys can vary by device and daemon version** — always
+  check for key presence, never assume a fixed set (this is *why* it's
+  an `a{sv}` map and not a tuple).
 
 ## Suggested minimal panel
 

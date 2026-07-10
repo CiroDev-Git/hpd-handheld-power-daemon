@@ -48,6 +48,19 @@ trait PowerDaemon {
     /// Hand fan control back to the firmware's automatic curve.
     async fn reset_fan_curve(&self) -> zbus::Result<()>;
 
+    /// Program an explicit 8-point curve for each fan (daemon ≥ 2.9.0)
+    /// and latch manual cooling. Each `Vec` must have exactly 8
+    /// `(temp_c, pwm)` pairs; the daemon validates against
+    /// `get_fan_curve_constraints` and returns `InvalidArgs` naming the
+    /// offending point on a violation.
+    async fn set_fan_curve(&self, cpu: Vec<(u8, u8)>, gpu: Vec<(u8, u8)>) -> zbus::Result<()>;
+
+    /// This device's fan-curve limits and safety floor (daemon ≥ 2.9.0):
+    /// `points`, `temp_min_c`/`temp_max_c`, `pwm_min`/`pwm_max`,
+    /// `safety_floor` (`(temp_threshold_c, min_pwm)` pairs). Empty map on
+    /// a device with no programmable fan curve, or an older daemon.
+    fn get_fan_curve_constraints(&self) -> zbus::Result<HashMap<String, OwnedValue>>;
+
     /// Toggle the "lock to maximum performance on AC" preference.
     async fn set_ac_max_performance(&self, enabled: bool) -> zbus::Result<()>;
 

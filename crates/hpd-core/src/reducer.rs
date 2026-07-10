@@ -132,6 +132,16 @@ pub fn reduce(
             effects.push(Effect::PersistState);
         }
 
+        Transition::SetCustomFanCurve { cpu, gpu } => {
+            // Identical shape to `SetCoolingLevel`, just with an explicit
+            // curve instead of a named preset.
+            let selection = FanCurveSelection::Custom { cpu, gpu };
+            new_state.fan_follows_tdp = false;
+            new_state.active_fan_curve = Some(selection);
+            effects.push(Effect::ApplyFanCurve(selection));
+            effects.push(Effect::PersistState);
+        }
+
         Transition::ChargeThresholdChanged(threshold) => {
             if new_state.charge_end_threshold != threshold {
                 new_state.charge_end_threshold = threshold;
@@ -453,6 +463,7 @@ fn is_locked_write(transition: &Transition) -> bool {
             | Transition::SetEnvelope(_)
             | Transition::SetProfile(_)
             | Transition::SetCoolingLevel(_)
+            | Transition::SetCustomFanCurve { .. }
             | Transition::EnableFanAuto
             | Transition::ResetFanCurve
     )
@@ -1394,6 +1405,57 @@ mod tests {
             .any(|e| matches!(e, Effect::ApplyPlatformProfile(_))));
     }
 
+    /// An 8-point curve for `SetCustomFanCurve` tests — its exact shape
+    /// doesn't matter here, since the reducer trusts the D-Bus layer to
+    /// have already validated it (see `hpd-capabilities::fan_curve`).
+    fn sample_custom_curve() -> hpd_capabilities::fan_curve::FanCurve {
+        use hpd_capabilities::fan_curve::FanCurvePoint;
+        hpd_capabilities::fan_curve::FanCurve::new([
+            FanCurvePoint::new(45, 20),
+            FanCurvePoint::new(54, 40),
+            FanCurvePoint::new(62, 60),
+            FanCurvePoint::new(69, 80),
+            FanCurvePoint::new(75, 100),
+            FanCurvePoint::new(80, 120),
+            FanCurvePoint::new(85, 150),
+            FanCurvePoint::new(92, 200),
+        ])
+    }
+
+    #[test]
+    fn test_set_custom_fan_curve_sets_fan_curve_only() {
+        let mut state = setup_state(); // Balanced profile, fan_follows_tdp = true
+        state.fan_follows_tdp = true;
+        let cpu = sample_custom_curve();
+        let gpu = sample_custom_curve();
+        let out = reduce(
+            &state,
+            Transition::SetCustomFanCurve { cpu, gpu },
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        // Cooling lever = fan curve only; mode latches manual, exactly
+        // like SetCoolingLevel.
+        assert_eq!(
+            out.new_state.active_fan_curve,
+            Some(FanCurveSelection::Custom { cpu, gpu })
+        );
+        assert!(!out.new_state.fan_follows_tdp);
+        assert!(out
+            .effects
+            .contains(&Effect::ApplyFanCurve(FanCurveSelection::Custom {
+                cpu,
+                gpu
+            })));
+        // Power is decoupled: the platform profile is left untouched.
+        assert_eq!(out.new_state.active_profile, ProfileName::Balanced);
+        assert!(!out
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::ApplyPlatformProfile(_))));
+    }
+
     #[test]
     fn test_profile_change_reasserts_active_curve() {
         // Preservation: writing the platform profile can make the EC drop
@@ -1487,6 +1549,10 @@ mod tests {
             }),
             Transition::SetProfile(ProfileName::PowerSaver),
             Transition::SetCoolingLevel(FanCurvePreset::Silent),
+            Transition::SetCustomFanCurve {
+                cpu: sample_custom_curve(),
+                gpu: sample_custom_curve(),
+            },
             Transition::EnableFanAuto,
             Transition::ResetFanCurve,
         ];

@@ -25,8 +25,8 @@
 //! that lands when captures from those units exist.
 
 use hpd_capabilities::fan_curve::{
-    ActiveFanCurves, FanCurve, FanCurveControl, FanCurvePoint, FanCurvePreset, FanCurveSelection,
-    FAN_CURVE_POINTS,
+    ActiveFanCurves, FanCurve, FanCurveConstraints, FanCurveControl, FanCurvePoint, FanCurvePreset,
+    FanCurveSelection, FAN_CURVE_POINTS,
 };
 use hpd_error::{BackendError, HpdError};
 use hpd_sysfs::SysfsIo;
@@ -98,6 +98,28 @@ const AGGRESSIVE: FanCurve = FanCurve::new([
     FanCurvePoint::new(82, 255),
     FanCurvePoint::new(90, 255),
 ]);
+
+/// Model-specific limits and safety floor for a custom fan curve,
+/// validated against the ROG Xbox Ally X (RC73XA) — the only model with
+/// an on-device capture so far (see the crate-level calibration-scope
+/// note). Every other ASUS handheld this crate targets shares the same
+/// `asus_custom_fan_curve` EC interface, so it inherits this same
+/// conservative floor until its own capture lands.
+///
+/// Not a `const`: [`FanCurveConstraints::safety_floor`] is a `Vec`, which
+/// cannot be built in a const context.
+fn rc73xa_fan_curve_constraints() -> FanCurveConstraints {
+    FanCurveConstraints {
+        temp_min_c: 30,
+        temp_max_c: 95,
+        pwm_min: 0,
+        pwm_max: hpd_capabilities::fan_curve::PWM_MAX,
+        // At >=85 °C, pwm must be >=150; at >=90 °C, >=200 — defense in
+        // depth on top of the EC's own firmware failsafes (see
+        // `FanCurve::validate_against`).
+        safety_floor: vec![(85, 150), (90, 200)],
+    }
+}
 
 /// Resolve a named preset to its `(cpu, gpu)` curves. Both fans share
 /// the same temperature→duty mapping; because the GPU runs cooler than
@@ -183,14 +205,19 @@ impl<S: SysfsIo> AsusFanCurveBackend<S> {
         })
     }
 
-    /// Resolve a selection to concrete `(cpu, gpu)` curves, validating
-    /// caller-supplied custom curves at this trust boundary.
-    fn resolve(selection: &FanCurveSelection) -> Result<(FanCurve, FanCurve), HpdError> {
+    /// Resolve a selection to concrete `(cpu, gpu)` curves. A caller-
+    /// supplied custom curve is validated against this model's
+    /// [`FanCurveConstraints`] at this trust boundary (the D-Bus layer
+    /// validates the same way first; this is the backend half of the
+    /// "doble" validation) — a preset is compile-time known-good and
+    /// skips the check entirely.
+    fn resolve(&self, selection: &FanCurveSelection) -> Result<(FanCurve, FanCurve), HpdError> {
         match selection {
             FanCurveSelection::Preset(preset) => Ok(preset_curves(*preset)),
             FanCurveSelection::Custom { cpu, gpu } => {
-                cpu.validate()?;
-                gpu.validate()?;
+                let constraints = self.constraints();
+                cpu.validate_against(&constraints)?;
+                gpu.validate_against(&constraints)?;
                 Ok((*cpu, *gpu))
             }
         }
@@ -199,7 +226,7 @@ impl<S: SysfsIo> AsusFanCurveBackend<S> {
 
 impl<S: SysfsIo> FanCurveControl for AsusFanCurveBackend<S> {
     fn apply(&self, selection: &FanCurveSelection) -> Result<(), HpdError> {
-        let (cpu, gpu) = Self::resolve(selection)?;
+        let (cpu, gpu) = self.resolve(selection)?;
         let base = self.curve_base()?;
 
         self.write_fan_points(&base, FAN_CPU, &cpu)?;
@@ -270,6 +297,10 @@ impl<S: SysfsIo> FanCurveControl for AsusFanCurveBackend<S> {
             cpu: curves.cpu,
             gpu: curves.gpu,
         }))
+    }
+
+    fn constraints(&self) -> FanCurveConstraints {
+        rc73xa_fan_curve_constraints()
     }
 }
 
@@ -390,6 +421,48 @@ mod tests {
             gpu: BALANCED,
         });
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn constraints_match_the_rc73xa_capture() {
+        let mock = MockSysfs::new();
+        let backend = AsusFanCurveBackend::new(mock.clone());
+        let c = backend.constraints();
+        assert_eq!(c.temp_min_c, 30);
+        assert_eq!(c.temp_max_c, 95);
+        assert_eq!(c.pwm_min, 0);
+        assert_eq!(c.pwm_max, 255);
+        assert_eq!(c.safety_floor, vec![(85, 150), (90, 200)]);
+    }
+
+    #[test]
+    fn custom_curve_violating_the_safety_floor_is_rejected_before_any_write() {
+        let mock = MockSysfs::new();
+        seed_curve_node(&mock);
+        let backend = AsusFanCurveBackend::new(mock.clone());
+
+        // 92°C requires pwm >= 200 (the 90°C floor); 180 satisfies the
+        // weaker 85°C floor (>=150, and stays non-decreasing from the
+        // rest of the ramp) but not this one.
+        let reckless = FanCurve::new([
+            FanCurvePoint::new(45, 20),
+            FanCurvePoint::new(54, 40),
+            FanCurvePoint::new(62, 60),
+            FanCurvePoint::new(69, 80),
+            FanCurvePoint::new(75, 100),
+            FanCurvePoint::new(80, 120),
+            FanCurvePoint::new(85, 150),
+            FanCurvePoint::new(92, 180),
+        ]);
+        let err = backend.apply(&FanCurveSelection::Custom {
+            cpu: reckless,
+            gpu: BALANCED,
+        });
+        assert!(err.is_err());
+
+        // The EC must still report the seeded firmware-auto state — the
+        // rejected write must not have touched any point or enable file.
+        assert_eq!(backend.active_selection().unwrap(), None);
     }
 
     #[test]

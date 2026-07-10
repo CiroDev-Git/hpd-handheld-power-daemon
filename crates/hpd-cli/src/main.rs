@@ -250,6 +250,48 @@ enum CoolAction {
     Get,
     /// Draw the active fan curve (temperature → fan speed)
     Curve,
+    /// Set a custom hand-drawn curve (advanced): 8 "temp:pwm" pairs
+    ///
+    /// Applies the same 8-point curve to both fans and latches manual
+    /// cooling, exactly like `cool set` but with your own points instead
+    /// of a preset. Each pair is `temp_c:pwm` (pwm 0-255), temperatures
+    /// must strictly increase, duty must not decrease. The daemon
+    /// enforces this device's safety floor (a minimum duty past certain
+    /// temperatures) — see `get_fan_curve_constraints` — and rejects
+    /// anything that violates it with the specific point at fault.
+    SetCustom {
+        #[arg(
+            num_args = 8,
+            required = true,
+            value_name = "TEMP:PWM",
+            help = "Exactly 8 points, coolest to hottest, e.g. 45:20 54:50 62:95 69:145 75:190 80:225 85:255 92:255"
+        )]
+        points: Vec<String>,
+    },
+}
+
+/// Parse the 8 `"temp:pwm"` CLI arguments of `cool set-custom` into the
+/// `(u8, u8)` pairs the D-Bus `set_fan_curve` method expects. Rejects
+/// anything that doesn't parse as two `u8`s joined by `:`; the daemon
+/// still separately validates monotonicity/range/safety-floor.
+fn parse_curve_points(points: &[String]) -> Result<Vec<(u8, u8)>, String> {
+    points
+        .iter()
+        .map(|pair| {
+            let (temp, pwm) = pair
+                .split_once(':')
+                .ok_or_else(|| format!("'{pair}' is not in temp:pwm form (e.g. 65:120)"))?;
+            let temp: u8 = temp
+                .trim()
+                .parse()
+                .map_err(|_| format!("'{pair}': temperature must be 0-255"))?;
+            let pwm: u8 = pwm
+                .trim()
+                .parse()
+                .map_err(|_| format!("'{pair}': pwm must be 0-255"))?;
+            Ok((temp, pwm))
+        })
+        .collect()
 }
 
 #[tokio::main]
@@ -422,6 +464,16 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
                 render_curve("CPU fan  (temp → speed)", &cpu);
                 render_curve("GPU fan  (temp → speed)", &gpu);
             }
+            CoolAction::SetCustom { points } => match parse_curve_points(&points) {
+                Err(e) => eprintln!("❌ {}", e),
+                Ok(pairs) => {
+                    if let Err(e) = proxy.set_fan_curve(pairs.clone(), pairs).await {
+                        eprintln!("❌ Error setting custom fan curve: {}", e);
+                    } else {
+                        println!("🖌️ Custom fan curve applied (manual cooling).");
+                    }
+                }
+            },
         },
         Commands::Power { action } => match action {
             PowerAction::Set { mode } => {
@@ -719,5 +771,38 @@ async fn offer_polkit_fix_if_broken(proxy: &PowerDaemonProxy<'_>) {
             }
         }
         eprintln!("Skipped. Run `hpdctl fix-polkit` (or `hpdctl doctor --fix`) later.");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+
+    #[test]
+    fn parse_curve_points_accepts_well_formed_pairs() {
+        let points: Vec<String> = ["45:20", "54:50", "62:95"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            parse_curve_points(&points).unwrap(),
+            vec![(45, 20), (54, 50), (62, 95)]
+        );
+    }
+
+    #[test]
+    fn parse_curve_points_rejects_missing_colon() {
+        let points = vec!["4520".to_string()];
+        assert!(parse_curve_points(&points).is_err());
+    }
+
+    #[test]
+    fn parse_curve_points_rejects_out_of_range_values() {
+        let points = vec!["300:20".to_string()];
+        assert!(parse_curve_points(&points).is_err());
+        let points = vec!["45:-1".to_string()];
+        assert!(parse_curve_points(&points).is_err());
     }
 }

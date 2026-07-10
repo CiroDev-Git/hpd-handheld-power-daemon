@@ -15,7 +15,9 @@ use zbus::interface;
 use zbus::zvariant::{OwnedValue, Value};
 
 use hpd_capabilities::backend::HwBackend;
-use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
+use hpd_capabilities::fan_curve::{
+    FanCurve, FanCurvePoint, FanCurvePreset, FanCurveSelection, FAN_CURVE_POINTS,
+};
 use hpd_capabilities::power::PowerEnvelopeLimits;
 use hpd_capabilities::profile::ProfileName;
 use hpd_core::state::ProfileState;
@@ -102,13 +104,14 @@ fn executor_down() -> zbus::fdo::Error {
     zbus::fdo::Error::Failed("Internal daemon error: Executor down".into())
 }
 
-/// Insert `key` into an `a{sv}` map only when `value` is `Some`. Absence
-/// of a key is how `get_telemetry` tells a client "this hardware does not
-/// expose this reading" — never a placeholder value. Silently drops a
-/// key on the (practically unreachable, for the plain scalar/string
-/// types this is called with) `OwnedValue` conversion failure rather than
-/// letting one bad field take down the whole snapshot.
-fn insert_telemetry<T>(map: &mut HashMap<String, OwnedValue>, key: &'static str, value: Option<T>)
+/// Insert `key` into an `a{sv}` map only when `value` is `Some`. Used by
+/// both `get_telemetry` (absence = "this hardware does not expose this
+/// reading") and `get_fan_curve_constraints` (absence = "no programmable
+/// fan curve at all") — never a placeholder value either way. Silently
+/// drops a key on the (practically unreachable, for the plain scalar/
+/// string/array types this is called with) `OwnedValue` conversion
+/// failure rather than letting one bad field take down the whole map.
+fn insert_dbus_value<T>(map: &mut HashMap<String, OwnedValue>, key: &'static str, value: Option<T>)
 where
     Value<'static>: From<T>,
 {
@@ -117,6 +120,22 @@ where
             map.insert(key.to_string(), owned);
         }
     }
+}
+
+/// Build a [`FanCurve`] from the raw `(temp_c, pwm)` pairs a D-Bus caller
+/// sent, rejecting anything but exactly [`FAN_CURVE_POINTS`] of them.
+/// Monotonicity/range/safety-floor validation happens separately (see
+/// `set_fan_curve`) — this only fixes the shape.
+fn parse_fan_curve(points: Vec<(u8, u8)>) -> Result<FanCurve, zbus::fdo::Error> {
+    let len = points.len();
+    let array: [(u8, u8); FAN_CURVE_POINTS] = points.try_into().map_err(|_| {
+        zbus::fdo::Error::InvalidArgs(format!(
+            "fan curve must have exactly {FAN_CURVE_POINTS} (temp_c, pwm) points, got {len}"
+        ))
+    })?;
+    Ok(FanCurve::new(
+        array.map(|(temp_c, pwm)| FanCurvePoint::new(temp_c, pwm)),
+    ))
 }
 
 fn locked_on_ac() -> zbus::fdo::Error {
@@ -394,6 +413,80 @@ impl PowerDaemonInterface {
         self.send(Transition::ResetFanCurve).await
     }
 
+    /// Program an explicit, hand-drawn 8-point curve for each fan
+    /// (daemon ≥ 2.9.0) and latch manual cooling — the custom-curve
+    /// counterpart of `set_cooling_level`'s named presets. Each of `cpu`
+    /// / `gpu` is exactly 8 `(temp_c, pwm)` pairs.
+    ///
+    /// Validated **twice**: here, against this device's
+    /// `get_fan_curve_constraints` (temperatures strictly increasing,
+    /// duty non-decreasing, in-range, at/above the safety floor), and
+    /// again independently by the L1 backend right before it writes to
+    /// the EC. A violation returns `InvalidArgs` naming the offending
+    /// point.
+    ///
+    /// `polkit` action: `dev.cirodev.hpd.set-profile` (same bucket as the
+    /// other cooling levers).
+    async fn set_fan_curve(
+        &self,
+        cpu: Vec<(u8, u8)>,
+        gpu: Vec<(u8, u8)>,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        debug!("D-Bus received request to set a custom fan curve");
+        self.reject_if_locked()?;
+
+        let Some(curve_cap) = self.backend.fan_curve() else {
+            return Err(zbus::fdo::Error::Failed(
+                "this device has no programmable fan curve".into(),
+            ));
+        };
+        let cpu_curve = parse_fan_curve(cpu)?;
+        let gpu_curve = parse_fan_curve(gpu)?;
+        let constraints = curve_cap.constraints();
+        cpu_curve
+            .validate_against(&constraints)
+            .map_err(|e| zbus::fdo::Error::InvalidArgs(format!("cpu curve, {e}")))?;
+        gpu_curve
+            .validate_against(&constraints)
+            .map_err(|e| zbus::fdo::Error::InvalidArgs(format!("gpu curve, {e}")))?;
+
+        if !polkit::check(conn, &header, PolkitAction::SetProfile).await {
+            return Err(auth_denied());
+        }
+        self.send(Transition::SetCustomFanCurve {
+            cpu: cpu_curve,
+            gpu: gpu_curve,
+        })
+        .await
+    }
+
+    /// This device's fan-curve limits and safety floor (daemon ≥ 2.9.0),
+    /// so a client (the plugin's curve editor, `hpdctl cool set-custom`)
+    /// can validate a hand-drawn curve precisely for the running device
+    /// instead of guessing. Empty map when the device has no
+    /// programmable fan curve at all.
+    ///
+    /// Keys: `points` (`u`, always [`FAN_CURVE_POINTS`]), `temp_min_c` /
+    /// `temp_max_c` (`y`), `pwm_min` / `pwm_max` (`y`), `safety_floor`
+    /// (`a(yy)`, `(temp_threshold_c, min_pwm)` pairs — at or above the
+    /// threshold, `pwm` must be at least `min_pwm`).
+    async fn get_fan_curve_constraints(&self) -> HashMap<String, OwnedValue> {
+        let mut map = HashMap::new();
+        let Some(curve_cap) = self.backend.fan_curve() else {
+            return map;
+        };
+        let c = curve_cap.constraints();
+        insert_dbus_value(&mut map, "points", Some(FAN_CURVE_POINTS as u32));
+        insert_dbus_value(&mut map, "temp_min_c", Some(c.temp_min_c));
+        insert_dbus_value(&mut map, "temp_max_c", Some(c.temp_max_c));
+        insert_dbus_value(&mut map, "pwm_min", Some(c.pwm_min));
+        insert_dbus_value(&mut map, "pwm_max", Some(c.pwm_max));
+        insert_dbus_value(&mut map, "safety_floor", Some(c.safety_floor));
+        map
+    }
+
     /// Live thermal telemetry:
     /// `(cpu_temp_c, gpu_temp_c, cpu_fan_rpm, gpu_fan_rpm, soc_power_mw)`.
     /// The first four are whole units (°C, RPM); the last is the actual
@@ -455,7 +548,7 @@ impl PowerDaemonInterface {
         let mut map = HashMap::new();
 
         if let Some(thermal) = self.backend.thermal() {
-            insert_telemetry(
+            insert_dbus_value(
                 &mut map,
                 "cpu_temp_c",
                 thermal
@@ -464,7 +557,7 @@ impl PowerDaemonInterface {
                     .flatten()
                     .map(|c| i32::from(c.0)),
             );
-            insert_telemetry(
+            insert_dbus_value(
                 &mut map,
                 "gpu_temp_c",
                 thermal
@@ -473,76 +566,76 @@ impl PowerDaemonInterface {
                     .flatten()
                     .map(|c| i32::from(c.0)),
             );
-            insert_telemetry(
+            insert_dbus_value(
                 &mut map,
                 "soc_power_mw",
                 thermal.get_soc_power().ok().flatten().map(|p| p.0),
             );
         }
         if let Some(fan) = self.backend.fan() {
-            insert_telemetry(
+            insert_dbus_value(
                 &mut map,
                 "cpu_fan_rpm",
                 fan.get_cpu_fan_rpm().ok().map(|r| u32::from(r.0)),
             );
-            insert_telemetry(
+            insert_dbus_value(
                 &mut map,
                 "gpu_fan_rpm",
                 fan.get_gpu_fan_rpm().ok().flatten().map(|r| u32::from(r.0)),
             );
         }
         if let Some(t) = self.backend.telemetry() {
-            insert_telemetry(
+            insert_dbus_value(
                 &mut map,
                 "battery_power_mw",
                 t.get_battery_power().ok().flatten().map(|p| p.0),
             );
-            insert_telemetry(
+            insert_dbus_value(
                 &mut map,
                 "battery_percent",
                 t.get_battery_percent().ok().flatten().map(u32::from),
             );
-            insert_telemetry(
+            insert_dbus_value(
                 &mut map,
                 "battery_status",
                 t.get_battery_status().ok().flatten(),
             );
-            insert_telemetry(
+            insert_dbus_value(
                 &mut map,
                 "battery_health_pct",
                 t.get_battery_health_pct().ok().flatten().map(u32::from),
             );
-            insert_telemetry(
+            insert_dbus_value(
                 &mut map,
                 "battery_cycles",
                 t.get_battery_cycles().ok().flatten(),
             );
-            insert_telemetry(
+            insert_dbus_value(
                 &mut map,
                 "cpu_freq_mhz",
                 t.get_cpu_freq_mhz().ok().flatten(),
             );
-            insert_telemetry(
+            insert_dbus_value(
                 &mut map,
                 "gpu_freq_mhz",
                 t.get_gpu_freq_mhz().ok().flatten(),
             );
-            insert_telemetry(
+            insert_dbus_value(
                 &mut map,
                 "gpu_busy_pct",
                 t.get_gpu_busy_pct().ok().flatten().map(u32::from),
             );
-            insert_telemetry(
+            insert_dbus_value(
                 &mut map,
                 "vram_used_mb",
                 t.get_vram_used_mb().ok().flatten(),
             );
-            insert_telemetry(
+            insert_dbus_value(
                 &mut map,
                 "vram_total_mb",
                 t.get_vram_total_mb().ok().flatten(),
             );
-            insert_telemetry(
+            insert_dbus_value(
                 &mut map,
                 "gpu_throttle_status",
                 t.get_gpu_throttle_status().ok().flatten(),
@@ -824,6 +917,38 @@ mod tests {
         // default `Ok(None)` on purpose (see the assertion below).
     }
 
+    impl hpd_capabilities::fan_curve::FanCurveControl for TelemetryFixture {
+        fn apply(
+            &self,
+            _selection: &hpd_capabilities::fan_curve::FanCurveSelection,
+        ) -> Result<(), hpd_error::HpdError> {
+            Ok(())
+        }
+        fn reset_to_auto(&self) -> Result<(), hpd_error::HpdError> {
+            Ok(())
+        }
+        fn get_curves(
+            &self,
+        ) -> Result<hpd_capabilities::fan_curve::ActiveFanCurves, hpd_error::HpdError> {
+            Err(hpd_error::HpdError::FeatureUnsupported)
+        }
+        fn active_selection(
+            &self,
+        ) -> Result<Option<hpd_capabilities::fan_curve::FanCurveSelection>, hpd_error::HpdError>
+        {
+            Ok(None)
+        }
+        fn constraints(&self) -> hpd_capabilities::fan_curve::FanCurveConstraints {
+            hpd_capabilities::fan_curve::FanCurveConstraints {
+                temp_min_c: 30,
+                temp_max_c: 95,
+                pwm_min: 0,
+                pwm_max: 255,
+                safety_floor: vec![(85, 150), (90, 200)],
+            }
+        }
+    }
+
     impl HwBackend for TelemetryFixture {
         fn power(&self) -> &dyn hpd_capabilities::power::PowerEnvelope {
             self
@@ -835,6 +960,9 @@ mod tests {
             Some(self)
         }
         fn telemetry(&self) -> Option<&dyn hpd_capabilities::telemetry::SystemTelemetry> {
+            Some(self)
+        }
+        fn fan_curve(&self) -> Option<&dyn hpd_capabilities::fan_curve::FanCurveControl> {
             Some(self)
         }
     }
@@ -891,5 +1019,71 @@ mod tests {
                  not present with a placeholder"
             );
         }
+    }
+
+    fn telemetry_u8(map: &HashMap<String, OwnedValue>, key: &str) -> Option<u8> {
+        map.get(key).and_then(|v| u8::try_from(v).ok())
+    }
+
+    fn fixture_interface() -> PowerDaemonInterface {
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let (_state_tx, state_rx) = tokio::sync::watch::channel(sample_state());
+        let backend: Arc<dyn HwBackend> = Arc::new(TelemetryFixture);
+        PowerDaemonInterface::new(tx, state_rx, sample_limits(), backend)
+    }
+
+    #[tokio::test]
+    async fn get_fan_curve_constraints_reports_the_device_limits() {
+        let iface = fixture_interface();
+        let constraints = iface.get_fan_curve_constraints().await;
+
+        assert_eq!(telemetry_u32(&constraints, "points"), Some(8));
+        assert_eq!(telemetry_u8(&constraints, "temp_min_c"), Some(30));
+        assert_eq!(telemetry_u8(&constraints, "temp_max_c"), Some(95));
+        assert_eq!(telemetry_u8(&constraints, "pwm_min"), Some(0));
+        assert_eq!(telemetry_u8(&constraints, "pwm_max"), Some(255));
+        let floor = constraints
+            .get("safety_floor")
+            .and_then(|v| v.try_clone().ok())
+            .and_then(|v| Vec::<(u8, u8)>::try_from(v).ok())
+            .expect("safety_floor must be present and decode as (u8,u8) pairs");
+        assert_eq!(floor, vec![(85, 150), (90, 200)]);
+    }
+
+    /// A curve with the wrong number of points must be rejected as
+    /// `InvalidArgs` before `set_fan_curve` ever gets to validate
+    /// monotonicity/range/floor or reach polkit. `set_fan_curve` itself
+    /// needs a live `zbus::Connection` + `Header` to call directly (they
+    /// come from the bus dispatcher in production), so this exercises
+    /// its `parse_fan_curve` helper — the actual shape check — instead.
+    #[test]
+    fn parse_fan_curve_rejects_wrong_point_count() {
+        let seven_points = vec![
+            (45, 20),
+            (54, 40),
+            (62, 60),
+            (69, 80),
+            (75, 100),
+            (80, 120),
+            (85, 150),
+        ];
+        assert!(parse_fan_curve(seven_points).is_err());
+    }
+
+    #[test]
+    fn parse_fan_curve_accepts_exactly_eight_points() {
+        let eight_points = vec![
+            (45, 20),
+            (54, 40),
+            (62, 60),
+            (69, 80),
+            (75, 100),
+            (80, 120),
+            (85, 150),
+            (92, 200),
+        ];
+        let curve = parse_fan_curve(eight_points).expect("exactly 8 points must parse");
+        assert_eq!(curve.points[0], FanCurvePoint::new(45, 20));
+        assert_eq!(curve.points[7], FanCurvePoint::new(92, 200));
     }
 }
