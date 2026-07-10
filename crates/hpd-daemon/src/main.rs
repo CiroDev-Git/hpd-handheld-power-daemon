@@ -479,12 +479,31 @@ where
     const DBUS_OBJECT_PATH: &str = "/dev/cirodev/hpd/PowerDaemon1";
 
     // Clone the state receiver: one copy lives inside the interface (for
-    // synchronous property reads), the other drives the PropertiesChanged
-    // emitter task spawned below.
+    // synchronous property reads), one drives the PropertiesChanged
+    // emitter task spawned below, and one seeds the PPD compat shim —
+    // all four (including the one `PowerDaemonInterface::new` below
+    // consumes) observe the same executor-published state.
     let state_rx_for_watcher = state_rx.clone();
+    let state_rx_for_ppd_shim = state_rx.clone();
 
-    let dbus_interface =
-        hpd_dbus::service::PowerDaemonInterface::new(tx.clone(), state_rx, limits, backend);
+    // The PPD compat shim (see `hpd_dbus::ppd_shim`) is built and served
+    // unconditionally — serving an object nobody can address is harmless
+    // — but only *claims* its bus name after `build()`, best-effort (see
+    // below): claiming it must never abort daemon startup. Whether that
+    // succeeds is unknown until after `dbus_interface` already has to
+    // exist, so it gets a shared flag to flip once there's an answer
+    // (`get_ppd_shim_active` reads it back for `hpdctl status`/`doctor`).
+    let ppd_shim = hpd_dbus::ppd_shim::PowerProfilesShim::new(tx.clone(), state_rx_for_ppd_shim);
+    let ppd_shim_handle = ppd_shim.handle();
+    let ppd_shim_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    let dbus_interface = hpd_dbus::service::PowerDaemonInterface::new(
+        tx.clone(),
+        state_rx,
+        limits,
+        backend,
+        std::sync::Arc::clone(&ppd_shim_active),
+    );
 
     // Session bus is only a valid target when the simulator path is
     // compiled in; production builds always bind to the system bus
@@ -505,6 +524,7 @@ where
     let conn = conn_builder
         .name(DBUS_BUS_NAME)?
         .serve_at(DBUS_OBJECT_PATH, dbus_interface)?
+        .serve_at(hpd_dbus::ppd_shim::OBJECT_PATH, ppd_shim)?
         .build()
         .await?;
 
@@ -522,6 +542,60 @@ where
         state_rx_for_watcher,
         iface_ref,
     ));
+
+    // Try to claim the PPD compat name. Deliberately `DoNotQueue` with no
+    // `ReplaceExisting`/`AllowReplacement`: if the real `power-profiles-daemon`
+    // or `tuned-ppd` is live (i.e. not masked — see `hpd_dbus::conflicts`),
+    // hpd must back off rather than steal the name out from under it. Only
+    // once the name is actually granted do the shim's background tasks
+    // (external-override reconciliation, holder-disconnect detection) get
+    // spawned — an unclaimed shim would otherwise leak a `NameOwnerChanged`
+    // subscription for no reason.
+    match conn
+        .request_name_with_flags(
+            hpd_dbus::ppd_shim::BUS_NAME,
+            zbus::fdo::RequestNameFlags::DoNotQueue.into(),
+        )
+        .await
+    {
+        Ok(zbus::fdo::RequestNameReply::PrimaryOwner) => {
+            ppd_shim_active.store(true, std::sync::atomic::Ordering::Relaxed);
+            info!(
+                name = hpd_dbus::ppd_shim::BUS_NAME,
+                "PPD compat shim active — the KDE power applet, `powerprofilesctl`, and \
+                 CachyOS's `game-performance` now control hpd"
+            );
+            let ppd_iface_ref = conn
+                .object_server()
+                .interface::<_, hpd_dbus::ppd_shim::PowerProfilesShim>(
+                    hpd_dbus::ppd_shim::OBJECT_PATH,
+                )
+                .await?;
+            tokio::spawn(hpd_dbus::ppd_shim::run_external_override_reconciler(
+                ppd_shim_handle.clone(),
+                ppd_iface_ref,
+            ));
+            tokio::spawn(hpd_dbus::ppd_shim::run_holder_disconnect_watcher(
+                conn.clone(),
+                ppd_shim_handle,
+            ));
+        }
+        Ok(_) => {
+            warn!(
+                name = hpd_dbus::ppd_shim::BUS_NAME,
+                "PPD compat shim inactive: that name is already owned (a real \
+                 power-profiles-daemon or tuned-ppd is not masked). The KDE power applet and \
+                 `game-performance` will not see hpd. Run `hpdctl doctor --fix`."
+            );
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                name = hpd_dbus::ppd_shim::BUS_NAME,
+                "PPD compat shim inactive: could not request its bus name"
+            );
+        }
+    }
 
     // Self-check: confirm polkit knows our privileged actions. A partial
     // install (binary copied without package/polkit/*) leaves them

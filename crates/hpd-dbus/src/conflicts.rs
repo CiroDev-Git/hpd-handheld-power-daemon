@@ -135,11 +135,16 @@ pub async fn advisory_daemons(conn: &zbus::Connection) -> Vec<String> {
 }
 
 /// Return the friendly names of the `(name, bus_name)` pairs whose
-/// well-known D-Bus name currently has an owner. Uses
-/// `org.freedesktop.DBus.NameHasOwner`, which reports current ownership
-/// **without** D-Bus-activating the service, so checking never revives a
-/// masked daemon. A failure reaching the bus daemon is treated as "nothing
-/// detected" — this is advisory telemetry, not an authorization decision.
+/// well-known D-Bus name currently has an owner **other than this
+/// connection itself**. Uses `org.freedesktop.DBus.GetNameOwner` (rather
+/// than the simpler `NameHasOwner`) specifically so that hpd's own
+/// `net.hadess.PowerProfiles` compat shim (see `crate::ppd_shim`) —
+/// which makes hpd itself the owner of that name — is never
+/// misidentified as the real `power-profiles-daemon` rival it exists to
+/// stand in for. Neither call D-Bus-activates the service, so checking
+/// never revives a masked daemon. A failure reaching the bus daemon is
+/// treated as "nothing detected" — this is advisory telemetry, not an
+/// authorization decision.
 #[cfg(not(feature = "simulator"))]
 async fn live_owners(conn: &zbus::Connection, candidates: &[(&str, &str)]) -> Vec<String> {
     let proxy = match zbus::Proxy::new(
@@ -157,14 +162,16 @@ async fn live_owners(conn: &zbus::Connection, candidates: &[(&str, &str)]) -> Ve
         }
     };
 
+    let our_name = conn.unique_name().map(|n| n.as_str());
     let mut found = Vec::new();
     for &(name, bus_name) in candidates {
-        let owned: bool = proxy
-            .call("NameHasOwner", &(bus_name,))
-            .await
-            .unwrap_or(false);
-        if owned {
-            found.push(name.to_string());
+        // `GetNameOwner` errors (`NameHasNoOwner`) when nobody owns it —
+        // that's "not found", not a failure worth logging.
+        let owner: Option<String> = proxy.call("GetNameOwner", &(bus_name,)).await.ok();
+        if let Some(owner) = owner {
+            if Some(owner.as_str()) != our_name {
+                found.push(name.to_string());
+            }
         }
     }
     found
@@ -246,6 +253,30 @@ pub async fn advisory_daemons(_conn: &zbus::Connection) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression for the PPD-shim false positive: if *we* own a
+    /// candidate's well-known name (exactly what happens once
+    /// `crate::ppd_shim` claims `net.hadess.PowerProfiles`), it must not
+    /// be reported as a rival. Skips (rather than fails) if this sandbox
+    /// has no reachable session bus — the assertion that matters is
+    /// "never a false positive," which a skipped run doesn't violate.
+    #[cfg(not(feature = "simulator"))]
+    #[tokio::test]
+    async fn live_owners_excludes_names_we_own_ourselves() {
+        let Ok(conn) = zbus::Connection::session().await else {
+            return;
+        };
+        let fake_name = "dev.cirodev.hpd.tests.LiveOwnersFakeRival";
+        if conn.request_name(fake_name).await.is_err() {
+            return; // no usable bus in this sandbox either; skip
+        }
+        let candidates: &[(&str, &str)] = &[("fake-rival", fake_name)];
+        let found = live_owners(&conn, candidates).await;
+        assert!(
+            found.is_empty(),
+            "a name owned by our own connection must never be reported as a rival"
+        );
+    }
 
     /// Every bus-name list holds dotted well-known names.
     #[test]

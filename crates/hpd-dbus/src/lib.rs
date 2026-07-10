@@ -11,4 +11,5 @@
 pub mod actions;
 pub mod conflicts;
 pub mod polkit;
+pub mod ppd_shim;
 pub mod service;
