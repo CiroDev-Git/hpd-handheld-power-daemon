@@ -18,7 +18,7 @@ use hpd_capabilities::units::{Celsius, PowerMilliwatts};
 use hpd_error::{BackendError, HpdError};
 use hpd_sysfs::SysfsIo;
 
-use crate::hwmon::find_hwmon_by_name;
+use crate::hwmon::HwmonCache;
 
 /// hwmon `name` of the AMD CPU temperature driver (Tctl).
 const CPU_HWMON_NAME: &str = "k10temp";
@@ -28,22 +28,27 @@ const GPU_HWMON_NAME: &str = "amdgpu";
 /// [`ThermalSensors`] implementation for ASUS AMD handhelds.
 pub struct AsusThermalBackend<S: SysfsIo> {
     sysfs: S,
+    hwmon_cache: HwmonCache,
 }
 
 impl<S: SysfsIo> AsusThermalBackend<S> {
     /// Wrap a `SysfsIo` handle (see [`AsusBackend::new`](crate::AsusBackend::new)).
     pub fn new(sysfs: S) -> Self {
-        Self { sysfs }
+        Self {
+            sysfs,
+            hwmon_cache: HwmonCache::new(),
+        }
     }
 
     /// Read `temp1_input` (millidegrees) under the hwmon named `name`,
     /// returning `Ok(None)` when that sensor node is absent.
-    fn read_temp(&self, name: &str) -> Result<Option<Celsius>, HpdError> {
-        let Some(base) = find_hwmon_by_name(&self.sysfs, name) else {
+    fn read_temp(&self, name: &'static str) -> Result<Option<Celsius>, HpdError> {
+        let Some(raw) = self
+            .hwmon_cache
+            .read_attr(&self.sysfs, name, "temp1_input")?
+        else {
             return Ok(None);
         };
-        let path = format!("{base}/temp1_input");
-        let raw = self.sysfs.read_string(&path)?;
         let milli: i32 = raw.trim().parse().map_err(|_| BackendError::ParseFailed {
             field: "temp_input",
             raw: raw.clone(),
@@ -67,14 +72,12 @@ impl<S: SysfsIo> ThermalSensors for AsusThermalBackend<S> {
     /// drawing — a good live proxy for "how hard the chip is working"
     /// next to the configured TDP limit. `Ok(None)` if absent.
     fn get_soc_power(&self) -> Result<Option<PowerMilliwatts>, HpdError> {
-        let Some(base) = find_hwmon_by_name(&self.sysfs, GPU_HWMON_NAME) else {
+        let Some(raw) = self
+            .hwmon_cache
+            .read_attr(&self.sysfs, GPU_HWMON_NAME, "power1_input")?
+        else {
             return Ok(None);
         };
-        let path = format!("{base}/power1_input");
-        if !self.sysfs.exists(&path) {
-            return Ok(None);
-        }
-        let raw = self.sysfs.read_string(&path)?;
         let micro: u64 = raw.trim().parse().map_err(|_| BackendError::ParseFailed {
             field: "power1_input",
             raw: raw.clone(),

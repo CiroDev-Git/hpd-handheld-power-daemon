@@ -28,8 +28,12 @@ mod hwmon;
 /// SPL / SPPT / FPPT envelope backend backed by the upstream
 /// `asus-armoury` firmware-attributes driver.
 pub mod power;
+/// `power_supply` class node lookup by `type` (AC / battery).
+mod power_supply;
 /// ACPI platform-profile reader/writer (`/sys/firmware/acpi/platform_profile`).
 pub mod profile;
+/// Extended telemetry reader (battery, CPU/GPU clocks, GPU load, VRAM).
+pub mod telemetry;
 /// CPU/GPU temperature reader (`k10temp` / `amdgpu` hwmon).
 pub mod thermal;
 
@@ -39,6 +43,7 @@ use hpd_capabilities::fan::FanControl;
 use hpd_capabilities::fan_curve::FanCurveControl;
 use hpd_capabilities::platform_profile::PlatformProfile;
 use hpd_capabilities::power::PowerEnvelope;
+use hpd_capabilities::telemetry::SystemTelemetry;
 use hpd_capabilities::thermal::ThermalSensors;
 use hpd_sysfs::SysfsIo;
 
@@ -58,6 +63,9 @@ pub struct AsusBackend<S: SysfsIo + Clone> {
     pub profile: profile::AsusProfileBackend<S>,
     /// CPU/GPU temperature backend (read-only).
     pub thermal: thermal::AsusThermalBackend<S>,
+    /// Extended telemetry backend (battery, CPU/GPU clocks, GPU load,
+    /// VRAM — read-only).
+    pub telemetry: telemetry::AsusTelemetryBackend<S>,
 }
 
 impl<S: SysfsIo + Clone> AsusBackend<S> {
@@ -73,7 +81,8 @@ impl<S: SysfsIo + Clone> AsusBackend<S> {
             fan: fan::AsusFanBackend::new(sysfs.clone()),
             fan_curve: fan_curve::AsusFanCurveBackend::new(sysfs.clone()),
             profile: profile::AsusProfileBackend::new(sysfs.clone()),
-            thermal: thermal::AsusThermalBackend::new(sysfs),
+            thermal: thermal::AsusThermalBackend::new(sysfs.clone()),
+            telemetry: telemetry::AsusTelemetryBackend::new(sysfs),
         }
     }
 }
@@ -101,5 +110,9 @@ impl<S: SysfsIo + Clone + 'static> HwBackend for AsusBackend<S> {
 
     fn thermal(&self) -> Option<&dyn ThermalSensors> {
         Some(&self.thermal)
+    }
+
+    fn telemetry(&self) -> Option<&dyn SystemTelemetry> {
+        Some(&self.telemetry)
     }
 }

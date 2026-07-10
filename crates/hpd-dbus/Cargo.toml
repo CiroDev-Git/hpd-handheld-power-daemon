@@ -41,6 +41,14 @@ quick-xml        = "0.41"
 # Pull in `testing::MockBackend` so a `PowerDaemonInterface` can be built in
 # the test and its introspection XML rendered.
 hpd-capabilities = { path = "../hpd-capabilities", features = ["testing"] }
+# `[dependencies]` only needs `sync` (channels) for the production build;
+# tests additionally need a runtime to drive `#[tokio::test]` async fns
+# (e.g. calling `get_telemetry` directly).
+tokio            = { workspace = true, features = ["rt", "macros"] }
+# Only the test fixture below implements capability traits directly
+# (`HpdError` is their shared `Result` error type); production code never
+# needs to name it since every method it calls already returns `HpdError`.
+hpd-error        = { path = "../hpd-error" }
 
 [lints]
 workspace = true

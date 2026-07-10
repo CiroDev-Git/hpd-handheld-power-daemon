@@ -50,6 +50,20 @@ impl MockSysfs {
         fs::write(full_path, content).unwrap();
     }
 
+    /// Remove a previously created file or directory from the fixture.
+    /// Used by tests that simulate a sysfs node disappearing (e.g. a
+    /// driver reload reassigning a hwmon index), so code that caches a
+    /// resolved path can be exercised into invalidating and rescanning.
+    /// A no-op if the path was never created.
+    pub fn remove_path(&self, rel_path: impl AsRef<Path>) {
+        let full_path = self.root.path().join(rel_path);
+        if full_path.is_dir() {
+            let _ = fs::remove_dir_all(full_path);
+        } else {
+            let _ = fs::remove_file(full_path);
+        }
+    }
+
     /// Map an absolute "sysfs" path to its real location under the
     /// fixture's `TempDir`. Strips the leading `/` so callers can pass
     /// canonical sysfs paths verbatim (`/sys/class/...`).

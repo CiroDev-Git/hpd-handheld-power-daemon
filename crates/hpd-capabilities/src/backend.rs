@@ -9,6 +9,7 @@ use crate::fan::FanControl;
 use crate::fan_curve::FanCurveControl;
 use crate::platform_profile::PlatformProfile;
 use crate::power::PowerEnvelope;
+use crate::telemetry::SystemTelemetry;
 use crate::thermal::ThermalSensors;
 
 /// Trait every L1 vendor backend implements to expose its capabilities
@@ -70,6 +71,14 @@ pub trait HwBackend: Send + Sync {
     fn thermal(&self) -> Option<&dyn ThermalSensors> {
         None
     }
+
+    /// Optional extended-telemetry accessor (battery power/health,
+    /// CPU/GPU clocks, GPU load, VRAM). Returns `None` on hardware that
+    /// exposes none of it; individual fields are independently optional
+    /// within the trait itself. Default: `None`.
+    fn telemetry(&self) -> Option<&dyn SystemTelemetry> {
+        None
+    }
 }
 
 /// Forward every accessor through a shared [`Arc`]. Lets the daemon hold
@@ -94,6 +103,9 @@ impl<T: HwBackend + ?Sized> HwBackend for Arc<T> {
     }
     fn thermal(&self) -> Option<&dyn ThermalSensors> {
         (**self).thermal()
+    }
+    fn telemetry(&self) -> Option<&dyn SystemTelemetry> {
+        (**self).telemetry()
     }
 }
 

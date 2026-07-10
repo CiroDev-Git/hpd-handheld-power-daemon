@@ -537,12 +537,38 @@ fn fmt_telemetry(value: i32, unit: &str) -> String {
     }
 }
 
+/// Render a `get_telemetry()` field: absence (the hardware doesn't
+/// expose this key) renders the same "n/a" as `fmt_telemetry`'s sentinel.
+fn fmt_opt_telemetry(value: Option<u32>, unit: &str) -> String {
+    match value {
+        Some(v) => format!("{v}{unit}"),
+        None => "n/a".to_string(),
+    }
+}
+
+fn telemetry_u32(
+    map: &std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+    key: &str,
+) -> Option<u32> {
+    map.get(key).and_then(|v| u32::try_from(v).ok())
+}
+
+fn telemetry_str<'a>(
+    map: &'a std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+    key: &str,
+) -> Option<&'a str> {
+    map.get(key).and_then(|v| <&str>::try_from(v).ok())
+}
+
 async fn print_dashboard(proxy: &PowerDaemonProxy<'_>) -> zbus::Result<()> {
     let spl_watts = proxy.current_spl().await?;
     let charge_limit = proxy.charge_end_threshold().await?;
     let auto_cooling = proxy.auto_cooling().await?;
     let fan_curve = proxy.fan_curve().await?;
     let (cpu_temp, gpu_temp, cpu_rpm, gpu_rpm, soc_power_mw) = proxy.get_thermal_status().await?;
+    // Extended telemetry (daemon ≥ 2.8.0); an older daemon errors here, so
+    // degrade to an empty map — every field below just renders "n/a".
+    let telemetry = proxy.get_telemetry().await.unwrap_or_default();
 
     let is_ac = proxy.is_ac_connected().await?;
     let ac_locked = proxy.ac_locked().await?;
@@ -592,6 +618,57 @@ async fn print_dashboard(proxy: &PowerDaemonProxy<'_>) -> zbus::Result<()> {
     );
     println!("  🔌 Power adapter:    {}", power_icon);
     println!("  🔋 Battery Limit:    {}%", charge_limit);
+
+    // Battery telemetry (daemon ≥ 2.8.0) — only when the hardware
+    // actually has a battery; hidden entirely on a battery-less board.
+    if let Some(pct) = telemetry_u32(&telemetry, "battery_percent") {
+        let status = telemetry_str(&telemetry, "battery_status").unwrap_or("Unknown");
+        let draw = match (status, telemetry_u32(&telemetry, "battery_power_mw")) {
+            ("Discharging", Some(mw)) => format!(" · {:.1}W discharging", f64::from(mw) / 1000.0),
+            _ => format!(" · {status}"),
+        };
+        println!("  🔋 Battery:          {pct}%{draw}");
+    }
+
+    // "Sistema" telemetry block (daemon ≥ 2.8.0) — CPU/GPU clocks, GPU
+    // load, VRAM, battery health. Skipped entirely when the backend
+    // exposes none of it (older daemon, or a board without amdgpu).
+    let cpu_freq = telemetry_u32(&telemetry, "cpu_freq_mhz");
+    let gpu_freq = telemetry_u32(&telemetry, "gpu_freq_mhz");
+    let gpu_busy = telemetry_u32(&telemetry, "gpu_busy_pct");
+    let vram_used = telemetry_u32(&telemetry, "vram_used_mb");
+    let vram_total = telemetry_u32(&telemetry, "vram_total_mb");
+    let batt_health = telemetry_u32(&telemetry, "battery_health_pct");
+    let batt_cycles = telemetry_u32(&telemetry, "battery_cycles");
+    if cpu_freq.is_some()
+        || gpu_freq.is_some()
+        || gpu_busy.is_some()
+        || vram_used.is_some()
+        || batt_health.is_some()
+    {
+        println!("  ── System ──");
+        println!(
+            "     Clocks:           CPU {} · GPU {} ({})",
+            fmt_opt_telemetry(cpu_freq, " MHz"),
+            fmt_opt_telemetry(gpu_freq, " MHz"),
+            fmt_opt_telemetry(gpu_busy, "% busy")
+        );
+        if vram_used.is_some() || vram_total.is_some() {
+            println!(
+                "     VRAM:             {} / {} MB",
+                fmt_opt_telemetry(vram_used, ""),
+                fmt_opt_telemetry(vram_total, "")
+            );
+        }
+        if batt_health.is_some() || batt_cycles.is_some() {
+            println!(
+                "     Battery health:   {} of original capacity · {} cycles",
+                fmt_opt_telemetry(batt_health, "%"),
+                fmt_opt_telemetry(batt_cycles, "")
+            );
+        }
+    }
+
     println!("=======================================");
 
     Ok(())

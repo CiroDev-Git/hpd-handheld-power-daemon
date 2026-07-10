@@ -6,11 +6,13 @@
 // human-written method in here is documented individually.
 #![allow(missing_docs)]
 
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, error};
 use zbus::interface;
+use zbus::zvariant::{OwnedValue, Value};
 
 use hpd_capabilities::backend::HwBackend;
 use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
@@ -98,6 +100,23 @@ fn auth_denied() -> zbus::fdo::Error {
 
 fn executor_down() -> zbus::fdo::Error {
     zbus::fdo::Error::Failed("Internal daemon error: Executor down".into())
+}
+
+/// Insert `key` into an `a{sv}` map only when `value` is `Some`. Absence
+/// of a key is how `get_telemetry` tells a client "this hardware does not
+/// expose this reading" — never a placeholder value. Silently drops a
+/// key on the (practically unreachable, for the plain scalar/string
+/// types this is called with) `OwnedValue` conversion failure rather than
+/// letting one bad field take down the whole snapshot.
+fn insert_telemetry<T>(map: &mut HashMap<String, OwnedValue>, key: &'static str, value: Option<T>)
+where
+    Value<'static>: From<T>,
+{
+    if let Some(v) = value {
+        if let Ok(owned) = OwnedValue::try_from(Value::<'static>::from(v)) {
+            map.insert(key.to_string(), owned);
+        }
+    }
 }
 
 fn locked_on_ac() -> zbus::fdo::Error {
@@ -416,6 +435,123 @@ impl PowerDaemonInterface {
         (cpu_temp, gpu_temp, cpu_rpm, gpu_rpm, soc_power_mw)
     }
 
+    /// Extended telemetry as an open-ended `a{sv}` map. A key is present
+    /// only when the hardware actually exposes that reading — absence
+    /// (not a placeholder value) means "not supported on this device",
+    /// so clients should treat a missing key exactly like a hidden
+    /// control. Prefer this over `get_thermal_status` in new code; that
+    /// method stays only for backward compatibility with older clients.
+    ///
+    /// Keys (all independently optional): `cpu_temp_c` / `gpu_temp_c`
+    /// (`i`, °C), `cpu_fan_rpm` / `gpu_fan_rpm` (`u`, RPM), `soc_power_mw`
+    /// (`u`, mW), `battery_power_mw` (`u`, mW — only while discharging),
+    /// `battery_percent` (`u`, 0-100), `battery_status` (`s`, raw kernel
+    /// string), `battery_health_pct` (`u`), `battery_cycles` (`u`),
+    /// `cpu_freq_mhz` / `gpu_freq_mhz` (`u`), `gpu_busy_pct` (`u`,
+    /// 0-100), `vram_used_mb` / `vram_total_mb` (`u`),
+    /// `gpu_throttle_status` (`t`, raw bitmask — no current backend
+    /// populates this).
+    async fn get_telemetry(&self) -> HashMap<String, OwnedValue> {
+        let mut map = HashMap::new();
+
+        if let Some(thermal) = self.backend.thermal() {
+            insert_telemetry(
+                &mut map,
+                "cpu_temp_c",
+                thermal
+                    .get_cpu_temp()
+                    .ok()
+                    .flatten()
+                    .map(|c| i32::from(c.0)),
+            );
+            insert_telemetry(
+                &mut map,
+                "gpu_temp_c",
+                thermal
+                    .get_gpu_temp()
+                    .ok()
+                    .flatten()
+                    .map(|c| i32::from(c.0)),
+            );
+            insert_telemetry(
+                &mut map,
+                "soc_power_mw",
+                thermal.get_soc_power().ok().flatten().map(|p| p.0),
+            );
+        }
+        if let Some(fan) = self.backend.fan() {
+            insert_telemetry(
+                &mut map,
+                "cpu_fan_rpm",
+                fan.get_cpu_fan_rpm().ok().map(|r| u32::from(r.0)),
+            );
+            insert_telemetry(
+                &mut map,
+                "gpu_fan_rpm",
+                fan.get_gpu_fan_rpm().ok().flatten().map(|r| u32::from(r.0)),
+            );
+        }
+        if let Some(t) = self.backend.telemetry() {
+            insert_telemetry(
+                &mut map,
+                "battery_power_mw",
+                t.get_battery_power().ok().flatten().map(|p| p.0),
+            );
+            insert_telemetry(
+                &mut map,
+                "battery_percent",
+                t.get_battery_percent().ok().flatten().map(u32::from),
+            );
+            insert_telemetry(
+                &mut map,
+                "battery_status",
+                t.get_battery_status().ok().flatten(),
+            );
+            insert_telemetry(
+                &mut map,
+                "battery_health_pct",
+                t.get_battery_health_pct().ok().flatten().map(u32::from),
+            );
+            insert_telemetry(
+                &mut map,
+                "battery_cycles",
+                t.get_battery_cycles().ok().flatten(),
+            );
+            insert_telemetry(
+                &mut map,
+                "cpu_freq_mhz",
+                t.get_cpu_freq_mhz().ok().flatten(),
+            );
+            insert_telemetry(
+                &mut map,
+                "gpu_freq_mhz",
+                t.get_gpu_freq_mhz().ok().flatten(),
+            );
+            insert_telemetry(
+                &mut map,
+                "gpu_busy_pct",
+                t.get_gpu_busy_pct().ok().flatten().map(u32::from),
+            );
+            insert_telemetry(
+                &mut map,
+                "vram_used_mb",
+                t.get_vram_used_mb().ok().flatten(),
+            );
+            insert_telemetry(
+                &mut map,
+                "vram_total_mb",
+                t.get_vram_total_mb().ok().flatten(),
+            );
+            insert_telemetry(
+                &mut map,
+                "gpu_throttle_status",
+                t.get_gpu_throttle_status().ok().flatten(),
+            );
+        }
+
+        map
+    }
+
     /// The eight `(temp_c, pwm)` points of the active CPU and GPU fan
     /// curves as read back from the EC: `(cpu_points, gpu_points)`. `pwm`
     /// is 0–255. Both vectors are empty when the backend exposes no
@@ -623,6 +759,136 @@ mod tests {
             assert!(
                 !body.contains("--"),
                 "XML comment body contains `--`, which strict parsers reject:\n{body}"
+            );
+        }
+    }
+
+    /// Minimal `HwBackend` fixture exercising `get_telemetry`'s mapping:
+    /// some fields overridden with fixed readings, others left at the
+    /// trait's default `Ok(None)` — verifying present values are mapped
+    /// to the right key/type *and* that a field the "hardware" doesn't
+    /// expose is omitted entirely rather than sent as a placeholder.
+    struct TelemetryFixture;
+
+    impl hpd_capabilities::power::PowerEnvelope for TelemetryFixture {
+        fn get_limits(&self) -> Result<PowerEnvelopeLimits, hpd_error::HpdError> {
+            Ok(sample_limits())
+        }
+        fn get_target(&self) -> Result<PowerEnvelopeTarget, hpd_error::HpdError> {
+            Ok(sample_state().power_target)
+        }
+        fn set_target(&self, _target: &PowerEnvelopeTarget) -> Result<(), hpd_error::HpdError> {
+            Ok(())
+        }
+    }
+
+    impl hpd_capabilities::thermal::ThermalSensors for TelemetryFixture {
+        fn get_cpu_temp(
+            &self,
+        ) -> Result<Option<hpd_capabilities::units::Celsius>, hpd_error::HpdError> {
+            Ok(Some(hpd_capabilities::units::Celsius(65)))
+        }
+        fn get_gpu_temp(
+            &self,
+        ) -> Result<Option<hpd_capabilities::units::Celsius>, hpd_error::HpdError> {
+            Ok(None) // no distinct GPU sensor on this fixture "device"
+        }
+        fn get_soc_power(&self) -> Result<Option<PowerMilliwatts>, hpd_error::HpdError> {
+            Ok(Some(PowerMilliwatts(18300)))
+        }
+    }
+
+    impl hpd_capabilities::fan::FanControl for TelemetryFixture {
+        fn get_cpu_fan_rpm(&self) -> Result<hpd_capabilities::units::Rpm, hpd_error::HpdError> {
+            Ok(hpd_capabilities::units::Rpm(4200))
+        }
+        fn get_gpu_fan_rpm(
+            &self,
+        ) -> Result<Option<hpd_capabilities::units::Rpm>, hpd_error::HpdError> {
+            Ok(None) // single-fan fixture
+        }
+    }
+
+    impl hpd_capabilities::telemetry::SystemTelemetry for TelemetryFixture {
+        fn get_battery_power(&self) -> Result<Option<PowerMilliwatts>, hpd_error::HpdError> {
+            Ok(Some(PowerMilliwatts(15000)))
+        }
+        fn get_battery_percent(&self) -> Result<Option<u8>, hpd_error::HpdError> {
+            Ok(Some(64))
+        }
+        fn get_battery_status(&self) -> Result<Option<String>, hpd_error::HpdError> {
+            Ok(Some("Discharging".to_string()))
+        }
+        // battery_health_pct, battery_cycles, cpu_freq_mhz, gpu_freq_mhz,
+        // gpu_busy_pct, vram_*, gpu_throttle_status: left at the trait's
+        // default `Ok(None)` on purpose (see the assertion below).
+    }
+
+    impl HwBackend for TelemetryFixture {
+        fn power(&self) -> &dyn hpd_capabilities::power::PowerEnvelope {
+            self
+        }
+        fn thermal(&self) -> Option<&dyn hpd_capabilities::thermal::ThermalSensors> {
+            Some(self)
+        }
+        fn fan(&self) -> Option<&dyn hpd_capabilities::fan::FanControl> {
+            Some(self)
+        }
+        fn telemetry(&self) -> Option<&dyn hpd_capabilities::telemetry::SystemTelemetry> {
+            Some(self)
+        }
+    }
+
+    fn telemetry_u32(map: &HashMap<String, OwnedValue>, key: &str) -> Option<u32> {
+        map.get(key).and_then(|v| u32::try_from(v).ok())
+    }
+
+    fn telemetry_str<'a>(map: &'a HashMap<String, OwnedValue>, key: &str) -> Option<&'a str> {
+        map.get(key).and_then(|v| <&str>::try_from(v).ok())
+    }
+
+    #[tokio::test]
+    async fn get_telemetry_reports_present_and_omits_absent_keys() {
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let (_state_tx, state_rx) = tokio::sync::watch::channel(sample_state());
+        let backend: Arc<dyn HwBackend> = Arc::new(TelemetryFixture);
+        let iface = PowerDaemonInterface::new(tx, state_rx, sample_limits(), backend);
+
+        let telemetry = iface.get_telemetry().await;
+
+        assert_eq!(
+            telemetry
+                .get("cpu_temp_c")
+                .and_then(|v| i32::try_from(v).ok()),
+            Some(65)
+        );
+        assert_eq!(telemetry_u32(&telemetry, "cpu_fan_rpm"), Some(4200));
+        assert_eq!(telemetry_u32(&telemetry, "soc_power_mw"), Some(18300));
+        assert_eq!(telemetry_u32(&telemetry, "battery_power_mw"), Some(15000));
+        assert_eq!(telemetry_u32(&telemetry, "battery_percent"), Some(64));
+        assert_eq!(
+            telemetry_str(&telemetry, "battery_status"),
+            Some("Discharging")
+        );
+
+        // Fields the fixture "hardware" doesn't expose must be entirely
+        // absent from the map, not present with a placeholder like 0.
+        for missing_key in [
+            "gpu_temp_c",
+            "gpu_fan_rpm",
+            "battery_health_pct",
+            "battery_cycles",
+            "cpu_freq_mhz",
+            "gpu_freq_mhz",
+            "gpu_busy_pct",
+            "vram_used_mb",
+            "vram_total_mb",
+            "gpu_throttle_status",
+        ] {
+            assert!(
+                !telemetry.contains_key(missing_key),
+                "key `{missing_key}` should be omitted when the hardware doesn't expose it, \
+                 not present with a placeholder"
             );
         }
     }

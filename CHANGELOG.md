@@ -11,6 +11,54 @@ not part of the published repository.
 
 ---
 
+## [2.8.0] — 2026-07-10
+
+### Added
+
+- **Extended telemetry: `get_telemetry() -> a{sv}` D-Bus method.** The
+  first phase of the gaming-and-performance roadmap
+  ([`docs/dev/GAMING-ROADMAP-es.md`](docs/dev/GAMING-ROADMAP-es.md) §1).
+  `get_thermal_status`'s fixed `(iiiii)` tuple can't grow without
+  breaking existing clients, so new readings land on an open-ended,
+  extensible map instead: a key is present only when the running
+  hardware actually exposes that reading (a battery-less box, or a board
+  without amdgpu's `gpu_busy_percent`, simply omits the key — never a
+  placeholder). `get_thermal_status` is unchanged and stays supported.
+  - New keys: `battery_power_mw` (discharge only), `battery_percent`,
+    `battery_status` (raw kernel string), `battery_health_pct`
+    (`charge_full`/`energy_full` vs. `*_design`), `battery_cycles`,
+    `cpu_freq_mhz` (average of every `cpufreq/policy*`),
+    `gpu_freq_mhz` (amdgpu hwmon `freq1_input`, falling back to the
+    active `pp_dpm_sclk` line), `gpu_busy_pct`, `vram_used_mb` /
+    `vram_total_mb`. Also migrates `cpu_temp_c`, `gpu_temp_c`,
+    `cpu_fan_rpm`, `gpu_fan_rpm`, `soc_power_mw` from
+    `get_thermal_status` onto the same map. `gpu_throttle_status` is
+    defined in the capability trait but not yet populated by the ASUS
+    backend — there is no stable, non-debugfs sysfs attribute for it as
+    of this writing.
+  - New `hpd-capabilities::telemetry::SystemTelemetry` trait (a new
+    optional `HwBackend::telemetry()` accessor, following the existing
+    "additive capability" pattern) and `hpd-backend-asus::telemetry`
+    implementation. Battery and AC detection now share one
+    `power_supply` node-by-`type` scanner (`hpd-backend-asus::power_supply`)
+    instead of each hand-rolling its own loop.
+  - `hpdctl status` / `monitor` gain a battery line (percent + live
+    discharge wattage, hidden entirely on a battery-less board) and a
+    "System" block (CPU/GPU clocks, GPU load, VRAM, battery health/cycle
+    count), each field independently rendered as `n/a` — or the whole
+    block skipped — when the hardware doesn't expose it.
+
+### Fixed
+
+- **hwmon lookups are now cached per backend instance.** Every poll of
+  temperature, fan RPM, or the new telemetry rescanned up to 24
+  `/sys/class/hwmon/hwmonN` nodes from scratch (hwmon indices are not
+  addressable — see `hpd-backend-asus::hwmon`), which added up fast with
+  the plugin and `hpdctl monitor` both polling at ~1 Hz. A resolved path
+  is now cached and reused after one cheap confirmation read, with a
+  miss falling back to the full rescan (a driver reload reassigning an
+  index is picked up automatically). Found in the 2026-07 audit §4.3.
+
 ## [2.7.3] — 2026-07-07
 
 ### Added
