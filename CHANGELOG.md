@@ -11,6 +11,47 @@ not part of the published repository.
 
 ---
 
+## [2.9.0] — 2026-07-10
+
+### Added
+
+- **Custom (hand-drawn) fan curves are back over D-Bus** — `set_fan_curve(cpu:
+  a(yy), gpu: a(yy))`, Fase 3 of the gaming/performance roadmap
+  ([`docs/dev/GAMING-ROADMAP-es.md`](docs/dev/GAMING-ROADMAP-es.md) §3).
+  Each fan takes exactly 8 `(temp_c, pwm)` points and latches manual
+  cooling, exactly like `set_cooling_level`'s named presets but with an
+  explicit curve. This is a new, safety-floor-aware setter — distinct
+  from the raw preset-only `set_fan_curve` retired in 2.5.0 (see that
+  entry); the name is reused because the old method is long gone and this
+  is the natural replacement.
+  - **New `get_fan_curve_constraints() -> a{sv}`**: per-device curve
+    limits and safety floor (`points`, `temp_min_c`/`temp_max_c`,
+    `pwm_min`/`pwm_max`, `safety_floor` — `(temp_threshold_c, min_pwm)`
+    pairs). Lets a client (the plugin's future curve editor,
+    `hpdctl cool set-custom`) validate precisely for the running device
+    instead of guessing, and lets a new ASUS handheld with no on-hardware
+    capture yet inherit a conservative floor rather than none.
+  - **Validated twice**: once at the D-Bus boundary against
+    `get_fan_curve_constraints`, and again independently by the L1
+    backend immediately before writing to the EC — a violation returns
+    `InvalidArgs` naming the offending point (e.g. "point 8: 92°C
+    requires pwm ≥ 200"). On the ROG Xbox Ally X (RC73XA): 30–95 °C,
+    0–255 pwm, and a floor of pwm ≥150 at ≥85 °C / pwm ≥200 at ≥90 °C —
+    defense in depth on top of the EC's own firmware failsafes.
+  - New `hpdctl cool set-custom <8 temp:pwm pairs>` applies the same
+    8-point curve to both fans.
+  - `polkit` action: `dev.cirodev.hpd.set-profile` (the same "cooling
+    levers" bucket as `set_cooling_level`/`reset_fan_curve`) — no new
+    action added.
+  - Internal: `FanCurve::validate_against` (stricter than the existing
+    `validate()` used for the compile-time presets — strictly increasing
+    temperatures, not just non-decreasing) and the new
+    `FanCurveConstraints` type live in `hpd-capabilities`;
+    `FanCurveControl` gains a mandatory `constraints()` accessor.
+  - `docs/decky-plugin/V2-INTEGRATION.md` updated with the new D-Bus
+    surface and this release's `get_telemetry` (2.8.0), which had been
+    left out of that doc.
+
 ## [2.8.0] — 2026-07-10
 
 ### Added
