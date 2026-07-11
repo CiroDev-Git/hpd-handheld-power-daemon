@@ -16,7 +16,7 @@ fan / temperature / power reporting on handheld PCs
 - `hpdctl` (from crate `hpd-cli`) — user-facing CLI that talks to the
   daemon over D-Bus.
 
-Current release: **`2.11.0`** (see `CHANGELOG.md`). The public
+Current release: **`2.12.0`** (see `CHANGELOG.md`). The public
 surface (D-Bus interface, CLI subcommands, on-disk state, polkit action
 IDs) is stable and follows SemVer.
 
@@ -593,14 +593,48 @@ and exits cleanly rather than letting systemd `SIGKILL` it mid-write.
   `reset_fan_curve`) and the AC-lock toggle (`set_ac_max_performance`) —
   it's the shared "low-impact, `auth_admin_keep`"
   bucket, not only the power profile.
+- **GPU clock constraints are Class A, fan-curve constraints are Class
+  C.** `GpuClockConstraints` (`hpd-capabilities/src/gpu_clock.rs`) is read
+  **live** from the kernel's `OD_RANGE` on every `constraints()` call —
+  a generic amdgpu OverDrive interface, portable to a future device with
+  zero recalibration. `FanCurveConstraints` is hardcoded per model (e.g.
+  `rc73xa_fan_curve_constraints()`) because the EC safety floor has no
+  generic kernel source. Don't "fix" `GpuClockRangeControl::constraints`
+  to cache or hardcode its result — the live read is the point.
+- **`ProfileState::active_gpu_clock` defaults to `None` forever, not just
+  at first boot** — unlike `active_fan_curve`, whose real steady state is
+  never `None`. The daemon must never touch
+  `power_dpm_force_performance_level`/`pp_od_clk_voltage` until the user
+  calls `enable_gpu_auto_follow`/`set_gpu_clock_range` at least once.
+  `force_ac_max_performance`, the AC-plug-restore branch, and
+  `SystemResumed`'s full reapply all guard their GPU-clock effect on
+  `active_gpu_clock.is_some()` — mirroring the fan curve's unconditional
+  re-pin there would silently auto-opt every fresh install into managed
+  GPU clocks the first time AC is plugged in.
+- **`SystemResumed` does `ResetGpuClocks` then `ApplyGpuClockRange`, not a
+  bare re-apply**, when a GPU clock is managed — asymmetric with the fan
+  curve's plain re-apply. A GPU-clock write is two hardware steps
+  (`power_dpm_force_performance_level` → `manual`, then commit a range)
+  with a real unsafe intermediate state a crash could land in; resetting
+  to firmware auto first gives resume a known-clean baseline instead of
+  inheriting a half-written state.
+- **`Effect::ApplyGpuClockRange` carries the abstract `GpuClockSelection`,
+  not a resolved `GpuClockRange`.** Resolving `Preset(tier)` needs both
+  `RuntimeConfig::gpu_clock_fractions` (which the pure reducer has but
+  must never do I/O with) and a live `OD_RANGE` read (which the reducer
+  must never perform and the L1 backend must never see `RuntimeConfig`
+  to resolve itself). Only the `Executor` holds both, so it alone calls
+  `gpu_clock_range_for_tier` immediately before
+  `GpuClockRangeControl::set_range`.
 
 ## Where to look for things
 
 | You want…                                          | Look in                                              |
 |---------------------------------------------------|------------------------------------------------------|
 | The state machine (transitions / reducer / effects) | `hpd-core/src/{transition,reducer,effect,executor}.rs` |
-| Hardware-write contracts                          | `hpd-capabilities/src/{power,charge,fan,fan_curve,thermal,platform_profile,telemetry}.rs` |
-| ASUS firmware-attribute paths                     | `hpd-backend-asus/src/{power,charge,fan,fan_curve,thermal,profile}.rs`  |
+| Hardware-write contracts                          | `hpd-capabilities/src/{power,charge,fan,fan_curve,gpu_clock,thermal,platform_profile,telemetry}.rs` |
+| ASUS firmware-attribute paths                     | `hpd-backend-asus/src/{power,charge,fan,fan_curve,gpu_clock,thermal,profile}.rs`  |
+| GPU clock ceiling inference (tier → MHz)          | `hpd-core/src/inference.rs::gpu_clock_range_for_tier` + `RuntimeConfig::gpu_clock_fractions` in `hpd-capabilities/src/profile.rs` |
 | D-Bus method / property surface                   | `hpd-dbus/src/service.rs`                            |
 | Polkit action IDs                                 | `hpd-dbus/src/actions.rs`                            |
 | Polkit fail-closed contract                       | `hpd-dbus/src/polkit.rs`                             |

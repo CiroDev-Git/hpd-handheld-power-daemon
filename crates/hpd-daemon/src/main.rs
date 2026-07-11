@@ -351,6 +351,12 @@ where
                 // runtime via set_ac_max_performance.
                 ac_max_performance: daemon_config.default_ac_max_performance,
                 ac_locked: false,
+                // GPU clock auto-follow defaults OFF on every fresh
+                // install — the daemon never touches
+                // power_dpm_force_performance_level/pp_od_clk_voltage
+                // until the user explicitly opts in once.
+                active_gpu_clock: None,
+                gpu_follows_tdp: false,
             }
         }
     };
@@ -745,6 +751,16 @@ async fn spawn_properties_changed_emitter(
         if new.active_fan_curve != last.active_fan_curve {
             if let Err(e) = iface.fan_curve_changed(ctx).await {
                 error!(error = %e, "Failed to emit fan_curve PropertiesChanged");
+            }
+        }
+        if new.active_gpu_clock != last.active_gpu_clock {
+            if let Err(e) = iface.gpu_clock_range_changed(ctx).await {
+                error!(error = %e, "Failed to emit gpu_clock_range PropertiesChanged");
+            }
+        }
+        if new.gpu_follows_tdp != last.gpu_follows_tdp {
+            if let Err(e) = iface.gpu_follows_tdp_changed(ctx).await {
+                error!(error = %e, "Failed to emit gpu_follows_tdp PropertiesChanged");
             }
         }
         if new.is_ac_connected != last.is_ac_connected {

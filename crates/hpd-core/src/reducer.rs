@@ -5,6 +5,7 @@
 use tracing::info;
 
 use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
+use hpd_capabilities::gpu_clock::GpuClockSelection;
 use hpd_capabilities::power::PowerEnvelopeLimits;
 use hpd_capabilities::power::PowerEnvelopeTarget;
 use hpd_capabilities::profile::{ProfileName, RuntimeConfig, TdpPreset};
@@ -142,6 +143,47 @@ pub fn reduce(
             effects.push(Effect::PersistState);
         }
 
+        Transition::SetGpuClockRange { min_mhz, max_mhz } => {
+            // Manual override, identical shape to `SetCustomFanCurve`.
+            let selection = GpuClockSelection::Custom(hpd_capabilities::gpu_clock::GpuClockRange {
+                min_mhz,
+                max_mhz,
+            });
+            new_state.gpu_follows_tdp = false;
+            new_state.active_gpu_clock = Some(selection);
+            effects.push(Effect::ApplyGpuClockRange(selection));
+            effects.push(Effect::PersistState);
+        }
+
+        Transition::EnableGpuAutoFollow => {
+            // Mirrors EnableFanAuto: infer and apply immediately rather than
+            // waiting for the next TDP change to happen to touch the
+            // envelope.
+            if !new_state.gpu_follows_tdp {
+                info!("Enabling GPU clock auto-follow (follows TDP)");
+                new_state.gpu_follows_tdp = true;
+
+                let inferred_tier = infer_fan_curve_from_spl(
+                    &new_state.power_target,
+                    device_limits,
+                    &config.profile_thresholds,
+                );
+                let selection = GpuClockSelection::Preset(inferred_tier);
+                new_state.active_gpu_clock = Some(selection);
+                effects.push(Effect::ApplyGpuClockRange(selection));
+                effects.push(Effect::PersistState);
+            }
+        }
+
+        Transition::ResetGpuClocks => {
+            if new_state.active_gpu_clock.is_some() {
+                new_state.active_gpu_clock = None;
+                new_state.gpu_follows_tdp = false;
+                effects.push(Effect::ResetGpuClocks);
+                effects.push(Effect::PersistState);
+            }
+        }
+
         Transition::ChargeThresholdChanged(threshold) => {
             if new_state.charge_end_threshold != threshold {
                 new_state.charge_end_threshold = threshold;
@@ -178,6 +220,15 @@ pub fn reduce(
             new_state.active_fan_curve = real_selection;
         }
 
+        Transition::SyncGpuClockRange(real_range) => {
+            // Mirror of SyncFanCurve: the executor read the actual
+            // committed range back after a failed write. Always `Custom`
+            // (or `None`) — a rollback read-back can never be attributed
+            // to a curated `Preset` tier, only ever the concrete MHz the
+            // hardware reports.
+            new_state.active_gpu_clock = real_range.map(GpuClockSelection::Custom);
+        }
+
         Transition::AcPowerChanged(is_plugged) => {
             // Debounce: ignore no-op transitions. CRITICAL — without this a
             // duplicate plug event would re-snapshot the *forced-max* state
@@ -199,6 +250,8 @@ pub fn reduce(
                         active_profile: state.active_profile.clone(),
                         active_fan_curve: state.active_fan_curve,
                         fan_follows_tdp: state.fan_follows_tdp,
+                        active_gpu_clock: state.active_gpu_clock,
+                        gpu_follows_tdp: state.gpu_follows_tdp,
                     };
                     let mut o = force_ac_max_performance(state, device_limits, config);
                     o.new_state.last_dc_state = Some(snapshot);
@@ -299,6 +352,18 @@ pub fn reduce(
             if let Some(ref selection) = state.active_fan_curve {
                 effects.push(Effect::ApplyFanCurve(*selection));
             }
+            // GPU clock: only re-assert if the user has opted in
+            // (`active_gpu_clock.is_some()`) — same guard as everywhere
+            // else. Reset-then-reapply (not a bare re-apply, unlike the
+            // fan curve above) because a crash between switching the DPM
+            // to manual and committing a range is a real risk class this
+            // capability has that the fan curve doesn't; re-asserting from
+            // a known-clean firmware-auto baseline avoids inheriting a
+            // half-written state.
+            if let Some(selection) = state.active_gpu_clock {
+                effects.push(Effect::ResetGpuClocks);
+                effects.push(Effect::ApplyGpuClockRange(selection));
+            }
             return Ok(ReducerOutput {
                 new_state: state.clone(),
                 effects,
@@ -354,6 +419,8 @@ pub fn reduce(
                             active_profile: state.active_profile.clone(),
                             active_fan_curve: state.active_fan_curve,
                             fan_follows_tdp: state.fan_follows_tdp,
+                            active_gpu_clock: state.active_gpu_clock,
+                            gpu_follows_tdp: state.gpu_follows_tdp,
                         });
                     }
                     o.effects.push(Effect::PersistState);
@@ -415,15 +482,28 @@ fn apply_power_target(
         // the TDP. The platform_profile is a decoupled power lever that
         // defaults to Performance, so the SPL just written is the real
         // usable limit — we never clamp it down by inferring a PowerSaver
-        // EPP here.
-        if new_state.fan_follows_tdp {
-            let inferred_curve =
+        // EPP here. Both `fan_follows_tdp` and `gpu_follows_tdp` are
+        // independent flags sharing the SAME tier inference so a TDP
+        // change can drive one, both, or neither depending on what the
+        // user has opted into.
+        if new_state.fan_follows_tdp || new_state.gpu_follows_tdp {
+            let inferred_tier =
                 infer_fan_curve_from_spl(&new_target, device_limits, &config.profile_thresholds);
-            let selection = FanCurveSelection::Preset(inferred_curve);
 
-            if new_state.active_fan_curve != Some(selection) {
-                new_state.active_fan_curve = Some(selection);
-                effects.push(Effect::ApplyFanCurve(selection));
+            if new_state.fan_follows_tdp {
+                let selection = FanCurveSelection::Preset(inferred_tier);
+                if new_state.active_fan_curve != Some(selection) {
+                    new_state.active_fan_curve = Some(selection);
+                    effects.push(Effect::ApplyFanCurve(selection));
+                }
+            }
+
+            if new_state.gpu_follows_tdp {
+                let selection = GpuClockSelection::Preset(inferred_tier);
+                if new_state.active_gpu_clock != Some(selection) {
+                    new_state.active_gpu_clock = Some(selection);
+                    effects.push(Effect::ApplyGpuClockRange(selection));
+                }
             }
         }
 
@@ -466,6 +546,9 @@ fn is_locked_write(transition: &Transition) -> bool {
             | Transition::SetCustomFanCurve { .. }
             | Transition::EnableFanAuto
             | Transition::ResetFanCurve
+            | Transition::SetGpuClockRange { .. }
+            | Transition::EnableGpuAutoFollow
+            | Transition::ResetGpuClocks
     )
 }
 
@@ -523,11 +606,26 @@ fn force_ac_max_performance(
     new_state.active_fan_curve = Some(curve);
     new_state.fan_follows_tdp = false;
 
-    let effects = vec![
+    let mut effects = vec![
         Effect::ApplyPowerEnvelope(target),
         Effect::ApplyPlatformProfile(profile),
         Effect::ApplyFanCurve(curve),
     ];
+
+    // GPU clock: only pinned if the user already had SOME GPU-clock
+    // management active (`active_gpu_clock.is_some()`). Its real default
+    // is a PERMANENT `None` for anyone who never opted in — unlike the
+    // fan curve, whose steady-state is never `None` — so this must NOT
+    // mirror the unconditional fan-curve pin above: doing so would
+    // silently auto-opt every fresh install into managed GPU clocks the
+    // first time they plug in AC.
+    if base.active_gpu_clock.is_some() {
+        let gpu_selection = GpuClockSelection::Preset(FanCurvePreset::Aggressive);
+        new_state.active_gpu_clock = Some(gpu_selection);
+        new_state.gpu_follows_tdp = false;
+        effects.push(Effect::ApplyGpuClockRange(gpu_selection));
+    }
+
     ReducerOutput { new_state, effects }
 }
 
@@ -559,6 +657,14 @@ fn restore_dc_state(current: &ProfileState, snapshot: &DcSnapshot) -> ReducerOut
         }
     }
     new_state.fan_follows_tdp = snapshot.fan_follows_tdp;
+    if new_state.active_gpu_clock != snapshot.active_gpu_clock {
+        new_state.active_gpu_clock = snapshot.active_gpu_clock;
+        match snapshot.active_gpu_clock {
+            Some(selection) => effects.push(Effect::ApplyGpuClockRange(selection)),
+            None => effects.push(Effect::ResetGpuClocks),
+        }
+    }
+    new_state.gpu_follows_tdp = snapshot.gpu_follows_tdp;
     effects.push(Effect::PersistState);
 
     ReducerOutput { new_state, effects }
@@ -590,6 +696,8 @@ mod tests {
             fan_follows_tdp: true,
             last_dc_state: None,
             active_fan_curve: None,
+            active_gpu_clock: None,
+            gpu_follows_tdp: false,
             ac_max_performance: true,
             ac_locked: false,
         }
@@ -714,6 +822,8 @@ mod tests {
             fan_follows_tdp: true,
             last_dc_state: None,
             active_fan_curve: None,
+            active_gpu_clock: None,
+            gpu_follows_tdp: false,
             ac_max_performance: true,
             ac_locked: false,
         };
@@ -737,6 +847,8 @@ mod tests {
                 active_profile: ProfileName::Performance,
                 active_fan_curve: None,
                 fan_follows_tdp: true,
+                active_gpu_clock: None,
+                gpu_follows_tdp: false,
             })
         );
         assert!(output.new_state.is_ac_connected);
@@ -799,6 +911,8 @@ mod tests {
                 active_profile: ProfileName::Balanced,
                 active_fan_curve: None,
                 fan_follows_tdp: true,
+                active_gpu_clock: None,
+                gpu_follows_tdp: false,
             })
         );
         // Forced to maximum performance on every lever.
@@ -867,6 +981,8 @@ mod tests {
             active_profile: ProfileName::PowerSaver,
             active_fan_curve: Some(FanCurveSelection::Preset(FanCurvePreset::Silent)),
             fan_follows_tdp: false,
+            active_gpu_clock: None,
+            gpu_follows_tdp: false,
         };
         let mut state = setup_state();
         // Currently locked at forced-max (as if just plugged).
@@ -1555,6 +1671,12 @@ mod tests {
             },
             Transition::EnableFanAuto,
             Transition::ResetFanCurve,
+            Transition::SetGpuClockRange {
+                min_mhz: 600,
+                max_mhz: 1_800,
+            },
+            Transition::EnableGpuAutoFollow,
+            Transition::ResetGpuClocks,
         ];
         for t in writes {
             let label = format!("{t:?}");
@@ -1713,6 +1835,8 @@ mod tests {
             active_profile: ProfileName::Balanced,
             active_fan_curve: None,
             fan_follows_tdp: true,
+            active_gpu_clock: None,
+            gpu_follows_tdp: false,
         };
         // Persisted = forced-max from the AC session.
         let mut state = setup_state();
@@ -1764,6 +1888,8 @@ mod tests {
             active_profile: ProfileName::Balanced,
             active_fan_curve: Some(FanCurveSelection::Preset(FanCurvePreset::Silent)),
             fan_follows_tdp: true,
+            active_gpu_clock: None,
+            gpu_follows_tdp: false,
         };
         let mut state = locked_on_ac_state(); // forced max, ac_max_performance = true
         state.last_dc_state = Some(snap.clone());
@@ -1816,6 +1942,8 @@ mod tests {
                 active_profile: manual.active_profile,
                 active_fan_curve: manual.active_fan_curve,
                 fan_follows_tdp: manual.fan_follows_tdp,
+                active_gpu_clock: manual.active_gpu_clock,
+                gpu_follows_tdp: manual.gpu_follows_tdp,
             })
         );
     }
@@ -1856,6 +1984,351 @@ mod tests {
         .unwrap();
         assert_eq!(out.new_state, state);
         assert!(out.effects.is_empty());
+    }
+
+    // ---------- GPU clock range ----------
+
+    #[test]
+    fn test_set_gpu_clock_range_sets_custom_and_disables_follow() {
+        use hpd_capabilities::gpu_clock::{GpuClockRange, GpuClockSelection};
+        let mut state = setup_state();
+        state.gpu_follows_tdp = true;
+        let out = reduce(
+            &state,
+            Transition::SetGpuClockRange {
+                min_mhz: 600,
+                max_mhz: 1_800,
+            },
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        let expected = GpuClockSelection::Custom(GpuClockRange {
+            min_mhz: 600,
+            max_mhz: 1_800,
+        });
+        assert_eq!(out.new_state.active_gpu_clock, Some(expected));
+        assert!(!out.new_state.gpu_follows_tdp);
+        assert!(out.effects.contains(&Effect::ApplyGpuClockRange(expected)));
+        assert!(out.effects.contains(&Effect::PersistState));
+    }
+
+    #[test]
+    fn test_enable_gpu_auto_follow_infers_and_applies_and_persists() {
+        use hpd_capabilities::fan_curve::FanCurvePreset;
+        use hpd_capabilities::gpu_clock::GpuClockSelection;
+        let state = setup_state(); // spl = 15_000mW -> Silent tier (see EnableFanAuto test)
+        let out = reduce(
+            &state,
+            Transition::EnableGpuAutoFollow,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert!(out.new_state.gpu_follows_tdp);
+        let silent = GpuClockSelection::Preset(FanCurvePreset::Silent);
+        assert_eq!(out.new_state.active_gpu_clock, Some(silent));
+        assert!(out.effects.contains(&Effect::ApplyGpuClockRange(silent)));
+        assert!(out.effects.contains(&Effect::PersistState));
+    }
+
+    #[test]
+    fn test_enable_gpu_auto_follow_is_no_op_when_already_enabled() {
+        let mut state = setup_state();
+        state.gpu_follows_tdp = true;
+        let out = reduce(
+            &state,
+            Transition::EnableGpuAutoFollow,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert_eq!(out.new_state, state);
+        assert!(out.effects.is_empty());
+    }
+
+    #[test]
+    fn test_reset_gpu_clocks_clears_and_emits_reset() {
+        use hpd_capabilities::gpu_clock::{GpuClockRange, GpuClockSelection};
+        let mut state = setup_state();
+        state.active_gpu_clock = Some(GpuClockSelection::Custom(GpuClockRange {
+            min_mhz: 600,
+            max_mhz: 1_800,
+        }));
+        state.gpu_follows_tdp = false;
+        let out = reduce(
+            &state,
+            Transition::ResetGpuClocks,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert_eq!(out.new_state.active_gpu_clock, None);
+        assert!(!out.new_state.gpu_follows_tdp);
+        assert_eq!(
+            out.effects,
+            vec![Effect::ResetGpuClocks, Effect::PersistState]
+        );
+    }
+
+    #[test]
+    fn test_reset_gpu_clocks_is_no_op_when_already_auto() {
+        let state = setup_state(); // active_gpu_clock = None
+        let out = reduce(
+            &state,
+            Transition::ResetGpuClocks,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert_eq!(out.new_state, state);
+        assert!(out.effects.is_empty());
+    }
+
+    #[test]
+    fn test_sync_gpu_clock_range_overwrites_state_without_side_effects() {
+        use hpd_capabilities::gpu_clock::{GpuClockRange, GpuClockSelection};
+        let state = setup_state();
+        let real = GpuClockRange {
+            min_mhz: 600,
+            max_mhz: 1_200,
+        };
+        let out = reduce(
+            &state,
+            Transition::SyncGpuClockRange(Some(real)),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert_eq!(
+            out.new_state.active_gpu_clock,
+            Some(GpuClockSelection::Custom(real))
+        );
+        assert!(
+            out.effects.is_empty(),
+            "rollback must not produce effects, got {:?}",
+            out.effects
+        );
+    }
+
+    #[test]
+    fn test_gpu_clock_follows_tdp_independently_of_fan_curve() {
+        // gpu_follows_tdp and fan_follows_tdp are independent flags: a TDP
+        // change must drive whichever ones are on, sharing one inference
+        // call, never assuming the other is also enabled.
+        use hpd_capabilities::fan_curve::FanCurvePreset;
+        use hpd_capabilities::gpu_clock::GpuClockSelection;
+        let mut state = setup_state();
+        state.fan_follows_tdp = false; // manual cooling
+        state.gpu_follows_tdp = true; // auto GPU clock
+
+        let high_target = PowerEnvelopeTarget {
+            spl: PowerMilliwatts(30_000),
+            sppt: PowerMilliwatts(30_000),
+            fppt: Some(PowerMilliwatts(30_000)),
+        };
+        let out = reduce(
+            &state,
+            Transition::SetEnvelope(high_target),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+
+        // GPU clock updates...
+        let aggressive = GpuClockSelection::Preset(FanCurvePreset::Aggressive);
+        assert_eq!(out.new_state.active_gpu_clock, Some(aggressive));
+        assert!(out
+            .effects
+            .contains(&Effect::ApplyGpuClockRange(aggressive)));
+        // ...but the fan curve (manual) is untouched.
+        assert_eq!(out.new_state.active_fan_curve, None);
+        assert!(!out
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::ApplyFanCurve(_))));
+    }
+
+    #[test]
+    fn test_lock_ignores_gpu_clock_writes_on_ac() {
+        // Covered generically in test_lock_ignores_power_and_cooling_writes_on_ac,
+        // this test asserts it precisely for a state that has GPU clock
+        // management already active, so the lock's no-op path is exercised
+        // against a non-trivial baseline too.
+        use hpd_capabilities::gpu_clock::GpuClockSelection;
+        let mut state = locked_on_ac_state();
+        state.active_gpu_clock = Some(GpuClockSelection::Preset(FanCurvePreset::Aggressive));
+        let out = reduce(
+            &state,
+            Transition::SetGpuClockRange {
+                min_mhz: 600,
+                max_mhz: 900,
+            },
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert_eq!(out.new_state, state);
+        assert!(out.effects.is_empty());
+    }
+
+    // ---------- CRITICAL: GPU clock opt-in guard ----------
+    //
+    // GPU clock's real default is a PERMANENT `None` for anyone who never
+    // opts in via EnableGpuAutoFollow/SetGpuClockRange — unlike the fan
+    // curve, whose steady-state is never `None`. Every site that
+    // unconditionally re-pins/reapplies the fan curve MUST guard the
+    // matching GPU-clock effect on `active_gpu_clock.is_some()`, or a
+    // fresh install would be silently auto-opted in the first time AC is
+    // plugged in. These are the single most important tests in this file.
+
+    #[test]
+    fn test_ac_plug_does_not_touch_gpu_clock_when_never_opted_in() {
+        let state = setup_state(); // active_gpu_clock = None (fresh install)
+        let out = reduce(
+            &state,
+            Transition::AcPowerChanged(true),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert_eq!(
+            out.new_state.active_gpu_clock, None,
+            "plugging in AC must never auto-opt a user into managed GPU clocks"
+        );
+        assert!(!out.new_state.gpu_follows_tdp);
+        assert!(!out
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::ApplyGpuClockRange(_) | Effect::ResetGpuClocks)));
+    }
+
+    #[test]
+    fn test_ac_plug_pins_gpu_clock_when_already_opted_in() {
+        use hpd_capabilities::fan_curve::FanCurvePreset;
+        use hpd_capabilities::gpu_clock::GpuClockSelection;
+        let mut state = setup_state();
+        state.gpu_follows_tdp = true;
+        state.active_gpu_clock = Some(GpuClockSelection::Preset(FanCurvePreset::Silent));
+        let out = reduce(
+            &state,
+            Transition::AcPowerChanged(true),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        let aggressive = GpuClockSelection::Preset(FanCurvePreset::Aggressive);
+        assert_eq!(out.new_state.active_gpu_clock, Some(aggressive));
+        assert!(!out.new_state.gpu_follows_tdp, "pinned, not following");
+        assert!(out
+            .effects
+            .contains(&Effect::ApplyGpuClockRange(aggressive)));
+        // DC snapshot must capture the pre-plug GPU-clock state verbatim.
+        assert_eq!(
+            out.new_state
+                .last_dc_state
+                .as_ref()
+                .unwrap()
+                .active_gpu_clock,
+            Some(GpuClockSelection::Preset(FanCurvePreset::Silent))
+        );
+        assert!(
+            out.new_state
+                .last_dc_state
+                .as_ref()
+                .unwrap()
+                .gpu_follows_tdp
+        );
+    }
+
+    #[test]
+    fn test_ac_unplug_restores_gpu_clock_from_snapshot() {
+        use hpd_capabilities::gpu_clock::{GpuClockRange, GpuClockSelection};
+        let gpu_selection = GpuClockSelection::Custom(GpuClockRange {
+            min_mhz: 600,
+            max_mhz: 1_000,
+        });
+        let saved = DcSnapshot {
+            power_target: PowerEnvelopeTarget {
+                spl: PowerMilliwatts(10_000),
+                sppt: PowerMilliwatts(12_000),
+                fppt: Some(PowerMilliwatts(14_000)),
+            },
+            active_profile: ProfileName::PowerSaver,
+            active_fan_curve: Some(FanCurveSelection::Preset(FanCurvePreset::Silent)),
+            fan_follows_tdp: false,
+            active_gpu_clock: Some(gpu_selection),
+            gpu_follows_tdp: false,
+        };
+        let mut state = locked_on_ac_state();
+        state.last_dc_state = Some(saved.clone());
+
+        let out = reduce(
+            &state,
+            Transition::AcPowerChanged(false),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+
+        assert_eq!(out.new_state.active_gpu_clock, Some(gpu_selection));
+        assert!(!out.new_state.gpu_follows_tdp);
+        assert!(out
+            .effects
+            .contains(&Effect::ApplyGpuClockRange(gpu_selection)));
+    }
+
+    #[test]
+    fn test_system_resumed_does_not_touch_gpu_clock_when_never_opted_in() {
+        let state = setup_state(); // active_gpu_clock = None, on battery
+        let out = reduce(
+            &state,
+            Transition::SystemResumed,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert!(!out
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::ApplyGpuClockRange(_) | Effect::ResetGpuClocks)));
+    }
+
+    #[test]
+    fn test_system_resumed_reset_then_reapplies_gpu_clock_when_managed() {
+        use hpd_capabilities::gpu_clock::{GpuClockRange, GpuClockSelection};
+        let selection = GpuClockSelection::Custom(GpuClockRange {
+            min_mhz: 600,
+            max_mhz: 1_500,
+        });
+        let mut state = setup_state();
+        state.active_gpu_clock = Some(selection);
+
+        let out = reduce(
+            &state,
+            Transition::SystemResumed,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+
+        let reset_idx = out
+            .effects
+            .iter()
+            .position(|e| matches!(e, Effect::ResetGpuClocks));
+        let apply_idx = out
+            .effects
+            .iter()
+            .position(|e| matches!(e, Effect::ApplyGpuClockRange(s) if *s == selection));
+        assert!(
+            reset_idx.is_some() && apply_idx.is_some(),
+            "expected both ResetGpuClocks and ApplyGpuClockRange, got {:?}",
+            out.effects
+        );
+        assert!(
+            apply_idx.unwrap() > reset_idx.unwrap(),
+            "must reset before reapplying (crash-safety: known-clean baseline)"
+        );
     }
 
     #[test]

@@ -120,6 +120,78 @@ impl Default for ProfileThresholds {
     }
 }
 
+/// GPU clock ceiling as a **fraction of the device's live `OD_RANGE`**
+/// (never an absolute MHz value — see
+/// `hpd_capabilities::gpu_clock`'s module docs on why the safe bounds are
+/// read live rather than hardcoded), keyed by the same
+/// [`crate::fan_curve::FanCurvePreset`] tier the auto-inferred fan curve
+/// already resolves to for the current SPL. `min_mhz` always stays the
+/// device's own reported floor — lowering it further isn't possible, and
+/// raising it for `Silent` has no benefit.
+///
+/// **These defaults are untested placeholders**, unlike
+/// [`ProfileThresholds::DEFAULT`] (which mirrors historic in-reducer
+/// constants already exercised in practice) — real on-device calibration
+/// (SCLK/FPS/thermal capture) is a pending manual QA step, not something
+/// this type closes out. `#[serde(default)]` at struct level, same
+/// partial-TOML tolerance as [`ProfileThresholds`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GpuClockFractions {
+    /// Ceiling fraction of `OD_RANGE` applied when the fan curve tier is
+    /// `Silent`.
+    pub silent_max_frac: f32,
+    /// Ceiling fraction of `OD_RANGE` applied when the fan curve tier is
+    /// `Balanced`.
+    pub balanced_max_frac: f32,
+    /// Ceiling fraction of `OD_RANGE` applied when the fan curve tier is
+    /// `Aggressive`. Defaults to `1.0` — a no-op vs. the device's own
+    /// ceiling, kept for symmetry/future headroom rather than because it
+    /// constrains anything today.
+    pub aggressive_max_frac: f32,
+}
+
+impl GpuClockFractions {
+    /// Untested placeholder defaults — see the struct docs.
+    pub const DEFAULT: Self = Self {
+        silent_max_frac: 0.55,
+        balanced_max_frac: 0.80,
+        aggressive_max_frac: 1.0,
+    };
+
+    /// Repair operator-supplied values: each fraction clamped into
+    /// `[0.0, 1.0]`; if any input is non-finite, or the result isn't
+    /// monotonic (`silent ≤ balanced ≤ aggressive`), the whole triple
+    /// falls back to [`Self::DEFAULT`] rather than leaving an inverted
+    /// ordering that would make a lower tier request a *higher* ceiling
+    /// than a more aggressive one. Never errors.
+    pub fn sanitized(self) -> Self {
+        if !self.silent_max_frac.is_finite()
+            || !self.balanced_max_frac.is_finite()
+            || !self.aggressive_max_frac.is_finite()
+        {
+            return Self::DEFAULT;
+        }
+        let silent_max_frac = self.silent_max_frac.clamp(0.0, 1.0);
+        let balanced_max_frac = self.balanced_max_frac.clamp(0.0, 1.0);
+        let aggressive_max_frac = self.aggressive_max_frac.clamp(0.0, 1.0);
+        if silent_max_frac > balanced_max_frac || balanced_max_frac > aggressive_max_frac {
+            return Self::DEFAULT;
+        }
+        Self {
+            silent_max_frac,
+            balanced_max_frac,
+            aggressive_max_frac,
+        }
+    }
+}
+
+impl Default for GpuClockFractions {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
 /// Runtime-tunable subset of the daemon's configuration — everything the
 /// reducer + executor consume on every transition. Held by the `Executor`
 /// and replaced wholesale when a `Transition::ConfigReload(RuntimeConfig)`
@@ -146,15 +218,20 @@ pub struct RuntimeConfig {
     /// SPL→FPPT multiplier applied by smart-mode `Transition::SetSpl`.
     /// Result is then clamped to `device_limits.fppt_max`.
     pub fppt_factor: f32,
+    /// GPU clock ceiling fractions consumed when `gpu_follows_tdp` is on
+    /// (see [`GpuClockFractions`]).
+    pub gpu_clock_fractions: GpuClockFractions,
 }
 
 impl RuntimeConfig {
     /// Defaults match the historic in-reducer constants: 1.15/1.25 boost
-    /// multipliers, 0.33/0.67 fan-curve inference cut-offs.
+    /// multipliers, 0.33/0.67 fan-curve inference cut-offs, plus the
+    /// (untested-placeholder) GPU clock fractions.
     pub const DEFAULT: Self = Self {
         profile_thresholds: ProfileThresholds::DEFAULT,
         sppt_factor: 1.15,
         fppt_factor: 1.25,
+        gpu_clock_fractions: GpuClockFractions::DEFAULT,
     };
 
     /// Repair operator-supplied values from `config.toml` that would
@@ -182,6 +259,7 @@ impl RuntimeConfig {
             } else {
                 Self::DEFAULT.fppt_factor
             },
+            gpu_clock_fractions: self.gpu_clock_fractions.sanitized(),
         }
     }
 }
@@ -415,6 +493,7 @@ mod tests {
             profile_thresholds: ProfileThresholds::DEFAULT,
             sppt_factor: 1.20,
             fppt_factor: 1.40,
+            gpu_clock_fractions: GpuClockFractions::DEFAULT,
         };
         assert_eq!(cfg.clone().sanitized(), cfg);
     }
@@ -429,6 +508,7 @@ mod tests {
             profile_thresholds: ProfileThresholds::DEFAULT,
             sppt_factor: 0.115,
             fppt_factor: 0.0,
+            gpu_clock_fractions: GpuClockFractions::DEFAULT,
         };
         let sanitized = cfg.sanitized();
         assert_eq!(sanitized.sppt_factor, RuntimeConfig::DEFAULT.sppt_factor);
@@ -441,6 +521,7 @@ mod tests {
             profile_thresholds: ProfileThresholds::DEFAULT,
             sppt_factor: f32::NAN,
             fppt_factor: f32::INFINITY,
+            gpu_clock_fractions: GpuClockFractions::DEFAULT,
         };
         let sanitized = cfg.sanitized();
         assert_eq!(sanitized.sppt_factor, RuntimeConfig::DEFAULT.sppt_factor);

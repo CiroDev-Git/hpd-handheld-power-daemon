@@ -31,6 +31,7 @@ pub mod backend;
 pub mod charge;
 pub mod fan;
 pub mod fan_curve;
+pub mod gpu_clock;
 pub mod platform_profile;
 pub mod power;
 pub mod probe;

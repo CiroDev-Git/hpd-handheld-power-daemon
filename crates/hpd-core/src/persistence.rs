@@ -132,6 +132,8 @@ mod tests {
             fan_follows_tdp: true,
             last_dc_state: None,
             active_fan_curve: None,
+            active_gpu_clock: None,
+            gpu_follows_tdp: false,
             ac_max_performance: true,
             ac_locked: false,
         }

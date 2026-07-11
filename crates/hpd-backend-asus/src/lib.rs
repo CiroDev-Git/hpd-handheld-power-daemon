@@ -23,6 +23,8 @@ pub mod detect;
 pub mod fan;
 /// EC-mediated custom fan-curve writer (`asus_custom_fan_curve` hwmon).
 pub mod fan_curve;
+/// GPU clock-range writer (amdgpu `pp_od_clk_voltage` OverDrive).
+pub mod gpu_clock;
 /// hwmon device lookup by stable `name` attribute.
 mod hwmon;
 /// SPL / SPPT / FPPT envelope backend backed by the upstream
@@ -41,6 +43,7 @@ use hpd_capabilities::backend::HwBackend;
 use hpd_capabilities::charge::ChargeControl;
 use hpd_capabilities::fan::FanControl;
 use hpd_capabilities::fan_curve::FanCurveControl;
+use hpd_capabilities::gpu_clock::GpuClockRangeControl;
 use hpd_capabilities::platform_profile::PlatformProfile;
 use hpd_capabilities::power::PowerEnvelope;
 use hpd_capabilities::telemetry::SystemTelemetry;
@@ -66,6 +69,8 @@ pub struct AsusBackend<S: SysfsIo + Clone> {
     /// Extended telemetry backend (battery, CPU/GPU clocks, GPU load,
     /// VRAM — read-only).
     pub telemetry: telemetry::AsusTelemetryBackend<S>,
+    /// GPU clock-range backend (amdgpu OverDrive, write).
+    pub gpu_clock: gpu_clock::AsusGpuClockBackend<S>,
 }
 
 impl<S: SysfsIo + Clone> AsusBackend<S> {
@@ -82,7 +87,8 @@ impl<S: SysfsIo + Clone> AsusBackend<S> {
             fan_curve: fan_curve::AsusFanCurveBackend::new(sysfs.clone()),
             profile: profile::AsusProfileBackend::new(sysfs.clone()),
             thermal: thermal::AsusThermalBackend::new(sysfs.clone()),
-            telemetry: telemetry::AsusTelemetryBackend::new(sysfs),
+            telemetry: telemetry::AsusTelemetryBackend::new(sysfs.clone()),
+            gpu_clock: gpu_clock::AsusGpuClockBackend::new(sysfs),
         }
     }
 }
@@ -114,5 +120,9 @@ impl<S: SysfsIo + Clone + 'static> HwBackend for AsusBackend<S> {
 
     fn telemetry(&self) -> Option<&dyn SystemTelemetry> {
         Some(&self.telemetry)
+    }
+
+    fn gpu_clock(&self) -> Option<&dyn GpuClockRangeControl> {
+        Some(&self.gpu_clock)
     }
 }

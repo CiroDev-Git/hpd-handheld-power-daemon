@@ -11,6 +11,61 @@ not part of the published repository.
 
 ---
 
+## [2.12.0] — 2026-07-11
+
+### Added
+
+- **GPU clock range control (`GpuClockRangeControl`)** — GPU tuning
+  parity with Adrenalin's "Minimum/Maximum Frequency", closing audit
+  §6.2 / roadmap item 18 and the GPU-clamps backlog item (§7b). On-device
+  research (ROG Xbox Ally X, amdgpu OverDrive) found this generation
+  exposes exactly one real lever — the SCLK frequency range
+  (`pp_od_clk_voltage`'s `OD_SCLK`) — with no separate VRAM clock domain,
+  no voltage-curve control, and no GPU power cap distinct from the
+  existing SPL/SPPT/FPPT budget. The hard safety bounds (`OD_RANGE`) are
+  read **live from the kernel**, not hardcoded per model, so the feature
+  needs no recalibration on a future device.
+  - New D-Bus surface: `set_gpu_clock_range(min_mhz, max_mhz)` (manual
+    override, mirrors `set_fan_curve`), `enable_gpu_auto_follow` /
+    `reset_gpu_clocks` (mirror `set_fan_auto` / `reset_fan_curve`),
+    `get_gpu_clock_constraints()` (live device bounds),
+    `get_gpu_clock_range()` (active committed range, read back from
+    hardware), and the `GpuClockRange` / `GpuFollowsTdp` properties
+    (mirror `FanCurve` / `AutoCooling`). All setters reuse the existing
+    `dev.cirodev.hpd.set-profile` polkit action — no new action ID.
+  - **Opt-in by default, permanently.** Unlike the fan curve (whose
+    steady state is never `None`), `ProfileState::active_gpu_clock`
+    defaults to `None` (firmware auto) and stays there until the user
+    calls `enable_gpu_auto_follow` / `set_gpu_clock_range` at least once.
+    Every site that unconditionally re-pins/reapplies the fan curve
+    (`force_ac_max_performance`, the AC-plug-restore branch,
+    `SystemResumed`'s reapply) guards the matching GPU-clock effect on
+    `active_gpu_clock.is_some()` — plugging in AC on a fresh install
+    never silently auto-opts a user into managed GPU clocks.
+  - **Automatic coupling with TDP presets.** When `gpu_follows_tdp` is
+    on, a TDP change re-infers a GPU clock ceiling from the same
+    `FanCurvePreset` tier already computed for the fan curve
+    (`gpu_clock_range_for_tier`, driven by the new
+    `RuntimeConfig::gpu_clock_fractions` — silent/balanced/aggressive
+    fractions of the device's clock range, currently untested
+    placeholders pending real on-device calibration). `fan_follows_tdp`
+    and `gpu_follows_tdp` are independent flags; either, both, or
+    neither can be on.
+  - **Crash-safety asymmetry.** A GPU-clock write is two steps (switch
+    the DPM to manual, then commit a range) with a genuinely unsafe
+    intermediate state the fan curve doesn't have, so `SystemResumed`'s
+    full re-apply does `ResetGpuClocks` then `ApplyGpuClockRange` (reset
+    to a known-clean firmware-auto baseline before reapplying) instead
+    of a bare re-apply. `AsusGpuClockBackend::set_range` also cleans up
+    internally (`reset_to_auto()`) on any write/read-back failure before
+    propagating the error, keeping `Executor::rollback`'s read-only
+    contract intact.
+  - **Real on-device write verification is a manual QA gate, not yet
+    performed.** Automated coverage is `MockSysfs`-driven; confirming a
+    committed range actually changes GPU behavior, survives a real
+    suspend/resume, and recovers correctly from a daemon crash mid-write
+    needs the physical Xbox Ally X.
+
 ## [2.11.0] — 2026-07-11
 
 ### Added

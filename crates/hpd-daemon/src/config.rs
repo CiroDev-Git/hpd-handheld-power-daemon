@@ -187,7 +187,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
-    use hpd_capabilities::profile::ProfileThresholds;
+    use hpd_capabilities::profile::{GpuClockFractions, ProfileThresholds};
 
     /// `#[serde(flatten)]` carries the on-disk schema invariant: the
     /// runtime sub-fields live at the *top* of the TOML document, not
@@ -265,6 +265,7 @@ high_frac = 0.80
                 },
                 sppt_factor: 1.10,
                 fppt_factor: 1.30,
+                gpu_clock_fractions: GpuClockFractions::DEFAULT,
             },
         };
         assert_eq!(cfg.to_runtime(), cfg.runtime);
