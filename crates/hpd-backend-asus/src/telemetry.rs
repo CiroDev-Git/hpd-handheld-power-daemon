@@ -11,6 +11,9 @@
 //! a 1 Hz telemetry poll costs one confirmation read per key instead of
 //! a fresh `hwmonN` scan.
 
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
 use hpd_capabilities::telemetry::SystemTelemetry;
 use hpd_capabilities::units::PowerMilliwatts;
 use hpd_error::{BackendError, HpdError};
@@ -24,11 +27,36 @@ use crate::power_supply::find_node_by_type;
 const GPU_HWMON_NAME: &str = "amdgpu";
 /// Root of the generic `cpufreq` policy tree.
 const CPUFREQ_ROOT: &str = "/sys/devices/system/cpu/cpufreq";
+/// Kernel-ABI-stable aggregate CPU line (`cpu  user nice system idle
+/// iowait irq softirq steal guest guest_nice`), read for
+/// [`AsusTelemetryBackend::get_cpu_busy_pct`].
+const PROC_STAT_PATH: &str = "/proc/stat";
+/// Minimum elapsed time between two `/proc/stat` samples before trusting
+/// their delta — guards a near-zero jiffies gap if telemetry is ever
+/// polled faster than the kernel's own ~10 ms tick (`USER_HZ=100`), well
+/// under the plugin's 1 Hz / 0.5 Hz polling cadences.
+const MIN_CPU_STAT_SAMPLE_INTERVAL: Duration = Duration::from_millis(200);
+
+/// One `/proc/stat` aggregate-CPU-line sample, for computing a busy%
+/// delta against the *next* sample — see [`AsusTelemetryBackend::get_cpu_busy_pct`].
+struct CpuStatSample {
+    at: Instant,
+    busy_jiffies: u64,
+    total_jiffies: u64,
+}
 
 /// [`SystemTelemetry`] implementation for ASUS AMD handhelds.
 pub struct AsusTelemetryBackend<S: SysfsIo> {
     sysfs: S,
     hwmon_cache: HwmonCache,
+    /// The **first** stateful/time-delta telemetry accessor in this
+    /// backend — every other `SystemTelemetry` method here is a
+    /// stateless instantaneous read. A CPU busy% needs two samples with
+    /// a time delta between them (`/proc/stat` reports cumulative
+    /// jiffies since boot, not a rate), so the previous sample has to
+    /// live somewhere across calls; nothing upstream (no daemon-side
+    /// polling loop) holds that state for us, so it lives here.
+    prev_cpu_stat: Mutex<Option<CpuStatSample>>,
 }
 
 impl<S: SysfsIo> AsusTelemetryBackend<S> {
@@ -37,6 +65,7 @@ impl<S: SysfsIo> AsusTelemetryBackend<S> {
         Self {
             sysfs,
             hwmon_cache: HwmonCache::new(),
+            prev_cpu_stat: Mutex::new(None),
         }
     }
 
@@ -295,6 +324,81 @@ impl<S: SysfsIo> SystemTelemetry for AsusTelemetryBackend<S> {
 
     // get_gpu_throttle_status: no known stable, non-debugfs sysfs
     // attribute for this on amdgpu as of this writing — default `None`.
+
+    /// `/proc/stat`'s aggregate `cpu` line gives cumulative jiffies
+    /// since boot, not a rate — this computes `busy_delta / total_delta`
+    /// against the *previous* call, stored in `prev_cpu_stat`. Returns
+    /// `None` on the first call ever (no baseline yet) and on any call
+    /// within the minimum sample interval of the last one (too little
+    /// elapsed time for a meaningful delta) — in both cases the stored
+    /// baseline is left untouched so the *next* real call still has a
+    /// properly time-separated sample to diff against.
+    fn get_cpu_busy_pct(&self) -> Result<Option<u8>, HpdError> {
+        if !self.sysfs.exists(PROC_STAT_PATH) {
+            return Ok(None);
+        }
+        let raw = self.sysfs.read_string(PROC_STAT_PATH)?;
+        let Some(first_line) = raw.lines().next() else {
+            return Ok(None);
+        };
+        let fields: Result<Vec<u64>, _> = first_line
+            .split_whitespace()
+            .skip(1) // "cpu"
+            .map(|f| f.parse::<u64>())
+            .collect();
+        let fields = fields.map_err(|_| BackendError::ParseFailed {
+            field: "proc_stat_cpu_line",
+            raw: first_line.to_string(),
+            reason: "expected all-integer jiffies fields".into(),
+        })?;
+        if fields.len() < 4 {
+            // Need at least user/nice/system/idle — the kernel ABI
+            // guarantees far more than this, but degrade gracefully
+            // rather than index out of bounds on a wildly different
+            // /proc/stat format.
+            return Ok(None);
+        }
+        let idle = fields[3] + fields.get(4).copied().unwrap_or(0); // idle + iowait
+                                                                    // Sum only user..steal (indices 0-7) — NOT guest/guest_nice
+                                                                    // (8-9): since Linux 2.6.24 those are already included in
+                                                                    // user/nice, so summing them too would double-count. A no-op on
+                                                                    // bare metal with no KVM guests (guest=0), but the correct
+                                                                    // formula regardless.
+        let total: u64 = fields.iter().take(8).sum();
+        let busy = total.saturating_sub(idle);
+
+        let now = Instant::now();
+        let mut guard = self
+            .prev_cpu_stat
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match guard.as_ref() {
+            None => {
+                *guard = Some(CpuStatSample {
+                    at: now,
+                    busy_jiffies: busy,
+                    total_jiffies: total,
+                });
+                Ok(None)
+            }
+            Some(prev) if now.duration_since(prev.at) < MIN_CPU_STAT_SAMPLE_INTERVAL => Ok(None),
+            Some(prev) => {
+                let total_delta = total.saturating_sub(prev.total_jiffies);
+                let busy_delta = busy.saturating_sub(prev.busy_jiffies);
+                *guard = Some(CpuStatSample {
+                    at: now,
+                    busy_jiffies: busy,
+                    total_jiffies: total,
+                });
+                if total_delta == 0 {
+                    return Ok(None);
+                }
+                Ok(Some(
+                    (busy_delta.saturating_mul(100) / total_delta).min(100) as u8,
+                ))
+            }
+        }
+    }
 }
 
 /// Parse the amdgpu `pp_dpm_sclk` table (one `"<level>: <freq>Mhz[ *]"`
@@ -501,5 +605,79 @@ mod tests {
         seed_amdgpu(&mock);
         let backend = AsusTelemetryBackend::new(mock.clone());
         assert_eq!(backend.get_gpu_throttle_status().unwrap(), None);
+    }
+
+    fn write_proc_stat(mock: &MockSysfs, user: u64, nice: u64, system: u64, idle: u64) {
+        mock.create_file(
+            "proc/stat",
+            &format!("cpu  {user} {nice} {system} {idle} 0 0 0 0 0 0\nintr 0\n"),
+        );
+    }
+
+    #[test]
+    fn cpu_busy_pct_is_none_on_the_very_first_call() {
+        let mock = MockSysfs::new();
+        write_proc_stat(&mock, 100, 0, 50, 850);
+        let backend = AsusTelemetryBackend::new(mock.clone());
+        assert_eq!(backend.get_cpu_busy_pct().unwrap(), None);
+    }
+
+    #[test]
+    fn cpu_busy_pct_absent_without_proc_stat() {
+        let mock = MockSysfs::new();
+        let backend = AsusTelemetryBackend::new(mock.clone());
+        assert_eq!(backend.get_cpu_busy_pct().unwrap(), None);
+    }
+
+    #[test]
+    fn cpu_busy_pct_computes_delta_between_two_separated_samples() {
+        let mock = MockSysfs::new();
+        // total=1000, idle=850 -> busy=150.
+        write_proc_stat(&mock, 100, 0, 50, 850);
+        let backend = AsusTelemetryBackend::new(mock.clone());
+        assert_eq!(backend.get_cpu_busy_pct().unwrap(), None); // baseline only
+
+        std::thread::sleep(MIN_CPU_STAT_SAMPLE_INTERVAL + Duration::from_millis(50));
+
+        // total=2000 (+1000), idle=950 (+100) -> busy=1050 (+900) -> 90%.
+        write_proc_stat(&mock, 700, 0, 350, 950);
+        assert_eq!(backend.get_cpu_busy_pct().unwrap(), Some(90));
+    }
+
+    #[test]
+    fn cpu_busy_pct_none_and_baseline_unchanged_when_polled_too_soon() {
+        let mock = MockSysfs::new();
+        write_proc_stat(&mock, 100, 0, 50, 850);
+        let backend = AsusTelemetryBackend::new(mock.clone());
+        assert_eq!(backend.get_cpu_busy_pct().unwrap(), None); // baseline
+
+        // A second, wildly different sample — but called immediately
+        // (well within MIN_CPU_STAT_SAMPLE_INTERVAL), so it must be
+        // ignored rather than corrupt the next real delta.
+        write_proc_stat(&mock, 900, 0, 50, 850);
+        assert_eq!(backend.get_cpu_busy_pct().unwrap(), None);
+
+        std::thread::sleep(MIN_CPU_STAT_SAMPLE_INTERVAL + Duration::from_millis(50));
+        // Delta is against the ORIGINAL baseline (100,0,50,850), not the
+        // ignored one: total 1000->1900 (+900), idle 850->850 (+0) ->
+        // busy delta 900 -> 100%.
+        write_proc_stat(&mock, 900, 0, 1000, 850);
+        assert_eq!(backend.get_cpu_busy_pct().unwrap(), Some(100));
+    }
+
+    #[test]
+    fn cpu_busy_pct_none_on_malformed_stat_line() {
+        let mock = MockSysfs::new();
+        mock.create_file("proc/stat", "cpu  not numbers here\n");
+        let backend = AsusTelemetryBackend::new(mock.clone());
+        assert!(backend.get_cpu_busy_pct().is_err());
+    }
+
+    #[test]
+    fn cpu_busy_pct_none_on_too_few_fields() {
+        let mock = MockSysfs::new();
+        mock.create_file("proc/stat", "cpu  100 0\n");
+        let backend = AsusTelemetryBackend::new(mock.clone());
+        assert_eq!(backend.get_cpu_busy_pct().unwrap(), None);
     }
 }

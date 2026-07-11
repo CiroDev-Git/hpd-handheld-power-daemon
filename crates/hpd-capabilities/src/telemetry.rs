@@ -89,4 +89,14 @@ pub trait SystemTelemetry: Send + Sync {
     fn get_gpu_throttle_status(&self) -> Result<Option<u64>, HpdError> {
         Ok(None)
     }
+
+    /// CPU utilisation, `0..=100`, averaged over the interval since the
+    /// previous call — NOT an instantaneous reading (a percentage needs
+    /// two `/proc/stat` samples with a time delta between them). `None`
+    /// on the very first call after daemon start, or if polled faster
+    /// than the backend's minimum sample interval — both indistinguishable
+    /// from "not available yet" at this trait's `Ok(None)` contract.
+    fn get_cpu_busy_pct(&self) -> Result<Option<u8>, HpdError> {
+        Ok(None)
+    }
 }
