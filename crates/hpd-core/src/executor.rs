@@ -4,11 +4,13 @@ use tokio::sync::{mpsc, watch};
 use tracing::{debug, error, info, instrument, warn};
 
 use hpd_capabilities::backend::HwBackend;
+use hpd_capabilities::gpu_clock::GpuClockSelection;
 use hpd_capabilities::power::PowerEnvelopeLimits;
 use hpd_capabilities::profile::RuntimeConfig;
 use hpd_error::HpdError;
 
 use crate::effect::Effect;
+use crate::inference::gpu_clock_range_for_tier;
 use crate::reducer::reduce;
 use crate::state::ProfileState;
 use crate::transition::Transition;
@@ -267,6 +269,65 @@ impl<B: HwBackend> Executor<B> {
                     debug!("Fan curve reset to firmware auto");
                 }
             }
+            Effect::ApplyGpuClockRange(selection) => {
+                let Some(gpu_cap) = self.backend.gpu_clock() else {
+                    debug!(
+                        effect = "ApplyGpuClockRange",
+                        "Backend does not expose GpuClockRangeControl; ignoring"
+                    );
+                    return;
+                };
+                // Resolving `Preset(tier)` needs BOTH the executor's
+                // `RuntimeConfig` (the curated fractions) AND a live
+                // hardware read (`constraints()`) — the reducer has the
+                // former but must never do the latter, and the L1 backend
+                // must never see the former. The executor is the only
+                // layer holding both, so it alone can turn the abstract
+                // selection into a concrete `GpuClockRange`.
+                let range = match selection {
+                    GpuClockSelection::Custom(range) => range,
+                    GpuClockSelection::Preset(tier) => match gpu_cap.constraints() {
+                        Ok(constraints) => gpu_clock_range_for_tier(
+                            tier,
+                            &constraints,
+                            &self.config.gpu_clock_fractions,
+                        ),
+                        Err(e) => {
+                            error!(
+                                effect = "ApplyGpuClockRange",
+                                error = %e,
+                                "Could not read live GPU clock constraints; skipping"
+                            );
+                            return;
+                        }
+                    },
+                };
+                if let Err(e) = gpu_cap.set_range(&range) {
+                    self.rollback("ApplyGpuClockRange", e, || {
+                        gpu_cap.active_range().map(Transition::SyncGpuClockRange)
+                    })
+                    .await;
+                } else {
+                    debug!("GPU clock range applied successfully");
+                }
+            }
+            Effect::ResetGpuClocks => {
+                let Some(gpu_cap) = self.backend.gpu_clock() else {
+                    debug!(
+                        effect = "ResetGpuClocks",
+                        "Backend does not expose GpuClockRangeControl; ignoring"
+                    );
+                    return;
+                };
+                if let Err(e) = gpu_cap.reset_to_auto() {
+                    self.rollback("ResetGpuClocks", e, || {
+                        gpu_cap.active_range().map(Transition::SyncGpuClockRange)
+                    })
+                    .await;
+                } else {
+                    debug!("GPU clock reset to firmware auto");
+                }
+            }
             Effect::PersistState => {
                 let current_state = self.state_tx.borrow().clone();
                 self.persister.save(&current_state).await;
@@ -362,6 +423,8 @@ mod tests {
             fan_follows_tdp: true,
             last_dc_state: None,
             active_fan_curve: None,
+            active_gpu_clock: None,
+            gpu_follows_tdp: false,
             ac_max_performance: true,
             ac_locked: false,
         }

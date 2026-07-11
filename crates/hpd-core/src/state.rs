@@ -3,6 +3,7 @@
 //! Persistent state of the daemon.
 
 use hpd_capabilities::fan_curve::FanCurveSelection;
+use hpd_capabilities::gpu_clock::GpuClockSelection;
 use hpd_capabilities::power::PowerEnvelopeTarget;
 use hpd_capabilities::profile::ProfileName;
 use serde::{Deserialize, Serialize};
@@ -32,6 +33,14 @@ pub struct DcSnapshot {
     pub active_fan_curve: Option<FanCurveSelection>,
     /// Whether auto-cooling (fan curve follows TDP) was on, on battery.
     pub fan_follows_tdp: bool,
+    /// GPU clock-range selection the user ran on battery (`None` = firmware
+    /// auto — the default for anyone who never opts in, see
+    /// [`ProfileState::active_gpu_clock`]).
+    #[serde(default)]
+    pub active_gpu_clock: Option<GpuClockSelection>,
+    /// Whether GPU-clock auto-follow was on, on battery.
+    #[serde(default)]
+    pub gpu_follows_tdp: bool,
 }
 
 /// Immutable snapshot of everything the L3 executor needs to know
@@ -78,6 +87,28 @@ pub struct ProfileState {
     /// cleanly as "firmware auto".
     #[serde(default)]
     pub active_fan_curve: Option<FanCurveSelection>,
+
+    /// Active GPU clock-range selection. `None` means firmware auto (the
+    /// daemon never touches `power_dpm_force_performance_level`/
+    /// `pp_od_clk_voltage`) — the **permanent default** for anyone who
+    /// never opts in via `EnableGpuAutoFollow`/`SetGpuClockRange`, unlike
+    /// `active_fan_curve` (whose real steady-state is never `None`). Every
+    /// site that unconditionally re-pins/reapplies the fan curve today
+    /// (`force_ac_max_performance`, the AC-plug-restore branch,
+    /// `SystemResumed`'s reapply) must guard the matching GPU-clock effect
+    /// on `active_gpu_clock.is_some()` — mirroring those sites
+    /// unconditionally would silently auto-opt every user in the first
+    /// time they plug in AC.
+    #[serde(default)]
+    pub active_gpu_clock: Option<GpuClockSelection>,
+
+    /// When `true`, every TDP change re-infers and applies a matching GPU
+    /// clock ceiling (mirrors `fan_follows_tdp`, but defaults to `false` —
+    /// see `active_gpu_clock`'s docs on why the default differs from the
+    /// fan curve). Flipped on by `EnableGpuAutoFollow`, off by
+    /// `SetGpuClockRange` (manual) or `ResetGpuClocks`.
+    #[serde(default)]
+    pub gpu_follows_tdp: bool,
 
     /// Whether AC is currently connected. Skipped during
     /// (de)serialisation — at boot we always re-query the backend

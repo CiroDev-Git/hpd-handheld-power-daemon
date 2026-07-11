@@ -36,7 +36,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::timeout;
 
 use hpd_capabilities::power::{PowerEnvelopeLimits, PowerEnvelopeTarget};
-use hpd_capabilities::profile::{ProfileName, ProfileThresholds, RuntimeConfig};
+use hpd_capabilities::profile::{GpuClockFractions, ProfileName, ProfileThresholds, RuntimeConfig};
 use hpd_capabilities::testing::{MockBackend, RecordedCall};
 use hpd_capabilities::units::PowerMilliwatts;
 
@@ -71,6 +71,8 @@ fn initial_state() -> ProfileState {
         fan_follows_tdp: true,
         last_dc_state: None,
         active_fan_curve: None,
+        active_gpu_clock: None,
+        gpu_follows_tdp: false,
         ac_max_performance: true,
         ac_locked: false,
     }
@@ -375,6 +377,7 @@ async fn test_executor_config_reload_swaps_runtime_config() {
         profile_thresholds: ProfileThresholds::DEFAULT,
         sppt_factor: 2.0,
         fppt_factor: 2.0,
+        gpu_clock_fractions: GpuClockFractions::DEFAULT,
     };
     tx.send(Transition::ConfigReload(new_runtime))
         .await

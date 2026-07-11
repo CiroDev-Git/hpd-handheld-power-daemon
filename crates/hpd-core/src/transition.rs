@@ -4,6 +4,7 @@
 //! through one of these variants.
 
 use hpd_capabilities::fan_curve::{FanCurve, FanCurvePreset, FanCurveSelection};
+use hpd_capabilities::gpu_clock::GpuClockRange;
 use hpd_capabilities::power::PowerEnvelopeTarget;
 use hpd_capabilities::profile::{ProfileName, RuntimeConfig, TdpPreset};
 
@@ -42,6 +43,27 @@ pub enum Transition {
         /// Curve for the GPU fan.
         gpu: FanCurve,
     },
+    /// Manual override: program an explicit GPU clock range and disable
+    /// `gpu_follows_tdp`. The range is assumed already validated against
+    /// the device's `GpuClockConstraints` by the D-Bus layer; the L1
+    /// backend validates again independently before writing (see
+    /// `hpd-backend-asus`'s `GpuClockRangeControl::set_range`).
+    SetGpuClockRange {
+        /// Lowest frequency (MHz) the DPM may select.
+        min_mhz: u32,
+        /// Highest frequency (MHz) the DPM may select.
+        max_mhz: u32,
+    },
+    /// Re-bind GPU-clock inference to the TDP envelope (mirrors
+    /// `EnableFanAuto`). Immediately infers+applies a range for the
+    /// current SPL.
+    EnableGpuAutoFollow,
+    /// Hand the GPU clock back to firmware auto (mirrors `ResetFanCurve`).
+    ResetGpuClocks,
+    /// Forced rollback to the GPU clock range the driver actually reports
+    /// (`None` = firmware auto), used by the executor after `set_range` /
+    /// `reset_to_auto` fails, so the reported state never lies.
+    SyncGpuClockRange(Option<GpuClockRange>),
     /// User-requested change of the battery charge end threshold.
     ChargeThresholdChanged(u8),
     /// Forced rollback to the power envelope the kernel actually

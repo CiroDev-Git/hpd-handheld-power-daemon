@@ -7,6 +7,7 @@ use std::sync::Arc;
 use crate::charge::ChargeControl;
 use crate::fan::FanControl;
 use crate::fan_curve::FanCurveControl;
+use crate::gpu_clock::GpuClockRangeControl;
 use crate::platform_profile::PlatformProfile;
 use crate::power::PowerEnvelope;
 use crate::telemetry::SystemTelemetry;
@@ -79,6 +80,13 @@ pub trait HwBackend: Send + Sync {
     fn telemetry(&self) -> Option<&dyn SystemTelemetry> {
         None
     }
+
+    /// Optional GPU clock-range accessor. Returns `None` on hardware
+    /// that does not expose amdgpu's OverDrive `pp_od_clk_voltage`
+    /// interface. Default: `None`.
+    fn gpu_clock(&self) -> Option<&dyn GpuClockRangeControl> {
+        None
+    }
 }
 
 /// Forward every accessor through a shared [`Arc`]. Lets the daemon hold
@@ -106,6 +114,9 @@ impl<T: HwBackend + ?Sized> HwBackend for Arc<T> {
     }
     fn telemetry(&self) -> Option<&dyn SystemTelemetry> {
         (**self).telemetry()
+    }
+    fn gpu_clock(&self) -> Option<&dyn GpuClockRangeControl> {
+        (**self).gpu_clock()
     }
 }
 
@@ -164,5 +175,6 @@ mod tests {
         assert!(b.profile().is_none());
         assert!(b.fan().is_none());
         assert!(b.fan_curve().is_none());
+        assert!(b.gpu_clock().is_none());
     }
 }

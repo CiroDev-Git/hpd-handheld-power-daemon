@@ -19,6 +19,7 @@ use hpd_capabilities::backend::HwBackend;
 use hpd_capabilities::fan_curve::{
     FanCurve, FanCurvePoint, FanCurvePreset, FanCurveSelection, FAN_CURVE_POINTS,
 };
+use hpd_capabilities::gpu_clock::{GpuClockRange, GpuClockSelection};
 use hpd_capabilities::power::PowerEnvelopeLimits;
 use hpd_capabilities::profile::ProfileName;
 use hpd_core::state::ProfileState;
@@ -700,6 +701,159 @@ impl PowerDaemonInterface {
         }
     }
 
+    /// Manual override: program an explicit GPU clock frequency range
+    /// (`min_mhz`, `max_mhz`) and disable `gpu_follows_tdp` — the GPU
+    /// counterpart of `set_fan_curve`'s hand-drawn curve.
+    ///
+    /// Validated **twice**: here, against this device's LIVE
+    /// `get_gpu_clock_constraints` (the kernel-reported OD_RANGE — Class A
+    /// data, not a per-model calibration), and again independently by the
+    /// L1 backend right before it writes to the hardware.
+    ///
+    /// `polkit` action: `dev.cirodev.hpd.set-profile` (same bucket as the
+    /// other cooling/performance levers).
+    async fn set_gpu_clock_range(
+        &self,
+        min_mhz: u32,
+        max_mhz: u32,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        debug!(
+            "D-Bus received request to set GPU clock range: {}-{}MHz",
+            min_mhz, max_mhz
+        );
+        self.reject_if_locked()?;
+
+        let Some(gpu_cap) = self.backend.gpu_clock() else {
+            return Err(zbus::fdo::Error::Failed(
+                "this device has no programmable GPU clock range".into(),
+            ));
+        };
+        let range = GpuClockRange { min_mhz, max_mhz };
+        let constraints = gpu_cap.constraints().map_err(|e| {
+            zbus::fdo::Error::Failed(format!("could not read GPU clock constraints: {e}"))
+        })?;
+        range
+            .validate_against(&constraints)
+            .map_err(|e| zbus::fdo::Error::InvalidArgs(e.to_string()))?;
+
+        if !polkit::check(conn, &header, PolkitAction::SetProfile).await {
+            return Err(auth_denied());
+        }
+        self.send(Transition::SetGpuClockRange { min_mhz, max_mhz })
+            .await
+    }
+
+    /// Re-enable GPU-clock auto-follow: the daemon resumes inferring a GPU
+    /// clock ceiling from the active TDP envelope (mirrors `set_fan_auto`
+    /// for the fan curve). Immediately infers and applies a range for the
+    /// current SPL rather than waiting for the next TDP change.
+    ///
+    /// This is the opt-in the whole feature is gated behind — the daemon
+    /// never touches the GPU clock until this is called at least once
+    /// (see `ProfileState::active_gpu_clock`'s docs on why the default is
+    /// permanently off, unlike the fan curve's auto-cooling).
+    ///
+    /// `polkit` action: `dev.cirodev.hpd.set-profile`.
+    async fn enable_gpu_auto_follow(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        self.reject_if_locked()?;
+        if self.backend.gpu_clock().is_none() {
+            return Err(zbus::fdo::Error::Failed(
+                "this device has no programmable GPU clock range".into(),
+            ));
+        }
+        if !polkit::check(conn, &header, PolkitAction::SetProfile).await {
+            return Err(auth_denied());
+        }
+        self.send(Transition::EnableGpuAutoFollow).await
+    }
+
+    /// Hand the GPU clock back to firmware auto.
+    ///
+    /// `polkit` action: `dev.cirodev.hpd.set-profile` (grouped with the
+    /// other cooling/performance levers, mirrors `reset_fan_curve`).
+    async fn reset_gpu_clocks(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        debug!("D-Bus received request to reset GPU clocks to firmware auto");
+        self.reject_if_locked()?;
+        if !polkit::check(conn, &header, PolkitAction::SetProfile).await {
+            return Err(auth_denied());
+        }
+        self.send(Transition::ResetGpuClocks).await
+    }
+
+    /// This device's GPU clock range bounds — the kernel-reported LIVE
+    /// `OD_RANGE` (Class A data: a generic kernel interface, not a
+    /// per-model calibration, so it needs no recalibration on other
+    /// hardware), so a client (the plugin's range editor) can validate a
+    /// custom range precisely for the running device instead of guessing.
+    /// Empty map when the device has no programmable GPU clock range at
+    /// all, or the live read failed.
+    ///
+    /// Keys: `range_min_mhz` / `range_max_mhz` (`u`).
+    async fn get_gpu_clock_constraints(&self) -> HashMap<String, OwnedValue> {
+        let mut map = HashMap::new();
+        let Some(gpu_cap) = self.backend.gpu_clock() else {
+            return map;
+        };
+        match gpu_cap.constraints() {
+            Ok(c) => {
+                insert_dbus_value(&mut map, "range_min_mhz", Some(c.range_min_mhz));
+                insert_dbus_value(&mut map, "range_max_mhz", Some(c.range_max_mhz));
+            }
+            Err(e) => debug!(error = %e, "Could not read live GPU clock constraints"),
+        }
+        map
+    }
+
+    /// The GPU clock range `(min_mhz, max_mhz)` currently committed to the
+    /// hardware, read back from the backend exactly like `get_fan_curve`.
+    /// `(0, 0)` when the backend has no `GpuClockRangeControl`, the daemon
+    /// is not managing GPU clocks (firmware auto), or the read failed — 0
+    /// MHz is never a real value on any exposed hardware, so it doubles as
+    /// an unambiguous "not applicable" sentinel (mirrors
+    /// `TELEMETRY_UNAVAILABLE`).
+    async fn get_gpu_clock_range(&self) -> (u32, u32) {
+        let Some(gpu_cap) = self.backend.gpu_clock() else {
+            return (0, 0);
+        };
+        match gpu_cap.active_range() {
+            Ok(Some(range)) => (range.min_mhz, range.max_mhz),
+            _ => (0, 0),
+        }
+    }
+
+    /// Active GPU-clock selection: a preset name (`silent`, `balanced`,
+    /// `aggressive`), `custom` for an explicit range, or `auto` when the
+    /// firmware is in charge (the daemon never touches GPU clocks until
+    /// `enable_gpu_auto_follow` / `set_gpu_clock_range` is called at least
+    /// once). Mirrors the `fan_curve` property.
+    #[zbus(property)]
+    async fn gpu_clock_range(&self) -> String {
+        match self.state_rx.borrow().active_gpu_clock {
+            None => "auto".to_string(),
+            Some(GpuClockSelection::Preset(p)) => p.as_str().to_string(),
+            Some(GpuClockSelection::Custom(_)) => "custom".to_string(),
+        }
+    }
+
+    /// Whether the daemon is currently inferring the GPU clock ceiling
+    /// from the TDP envelope (mirrors `auto_cooling` for the fan curve).
+    /// `false` is the permanent default until `enable_gpu_auto_follow` /
+    /// `set_gpu_clock_range` is called at least once.
+    #[zbus(property)]
+    async fn gpu_follows_tdp(&self) -> bool {
+        self.state_rx.borrow().gpu_follows_tdp
+    }
+
     /// Daemon self-diagnostics: `(polkit_ok, missing_action_ids)`.
     ///
     /// `polkit_ok == false` (a non-empty `missing_action_ids`) means the
@@ -803,6 +957,8 @@ mod tests {
             fan_follows_tdp: true,
             last_dc_state: None,
             active_fan_curve: None,
+            active_gpu_clock: None,
+            gpu_follows_tdp: false,
             is_ac_connected: false,
             ac_max_performance: true,
             ac_locked: false,
@@ -986,6 +1142,35 @@ mod tests {
         }
     }
 
+    impl hpd_capabilities::gpu_clock::GpuClockRangeControl for TelemetryFixture {
+        fn set_range(
+            &self,
+            _range: &hpd_capabilities::gpu_clock::GpuClockRange,
+        ) -> Result<(), hpd_error::HpdError> {
+            Ok(())
+        }
+        fn reset_to_auto(&self) -> Result<(), hpd_error::HpdError> {
+            Ok(())
+        }
+        fn active_range(
+            &self,
+        ) -> Result<Option<hpd_capabilities::gpu_clock::GpuClockRange>, hpd_error::HpdError>
+        {
+            Ok(Some(hpd_capabilities::gpu_clock::GpuClockRange {
+                min_mhz: 600,
+                max_mhz: 1_800,
+            }))
+        }
+        fn constraints(
+            &self,
+        ) -> Result<hpd_capabilities::gpu_clock::GpuClockConstraints, hpd_error::HpdError> {
+            Ok(hpd_capabilities::gpu_clock::GpuClockConstraints {
+                range_min_mhz: 600,
+                range_max_mhz: 2_900,
+            })
+        }
+    }
+
     impl HwBackend for TelemetryFixture {
         fn power(&self) -> &dyn hpd_capabilities::power::PowerEnvelope {
             self
@@ -1000,6 +1185,9 @@ mod tests {
             Some(self)
         }
         fn fan_curve(&self) -> Option<&dyn hpd_capabilities::fan_curve::FanCurveControl> {
+            Some(self)
+        }
+        fn gpu_clock(&self) -> Option<&dyn hpd_capabilities::gpu_clock::GpuClockRangeControl> {
             Some(self)
         }
     }
@@ -1098,6 +1286,69 @@ mod tests {
             .and_then(|v| Vec::<(u8, u8)>::try_from(v).ok())
             .expect("safety_floor must be present and decode as (u8,u8) pairs");
         assert_eq!(floor, vec![(85, 150), (90, 200)]);
+    }
+
+    #[tokio::test]
+    async fn get_gpu_clock_constraints_reports_the_device_bounds() {
+        let iface = fixture_interface();
+        let constraints = iface.get_gpu_clock_constraints().await;
+
+        assert_eq!(telemetry_u32(&constraints, "range_min_mhz"), Some(600));
+        assert_eq!(telemetry_u32(&constraints, "range_max_mhz"), Some(2_900));
+    }
+
+    #[tokio::test]
+    async fn get_gpu_clock_range_reads_the_active_range_back() {
+        let iface = fixture_interface();
+        assert_eq!(iface.get_gpu_clock_range().await, (600, 1_800));
+    }
+
+    #[tokio::test]
+    async fn gpu_clock_range_property_reflects_active_selection() {
+        use hpd_capabilities::fan_curve::FanCurvePreset;
+        use hpd_capabilities::gpu_clock::{GpuClockRange, GpuClockSelection};
+
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let mut state = sample_state();
+
+        state.active_gpu_clock = None;
+        let (_state_tx, state_rx) = tokio::sync::watch::channel(state.clone());
+        let iface = PowerDaemonInterface::new(
+            tx.clone(),
+            state_rx,
+            sample_limits(),
+            Arc::new(TelemetryFixture),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
+        assert_eq!(iface.gpu_clock_range().await, "auto");
+        assert!(!iface.gpu_follows_tdp().await);
+
+        state.active_gpu_clock = Some(GpuClockSelection::Preset(FanCurvePreset::Aggressive));
+        state.gpu_follows_tdp = true;
+        let (_state_tx, state_rx) = tokio::sync::watch::channel(state.clone());
+        let iface = PowerDaemonInterface::new(
+            tx.clone(),
+            state_rx,
+            sample_limits(),
+            Arc::new(TelemetryFixture),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
+        assert_eq!(iface.gpu_clock_range().await, "aggressive");
+        assert!(iface.gpu_follows_tdp().await);
+
+        state.active_gpu_clock = Some(GpuClockSelection::Custom(GpuClockRange {
+            min_mhz: 600,
+            max_mhz: 1_000,
+        }));
+        let (_state_tx, state_rx) = tokio::sync::watch::channel(state);
+        let iface = PowerDaemonInterface::new(
+            tx,
+            state_rx,
+            sample_limits(),
+            Arc::new(TelemetryFixture),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
+        assert_eq!(iface.gpu_clock_range().await, "custom");
     }
 
     /// A curve with the wrong number of points must be rejected as
