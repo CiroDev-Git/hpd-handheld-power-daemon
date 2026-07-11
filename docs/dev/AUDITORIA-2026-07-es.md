@@ -381,6 +381,17 @@ barato de cerrar, y habilita un editor de curva en el plugin Decky.
 
 ### 6.2 Capability de GPU (equivalente a "GPU tuning" de Adrenalin) (esfuerzo medio)
 
+> **Decisión 2026-07-11**: aprobado como el próximo trabajo real, fusionado con
+> el suelo/techo de reloj de §6.6/GAMING-ROADMAP §7b (ya no espera al spike de
+> FPS — ver ese documento). Dos requisitos añadidos por el usuario: (a) los
+> límites min/max de reloj GPU necesitan validación tan rigurosa como el suelo
+> de seguridad de curvas de ventilador (`FanCurveConstraints`/
+> `validate_against`) — nunca un passthrough directo a `pp_od_clk_voltage` sin
+> rango verificado, para no arriesgar daño de hardware; (b) al cambiar de
+> preset TDP (eco/balanced/max) debe aplicarse también un preset de reloj GPU
+> a juego — el reloj de GPU pasa a formar parte del pipeline de cambio de
+> preset, no queda como palanca independiente.
+
 Nueva trait `GpuControl` en L2 + implementación amdgpu en L1:
 `power_dpm_force_performance_level` (auto/low/high/manual),
 `pp_od_clk_voltage` (min/max gfxclk) y `power1_cap` del hwmon amdgpu.
@@ -390,6 +401,9 @@ llama "Minimum/Maximum Frequency"). Encaja limpio en el pipeline de
 efectos existente. (Si se hace, añadir LACT como advisory — §5.4.)
 
 ### 6.3 Toggle de CPU boost (esfuerzo bajo, gran ganancia en batería)
+
+> **Decisión 2026-07-11**: descartado por ahora — queda solo documentado,
+> sin experimento de admisión ni implementación, hasta que se revise de nuevo.
 
 `/sys/devices/system/cpu/cpufreq/boost` (amd_pstate). Armoury/Adrenalin
 lo exponen indirectamente; en handheld apagar boost a TDP bajo mejora
@@ -506,8 +520,12 @@ Ninguna es bloqueante. Si se toca zbus, aprovechar para revisar el
 **Paridad Armoury/Adrenalin (roadmap):**
 15. Re-exponer `set_fan_curve` (curvas custom) — §6.1.
 16. Cache de rutas hwmon + `get_telemetry() -> a{sv}` ampliada — §4.3, §6.5.
-17. Toggle CPU boost — §6.3.
+17. ~~Toggle CPU boost~~ — §6.3. **Descartado por ahora (2026-07-11), solo documentado.**
 18. Capability GPU (dpm level / clocks / power cap) + LACT advisory — §6.2.
+    **Próximo item real (2026-07-11)**, fusionado con el suelo/techo de
+    reloj (GAMING-ROADMAP §7b): requiere validación de rango tan
+    rigurosa como el suelo de seguridad de curvas de ventilador, y
+    aplicar un preset de reloj GPU en cada cambio de preset TDP.
 19. Perfiles por juego en el plugin Decky — §6.4.
 20. Shim `net.hadess.PowerProfiles` (recupera el applet de KDE y
     `game-performance` mandando sobre hpd) — §6.7.

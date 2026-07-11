@@ -735,6 +735,13 @@ haciendo poll?"*) — análisis y política:
 observa**. El barrido automático queda como extensión opcional futura,
 solo si este modo demuestra el pipeline de medición.)*
 
+> **Decisión 2026-07-11**: aprobado en principio, con dos condiciones
+> explícitas: no complicar la experiencia del usuario (el toggle
+> opt-in + tabla comparativa ya descritos abajo cumplen esto), y
+> exactitud real en los valores reportados — la precisión de
+> vatios/temperatura/FPS por bucket es un requisito duro, no un
+> "aproximadamente".
+
 ### En cristiano 🗣️
 
 **Qué hace.** Un cuaderno de notas automático: mientras juegas y
@@ -801,6 +808,10 @@ si el experimento falla, se archiva sin drama.
 
 ### 7a. Toggle de CPU boost
 
+> **Decisión 2026-07-11**: descartado por ahora. Se deja documentado tal
+> cual (hipótesis + experimento de admisión, por si se retoma), pero no
+> se ejecuta el experimento ni se implementa.
+
 Dudas legítimas del feedback: ¿qué gana vs simplemente ajustar TDP?,
 ¿complejidad para el usuario?, ¿todos los dispositivos pueden?
 
@@ -823,6 +834,13 @@ Dudas legítimas del feedback: ¿qué gana vs simplemente ajustar TDP?,
 
 ### 7b. GPU clamps (reloj mín/máx)
 
+> **Decisión 2026-07-11**: aprobado — se revisa e implementa junto con
+> la capability de GPU (AUDITORIA §6.2 / roadmap item 18), **sin**
+> esperar al experimento de admisión ligado a la fuente de FPS descrito
+> abajo. La validación de rango (nunca un min/max que pueda dañar el
+> hardware) y la integración con el cambio de presets TDP son
+> requisitos explícitos de esa implementación combinada.
+
 Preguntas del feedback: ¿qué ganamos?, ¿riesgos?, ¿cómo sabe el usuario
 si subir o bajar?, ¿cómo nota el cambio?, ¿viable?
 
@@ -839,12 +857,23 @@ si subir o bajar?, ¿cómo nota el cambio?, ¿viable?
   entra como slider crudo sino como **acción sugerida por el
   diagnóstico** (fase 5: "frametimes irregulares con GPU oscilando →
   [Probar suelo de GPU]"), con revert automático al cerrar el juego.
-- **Experimento de admisión**: spike on-device (RC73XA + kernel CachyOS
-  actual) que confirme que la interfaz OD funciona y es estable, +
+- **Experimento de admisión (superado por la decisión de 2026-07-11
+  arriba)**: originalmente spike on-device (RC73XA + kernel CachyOS
+  actual) que confirmara que la interfaz OD funciona y es estable, +
   demostración medible de mejora de varianza de frametimes en ≥1 juego
-  con stuttering conocido. Ambas cosas o se archiva.
+  con stuttering conocido. La primera mitad (confirmar que la interfaz
+  OD es estable) sigue siendo trabajo real de la implementación; la
+  segunda (demostrar mejora medible de varianza) queda pendiente hasta
+  que exista una fuente de frametimes — no bloquea construir el clamp.
 
 ### 7c. Presets por modelo (revisión del cálculo eco/balanced/max)
+
+> **Decisión 2026-07-11**: aprobado en principio — cuanta más precisión
+> rendimiento/batería por dispositivo, mejor. Condición explícita: alta
+> confianza en los valores curados (captura real, nunca extrapolada —
+> ya es la regla de Clase C de §0b) y una revisión cuidadosa de cómo
+> afecta a todo lo que ya usa el cálculo aritmético actual (presets,
+> Fase 2 por-juego, cualquier default) antes de aterrizar el cambio.
 
 El feedback pide revisar si "min / punto medio / max" es el cálculo
 correcto. Respuesta corta: **es defendible pero mejorable**, y la
@@ -938,7 +967,12 @@ daemon que necesita.)
 ## 11. Riesgos y preguntas abiertas
 
 1. **Fuente de FPS (spike, afecta fase 6 y backlog 7b)** — el único
-   bloqueo técnico serio. Mitigación: fase 6 degrada a comparativa de
+   bloqueo técnico serio. **Decisión 2026-07-11: descartado por ahora,
+   se deja solo documentado** (candidatos: log CSV de MangoHud, el
+   protobuf no documentado de `SteamClient.System.Perf.
+   RegisterForDiagnosticInfoChanges`, o una superficie propia de
+   gamescope/mangoapp — ninguno confirmado). No se investiga más hasta
+   que se retome explícitamente. Mitigación mientras tanto: fase 6 degrada a comparativa de
    W/temp; 7b no entra sin frametimes medibles.
 2. **Fiabilidad de la detección de juegos (fase 2)** — las APIs
    `SteamClient.*` no son contrato público de Valve y pueden cambiar
