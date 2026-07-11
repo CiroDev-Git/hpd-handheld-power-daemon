@@ -329,10 +329,10 @@ impl<S: SysfsIo> SystemTelemetry for AsusTelemetryBackend<S> {
     /// since boot, not a rate — this computes `busy_delta / total_delta`
     /// against the *previous* call, stored in `prev_cpu_stat`. Returns
     /// `None` on the first call ever (no baseline yet) and on any call
-    /// within [`MIN_CPU_STAT_SAMPLE_INTERVAL`] of the last one (too
-    /// little elapsed time for a meaningful delta) — in both cases the
-    /// stored baseline is left untouched so the *next* real call still
-    /// has a properly time-separated sample to diff against.
+    /// within the minimum sample interval of the last one (too little
+    /// elapsed time for a meaningful delta) — in both cases the stored
+    /// baseline is left untouched so the *next* real call still has a
+    /// properly time-separated sample to diff against.
     fn get_cpu_busy_pct(&self) -> Result<Option<u8>, HpdError> {
         if !self.sysfs.exists(PROC_STAT_PATH) {
             return Ok(None);
