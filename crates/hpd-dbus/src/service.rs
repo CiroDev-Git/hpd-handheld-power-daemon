@@ -554,7 +554,9 @@ impl PowerDaemonInterface {
     /// `battery_percent` (`u`, 0-100), `battery_status` (`s`, raw kernel
     /// string), `battery_health_pct` (`u`), `battery_cycles` (`u`),
     /// `cpu_freq_mhz` / `gpu_freq_mhz` (`u`), `gpu_busy_pct` (`u`,
-    /// 0-100), `vram_used_mb` / `vram_total_mb` (`u`),
+    /// 0-100), `cpu_busy_pct` (`u`, 0-100 — averaged over the interval
+    /// since the previous call, absent on the first call after daemon
+    /// start), `vram_used_mb` / `vram_total_mb` (`u`),
     /// `gpu_throttle_status` (`t`, raw bitmask — no current backend
     /// populates this).
     async fn get_telemetry(&self) -> HashMap<String, OwnedValue> {
@@ -637,6 +639,11 @@ impl PowerDaemonInterface {
                 &mut map,
                 "gpu_busy_pct",
                 t.get_gpu_busy_pct().ok().flatten().map(u32::from),
+            );
+            insert_dbus_value(
+                &mut map,
+                "cpu_busy_pct",
+                t.get_cpu_busy_pct().ok().flatten().map(u32::from),
             );
             insert_dbus_value(
                 &mut map,
@@ -1045,6 +1052,7 @@ mod tests {
             "cpu_freq_mhz",
             "gpu_freq_mhz",
             "gpu_busy_pct",
+            "cpu_busy_pct",
             "vram_used_mb",
             "vram_total_mb",
             "gpu_throttle_status",

@@ -11,6 +11,26 @@ not part of the published repository.
 
 ---
 
+## [2.11.0] — 2026-07-11
+
+### Added
+
+- **CPU utilisation telemetry (`cpu_busy_pct`)** — the one missing piece
+  for the plugin's Fase 5 bottleneck-diagnosis heuristic
+  ([`docs/dev/GAMING-ROADMAP-es.md`](docs/dev/GAMING-ROADMAP-es.md) §5).
+  `GetTelemetry`'s `cpu_busy_pct` key (`u`, 0-100) reports CPU
+  utilisation averaged over the interval since the previous call —
+  `/proc/stat`'s aggregate `cpu` line reports cumulative jiffies since
+  boot, not a rate, so a percentage needs a delta between two
+  time-separated samples. `AsusTelemetryBackend` gains its first
+  stateful/time-delta telemetry accessor (every other field there is a
+  stateless instantaneous read): a mutex-guarded previous sample,
+  returning `None` on the very first call after daemon start or on any
+  call within 200 ms of the last one, otherwise the busy/total jiffies
+  delta as a percentage. This keeps the daemon as the sole source of
+  hardware/system data for the diagnosis feature — the plugin never
+  reads `/proc` or `/sys` itself.
+
 ## [2.10.0] — 2026-07-10
 
 ### Added
