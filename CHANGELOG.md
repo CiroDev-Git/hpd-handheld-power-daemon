@@ -11,6 +11,35 @@ not part of the published repository.
 
 ---
 
+## [2.13.0] — 2026-07-11
+
+### Added
+
+- **`hpdctl gpu` subcommand.** The GPU clock range control shipped in
+  2.12.0 was only reachable over raw D-Bus (`busctl`) or the Decky
+  plugin — `hpdctl` had no CLI surface for it at all, unlike every other
+  lever (`tdp`, `cool`, `power`, `charge`). Adds `gpu auto` (enable
+  TDP-follow), `gpu set <min_mhz> <max_mhz>` (explicit range, disengages
+  auto-follow), `gpu reset` (hand back to firmware auto), `gpu get`
+  (current mode + committed range), and `gpu limits` (this device's live
+  `OD_RANGE`) — mirrors `hpdctl cool`'s shape. On-device validation (ROG
+  Xbox Ally X) exercised all three tiers of auto-follow, a custom range,
+  three rejected invalid ranges, and reset, entirely over the D-Bus
+  methods this subcommand now wraps.
+- **Simulator GPU-clock mock fixture.** `hpd-daemon`'s built-in
+  `HPD_SIMULATOR` mode never seeded `power_dpm_force_performance_level`/
+  `pp_od_clk_voltage` on the mock `amdgpu` hwmon node, so `GetGpuClockConstraints`
+  always returned an empty map and every GPU-clock call failed with
+  "Sysfs path not found" — the feature was untestable without real
+  hardware since it shipped in 2.12.0. Seeded with the real ROG Xbox Ally X
+  `OD_RANGE` capture, so `gpu limits`/`get`/`reset` now work against the
+  simulator too. `gpu auto`/`gpu set` still fail there: `pp_od_clk_voltage`
+  is a command file on real hardware (the *driver* updates its own
+  `OD_SCLK`/`OD_RANGE` report after a `s`/`c` write), but `MockSysfs` is a
+  flat store, so the mandatory commit-and-read-back fails — modeling that
+  stateful parse is future work (`hpd-backend-asus`'s own unit tests work
+  around it locally with a `simulate_committed` test helper).
+
 ## [2.12.2] — 2026-07-11
 
 ### Fixed

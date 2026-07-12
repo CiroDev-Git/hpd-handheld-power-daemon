@@ -217,8 +217,30 @@ async fn run_real_main() -> Result<(), Box<dyn std::error::Error>> {
             mock.create_file("sys/class/hwmon/hwmon5/name", "amdgpu");
             mock.create_file("sys/class/hwmon/hwmon5/temp1_input", "54000");
             mock.create_file("sys/class/hwmon/hwmon5/power1_input", "16088000"); // 16.1 W
-                                                                                 // Custom fan-curve node (`asus_custom_fan_curve` hwmon),
-                                                                                 // seeded with the firmware default curve and auto mode.
+                                                                                 // GPU clock range (OverDrive) — matches the real ROG Xbox Ally X
+                                                                                 // capture (`OD_RANGE: SCLK 600Mhz-2900Mhz`). Lets `hpdctl gpu
+                                                                                 // limits`/`get`/`reset` work against the simulator instead of
+                                                                                 // failing with "Sysfs path not found". `gpu auto`/`gpu set`
+                                                                                 // still fail here: `pp_od_clk_voltage` is a command file on
+                                                                                 // real hardware (writing `s 0 <min>`/`s 1 <max>`/`c` makes the
+                                                                                 // *driver* update its own OD_SCLK/OD_RANGE report on the next
+                                                                                 // read), but `MockSysfs` is a flat store — the commit write
+                                                                                 // literally overwrites the file with `"c"`, so the mandatory
+                                                                                 // read-back-and-verify in `hpd-backend-asus/src/gpu_clock.rs`
+                                                                                 // fails. Modeling that stateful parse is what
+                                                                                 // `hpd-backend-asus`'s own unit tests do with their local
+                                                                                 // `simulate_committed` test helper; wiring the same behaviour
+                                                                                 // into this shared `MockSysfs` is future work, not done here.
+            mock.create_file(
+                "sys/class/hwmon/hwmon5/device/power_dpm_force_performance_level",
+                "auto",
+            );
+            mock.create_file(
+                "sys/class/hwmon/hwmon5/device/pp_od_clk_voltage",
+                "OD_SCLK:\n0:        600Mhz\n1:       2900Mhz\nOD_RANGE:\nSCLK:     600Mhz       2900Mhz\n",
+            );
+            // Custom fan-curve node (`asus_custom_fan_curve` hwmon),
+            // seeded with the firmware default curve and auto mode.
             mock.create_file("sys/class/hwmon/hwmon1/name", "asus_custom_fan_curve");
             for fan in [1u8, 2] {
                 mock.create_file(format!("sys/class/hwmon/hwmon1/pwm{fan}_enable"), "2");

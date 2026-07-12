@@ -566,7 +566,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hpd-backend-asus"
-version = "2.12.1"
+version = "2.13.0"
 dependencies = [
  "hpd-capabilities",
  "hpd-error",
@@ -576,7 +576,7 @@ dependencies = [
 
 [[package]]
 name = "hpd-capabilities"
-version = "2.12.1"
+version = "2.13.0"
 dependencies = [
  "hpd-error",
  "serde",
@@ -584,7 +584,7 @@ dependencies = [
 
 [[package]]
 name = "hpd-cli"
-version = "2.12.1"
+version = "2.13.0"
 dependencies = [
  "clap",
  "hpd-dbus",
@@ -594,7 +594,7 @@ dependencies = [
 
 [[package]]
 name = "hpd-core"
-version = "2.12.1"
+version = "2.13.0"
 dependencies = [
  "hpd-capabilities",
  "hpd-error",
@@ -606,7 +606,7 @@ dependencies = [
 
 [[package]]
 name = "hpd-daemon"
-version = "2.12.1"
+version = "2.13.0"
 dependencies = [
  "futures-util",
  "hpd-backend-asus",
@@ -625,7 +625,7 @@ dependencies = [
 
 [[package]]
 name = "hpd-dbus"
-version = "2.12.1"
+version = "2.13.0"
 dependencies = [
  "futures-util",
  "hpd-capabilities",
@@ -639,14 +639,14 @@ dependencies = [
 
 [[package]]
 name = "hpd-error"
-version = "2.12.1"
+version = "2.13.0"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "hpd-netlink"
-version = "2.12.1"
+version = "2.13.0"
 dependencies = [
  "futures-util",
  "hpd-core",
@@ -657,7 +657,7 @@ dependencies = [
 
 [[package]]
 name = "hpd-sysfs"
-version = "2.12.1"
+version = "2.13.0"
 dependencies = [
  "hpd-error",
  "tempfile",

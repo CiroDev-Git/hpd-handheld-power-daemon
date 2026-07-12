@@ -172,6 +172,13 @@ hpdctl cool curve              # draw the active fan curve
 # (The power profile / EPP is a separate lever, default `performance`,
 #  available over D-Bus as set_profile for advanced power tuning.)
 
+# GPU clock range — optional, opt-in frequency ceiling (daemon >= 2.12.0)
+hpdctl gpu limits              # this device's supported range (live OD_RANGE)
+hpdctl gpu auto                # match the ceiling to the current TDP preset
+hpdctl gpu set 700 1500        # pin an explicit MHz range (disengages auto)
+hpdctl gpu reset               # hand the GPU clock back to firmware auto
+hpdctl gpu get                 # current mode + committed range
+
 # Battery
 hpdctl charge set 80           # 20..=100, persisted across reboots
 hpdctl charge get
