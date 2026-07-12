@@ -94,7 +94,7 @@ pub fn reduce(
 
             let new_target = derive_boosted_envelope(spl, device_limits, config);
 
-            validate_power_envelope(&new_target)?;
+            validate_power_envelope(&new_target, device_limits)?;
 
             return apply_power_target(state, new_target, device_limits, config);
         }
@@ -103,7 +103,7 @@ pub fn reduce(
         // MANUAL MODE (user define values)
         // -----------------------------------------------------
         Transition::SetEnvelope(new_target) => {
-            validate_power_envelope(&new_target)?;
+            validate_power_envelope(&new_target, device_limits)?;
 
             return apply_power_target(state, new_target, device_limits, config);
         }
@@ -566,14 +566,21 @@ fn is_locked_write(transition: &Transition) -> bool {
 /// Single source of the "smart-mode" envelope maths shared by
 /// `Transition::SetSpl` and [`force_ac_max_performance`].
 ///
-/// Also floors SPPT at `spl` and FPPT at `sppt`: `RuntimeConfig::sppt_factor`
-/// / `fppt_factor` are operator-tunable (`config.toml`, hot-reloaded via
+/// Also floors SPPT at `max(spl, device_limits.sppt_min)` and FPPT at
+/// `max(sppt, device_limits.fppt_min)`: `RuntimeConfig::sppt_factor` /
+/// `fppt_factor` are operator-tunable (`config.toml`, hot-reloaded via
 /// SIGHUP) and `RuntimeConfig::sanitized` only rejects clearly-broken values,
 /// not every factor combination that could undershoot at a given SPL/rail
-/// ceiling. Without this floor a legal-looking factor could still produce
-/// `SPPT < SPL` or `FPPT < SPPT`, which `validate_power_envelope` then
-/// rejects — silently failing *every* `SetSpl`/`SetPreset` (and the AC-lock's
-/// own forced-max envelope) until the operator noticed the config was bad.
+/// ceiling. Without the `spl`/`sppt` floor a legal-looking factor could still
+/// produce `SPPT < SPL` or `FPPT < SPPT`, which `validate_power_envelope`
+/// then rejects — silently failing *every* `SetSpl`/`SetPreset` (and the
+/// AC-lock's own forced-max envelope) until the operator noticed the config
+/// was bad. The `*_min` floor guards a **separate** failure mode found
+/// on-device (2026-07-12): the ASUS ROG Xbox Ally X's SPPT/FPPT firmware
+/// attributes report their own `min_value` (13W/19W) *above* SPL's `min_value`
+/// (7W) — at a low SPL (e.g. the Eco preset), scaling by `sppt_factor` alone
+/// can undershoot that hardware floor even though it still satisfies
+/// `SPPT >= SPL`, and the write is rejected by the firmware with `EINVAL`.
 fn derive_boosted_envelope(
     spl: PowerMilliwatts,
     device_limits: &PowerEnvelopeLimits,
@@ -581,10 +588,10 @@ fn derive_boosted_envelope(
 ) -> PowerEnvelopeTarget {
     let sppt_raw =
         PowerMilliwatts(((spl.0 as f32 * config.sppt_factor) as u32).min(device_limits.sppt_max.0));
-    let sppt = PowerMilliwatts(sppt_raw.0.max(spl.0));
+    let sppt = PowerMilliwatts(sppt_raw.0.max(spl.0).max(device_limits.sppt_min.0));
     let fppt_raw =
         PowerMilliwatts(((spl.0 as f32 * config.fppt_factor) as u32).min(device_limits.fppt_max.0));
-    let fppt = PowerMilliwatts(fppt_raw.0.max(sppt.0));
+    let fppt = PowerMilliwatts(fppt_raw.0.max(sppt.0).max(device_limits.fppt_min.0));
     PowerEnvelopeTarget {
         spl,
         sppt,
@@ -718,7 +725,9 @@ mod tests {
         let limits = PowerEnvelopeLimits {
             spl_min: PowerMilliwatts(7000),
             spl_max: PowerMilliwatts(35000), // Ally X ranges
+            sppt_min: PowerMilliwatts(7000),
             sppt_max: PowerMilliwatts(43000),
+            fppt_min: PowerMilliwatts(7000),
             fppt_max: PowerMilliwatts(53000),
         };
         let config = RuntimeConfig::DEFAULT;
@@ -747,7 +756,9 @@ mod tests {
         let limits = PowerEnvelopeLimits {
             spl_min: PowerMilliwatts(7000),
             spl_max: PowerMilliwatts(35000),
+            sppt_min: PowerMilliwatts(7000),
             sppt_max: PowerMilliwatts(43000),
+            fppt_min: PowerMilliwatts(7000),
             fppt_max: PowerMilliwatts(53000),
         };
         let config = RuntimeConfig::DEFAULT;
@@ -788,7 +799,9 @@ mod tests {
         let limits = PowerEnvelopeLimits {
             spl_min: PowerMilliwatts(7000),
             spl_max: PowerMilliwatts(35000),
+            sppt_min: PowerMilliwatts(7000),
             sppt_max: PowerMilliwatts(43000),
+            fppt_min: PowerMilliwatts(7000),
             fppt_max: PowerMilliwatts(55000),
         };
         let config = RuntimeConfig::DEFAULT;
@@ -812,7 +825,9 @@ mod tests {
         let limits = PowerEnvelopeLimits {
             spl_min: PowerMilliwatts(7000),
             spl_max: PowerMilliwatts(35000),
+            sppt_min: PowerMilliwatts(7000),
             sppt_max: PowerMilliwatts(43000),
+            fppt_min: PowerMilliwatts(7000),
             fppt_max: PowerMilliwatts(55000),
         };
         let config = RuntimeConfig::DEFAULT; // ac_max_performance = true
@@ -867,7 +882,9 @@ mod tests {
         PowerEnvelopeLimits {
             spl_min: PowerMilliwatts(7000),
             spl_max: PowerMilliwatts(35000),
+            sppt_min: PowerMilliwatts(7000),
             sppt_max: PowerMilliwatts(43000),
+            fppt_min: PowerMilliwatts(7000),
             fppt_max: PowerMilliwatts(55000),
         }
     }
@@ -1280,7 +1297,9 @@ mod tests {
         let tight_limits = PowerEnvelopeLimits {
             spl_min: PowerMilliwatts(7_000),
             spl_max: PowerMilliwatts(35_000),
+            sppt_min: PowerMilliwatts(7_000),
             sppt_max: PowerMilliwatts(35_000), // no headroom above SPL
+            fppt_min: PowerMilliwatts(7_000),
             fppt_max: PowerMilliwatts(35_000),
         };
         let out = reduce(
@@ -1295,6 +1314,48 @@ mod tests {
         assert_eq!(
             out.new_state.power_target.fppt,
             Some(PowerMilliwatts(35_000))
+        );
+    }
+
+    #[test]
+    fn test_set_spl_at_low_end_floors_sppt_fppt_at_hardware_minimum() {
+        // Regression found on-device (2026-07-12) on the ROG Xbox Ally X
+        // (RC73XA): `ppt_pl2_sppt`/`ppt_pl3_fppt` report a `min_value`
+        // (13W/19W) *above* `ppt_pl1_spl`'s (7W). At a low SPL like the Eco
+        // preset, `sppt_factor` alone (7W * 1.15 ≈ 8W) undershoots that
+        // hardware floor even though `SPPT >= SPL` still holds — the write
+        // was rejected by the firmware with `EINVAL`. The derived envelope
+        // must floor SPPT/FPPT at the hardware minimum too, not just at
+        // SPL/SPPT.
+        let state = setup_state();
+        let rc73xa_limits = PowerEnvelopeLimits {
+            spl_min: PowerMilliwatts(7_000),
+            spl_max: PowerMilliwatts(35_000),
+            sppt_min: PowerMilliwatts(13_000),
+            sppt_max: PowerMilliwatts(45_000),
+            fppt_min: PowerMilliwatts(19_000),
+            fppt_max: PowerMilliwatts(55_000),
+        };
+        let out = reduce(
+            &state,
+            Transition::SetSpl(7), // Eco preset's SPL
+            &rc73xa_limits,
+            &setup_config(), // sppt_factor=1.15, fppt_factor=1.25
+        )
+        .expect("a low SPL must not be rejected because of the boost-rail hardware floor");
+        assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(7_000));
+        assert!(
+            out.new_state.power_target.sppt.0 >= rc73xa_limits.sppt_min.0,
+            "SPPT ({}) must be at least the hardware minimum ({})",
+            out.new_state.power_target.sppt.0,
+            rc73xa_limits.sppt_min.0
+        );
+        let fppt = out.new_state.power_target.fppt.expect("fppt must be set");
+        assert!(
+            fppt.0 >= rc73xa_limits.fppt_min.0,
+            "FPPT ({}) must be at least the hardware minimum ({})",
+            fppt.0,
+            rc73xa_limits.fppt_min.0
         );
     }
 
@@ -1314,6 +1375,80 @@ mod tests {
             &state,
             Transition::SetEnvelope(bad),
             &setup_limits(),
+            &setup_config(),
+        );
+        assert!(matches!(result, Err(HpdError::InvariantViolation(_))));
+    }
+
+    #[test]
+    fn test_set_envelope_rejects_spl_out_of_hardware_range() {
+        // SetEnvelope (manual mode) previously ran no hardware-range check
+        // at all — only SetSpl did. A manually-supplied SPL below spl_min
+        // must now be rejected here too, not left to fail at the backend.
+        let state = setup_state();
+        let bad = PowerEnvelopeTarget {
+            spl: PowerMilliwatts(3_000), // below setup_limits()'s spl_min of 7000
+            sppt: PowerMilliwatts(10_000),
+            fppt: Some(PowerMilliwatts(12_000)),
+        };
+        let result = reduce(
+            &state,
+            Transition::SetEnvelope(bad),
+            &setup_limits(),
+            &setup_config(),
+        );
+        assert!(matches!(result, Err(HpdError::InvariantViolation(_))));
+    }
+
+    #[test]
+    fn test_set_envelope_rejects_sppt_below_hardware_minimum() {
+        // Regression found on-device (2026-07-12): a manually-supplied
+        // envelope that satisfies SPPT >= SPL can still undershoot the
+        // hardware's own SPPT floor (RC73XA: 13W) — must be rejected here,
+        // not surfaced as an opaque backend I/O error.
+        let state = setup_state();
+        let rc73xa_limits = PowerEnvelopeLimits {
+            spl_min: PowerMilliwatts(7_000),
+            spl_max: PowerMilliwatts(35_000),
+            sppt_min: PowerMilliwatts(13_000),
+            sppt_max: PowerMilliwatts(45_000),
+            fppt_min: PowerMilliwatts(19_000),
+            fppt_max: PowerMilliwatts(55_000),
+        };
+        let bad = PowerEnvelopeTarget {
+            spl: PowerMilliwatts(7_000),
+            sppt: PowerMilliwatts(8_000), // >= SPL, but < the hardware's 13W floor
+            fppt: Some(PowerMilliwatts(20_000)),
+        };
+        let result = reduce(
+            &state,
+            Transition::SetEnvelope(bad),
+            &rc73xa_limits,
+            &setup_config(),
+        );
+        assert!(matches!(result, Err(HpdError::InvariantViolation(_))));
+    }
+
+    #[test]
+    fn test_set_envelope_rejects_fppt_below_hardware_minimum() {
+        let state = setup_state();
+        let rc73xa_limits = PowerEnvelopeLimits {
+            spl_min: PowerMilliwatts(7_000),
+            spl_max: PowerMilliwatts(35_000),
+            sppt_min: PowerMilliwatts(13_000),
+            sppt_max: PowerMilliwatts(45_000),
+            fppt_min: PowerMilliwatts(19_000),
+            fppt_max: PowerMilliwatts(55_000),
+        };
+        let bad = PowerEnvelopeTarget {
+            spl: PowerMilliwatts(7_000),
+            sppt: PowerMilliwatts(13_000),
+            fppt: Some(PowerMilliwatts(15_000)), // >= SPPT, but < the hardware's 19W floor
+        };
+        let result = reduce(
+            &state,
+            Transition::SetEnvelope(bad),
+            &rc73xa_limits,
             &setup_config(),
         );
         assert!(matches!(result, Err(HpdError::InvariantViolation(_))));

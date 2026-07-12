@@ -405,7 +405,9 @@ mod tests {
         PowerEnvelopeLimits {
             spl_min: PowerMilliwatts(7_000),
             spl_max: PowerMilliwatts(35_000),
+            sppt_min: PowerMilliwatts(7_000),
             sppt_max: PowerMilliwatts(43_000),
+            fppt_min: PowerMilliwatts(7_000),
             fppt_max: PowerMilliwatts(55_000),
         }
     }
