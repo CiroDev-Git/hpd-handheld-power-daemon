@@ -11,6 +11,33 @@ not part of the published repository.
 
 ---
 
+## [2.12.1] — 2026-07-12
+
+### Fixed
+
+- **`ResetFanCurve` no longer silently no-ops when auto-cooling is still on.**
+  Found during on-device QA of 2.12.0: the reducer's guard only checked
+  `active_fan_curve.is_some()`, so a state with `fan_follows_tdp=true` and
+  no active curve yet (reachable at cold boot, before the first
+  TDP-triggered inference) made "Reset to firmware" a no-op — worse, since
+  `fan_follows_tdp` stayed on, the very next TDP change silently re-inferred
+  and re-applied a curve, undoing the reset the user just asked for. The
+  guard now also fires on `fan_follows_tdp`, and disengages it alongside
+  clearing `active_fan_curve` — mirroring `SetCoolingLevel`/
+  `SetCustomFanCurve`'s existing "latches manual mode" behaviour, and the
+  `ResetGpuClocks` transition added in 2.12.0.
+- **Cold-boot charge-threshold read no longer trusts an out-of-range
+  value.** Also found during on-device QA: right at daemon startup the
+  ASUS EC/driver can transiently report
+  `charge_control_end_threshold == 0` (not a valid threshold — the
+  hardware range is always 20-100) before it has settled. An unfiltered
+  read fed that straight into the boot re-assert's `ApplyChargeThreshold`,
+  which the backend correctly rejected, logging an `ERROR` and rolling the
+  in-memory value back via a second read (self-healing, but noisy and
+  briefly wrong). The cold-boot path now discards an out-of-range read the
+  same way it already handles a missing capability or a failed read —
+  falling back to `default_charge_threshold`.
+
 ## [2.12.0] — 2026-07-11
 
 ### Added

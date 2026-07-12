@@ -371,8 +371,17 @@ pub fn reduce(
         }
 
         Transition::ResetFanCurve => {
-            if new_state.active_fan_curve.is_some() {
+            // Guard on `fan_follows_tdp` too, not just `active_fan_curve`:
+            // handing control back to firmware must also stop the daemon
+            // from re-inferring and silently re-applying a curve on the
+            // next TDP change. Without this, a `fan_follows_tdp=true` +
+            // `active_fan_curve=None` state (reachable at cold boot before
+            // the first TDP-triggered inference, or by calling this twice)
+            // would treat the button as a no-op even though auto-follow was
+            // still live.
+            if new_state.active_fan_curve.is_some() || new_state.fan_follows_tdp {
                 new_state.active_fan_curve = None;
+                new_state.fan_follows_tdp = false;
                 effects.push(Effect::ResetFanCurve);
                 effects.push(Effect::PersistState);
             }
@@ -1417,6 +1426,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out.new_state.active_fan_curve, None);
+        assert!(
+            !out.new_state.fan_follows_tdp,
+            "reset must also disengage auto-follow, or the next TDP change \
+             silently re-infers and re-applies a curve, undoing the reset"
+        );
         assert_eq!(
             out.effects,
             vec![Effect::ResetFanCurve, Effect::PersistState]
@@ -1424,8 +1438,9 @@ mod tests {
     }
 
     #[test]
-    fn test_reset_fan_curve_is_no_op_when_already_auto() {
-        let state = setup_state(); // active_fan_curve = None
+    fn test_reset_fan_curve_is_no_op_when_already_fully_auto() {
+        let mut state = setup_state(); // active_fan_curve = None
+        state.fan_follows_tdp = false;
         let out = reduce(
             &state,
             Transition::ResetFanCurve,
@@ -1435,6 +1450,31 @@ mod tests {
         .unwrap();
         assert_eq!(out.new_state, state);
         assert!(out.effects.is_empty());
+    }
+
+    #[test]
+    fn test_reset_fan_curve_disengages_auto_follow_even_without_an_active_curve() {
+        // Regression: on-device bug found 2026-07-12. Cold boot (or any path
+        // that leaves `fan_follows_tdp=true` with no `active_fan_curve` yet)
+        // made "Reset to firmware" a silent no-op, since the old guard only
+        // checked `active_fan_curve.is_some()`. The button must still
+        // disengage auto-follow so a later TDP change can't silently
+        // re-apply a curve the user just asked to hand back to firmware.
+        let state = setup_state(); // fan_follows_tdp = true, active_fan_curve = None
+        let out = reduce(
+            &state,
+            Transition::ResetFanCurve,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert!(!out.new_state.fan_follows_tdp);
+        assert_eq!(out.new_state.active_fan_curve, None);
+        assert_eq!(
+            out.effects,
+            vec![Effect::ResetFanCurve, Effect::PersistState],
+            "must actually write the reset to hardware and persist, not no-op"
+        );
     }
 
     #[test]
