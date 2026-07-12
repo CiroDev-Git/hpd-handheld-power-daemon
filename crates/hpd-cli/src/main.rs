@@ -28,11 +28,13 @@ use std::process;
     about = "Control your handheld's power, fan, and battery settings.",
     long_about = "hpdctl is the command-line client for hpd, the Handheld Power Daemon.\n\
         \n\
-        It talks to the running hpd-daemon over D-Bus to manage four things:\n\
+        It talks to the running hpd-daemon over D-Bus to manage:\n\
         \n  \
         • TDP / power envelope  — how many watts the APU is allowed to draw\n  \
         • Cooling               — one lever: silent / balanced / aggressive (or auto)\n  \
-        • Battery charge limit  — cap charging to extend battery lifespan\n\
+        • Power mode            — the ACPI/EPP lever (performance/balanced/eco)\n  \
+        • Battery charge limit  — cap charging to extend battery lifespan\n  \
+        • GPU clock range       — optional frequency ceiling, follows TDP or manual\n\
         \n\
         Reading status (status, monitor, limits, *-get) never needs root.\n\
         Changing settings needs no sudo if you are in the 'wheel' (admin)\n\
@@ -48,6 +50,9 @@ use std::process;
         hpdctl power set performance  Power mode (EPP): full TDP\n  \
         hpdctl cool auto              Let the daemon pick cooling from TDP\n  \
         hpdctl cool get               Show current cooling level + mode\n  \
+        hpdctl gpu auto               Let the daemon pick the GPU clock ceiling from TDP\n  \
+        hpdctl gpu set 700 1500       Pin an explicit GPU clock range (MHz)\n  \
+        hpdctl gpu get                Show current GPU clock mode + range\n  \
         hpdctl doctor                 Check that hpd is the sole power manager\n  \
         hpdctl doctor --fix           Neutralize competing daemons + install polkit\n\
         \n\
@@ -170,6 +175,20 @@ enum Commands {
         #[arg(long, hide = true)]
         apply: bool,
     },
+    /// GPU clock range (advanced) — caps the GPU's frequency ceiling
+    ///
+    /// Optional, opt-in lever alongside TDP/cooling (daemon ≥ 2.12.0): the
+    /// daemon never touches the GPU clock until `gpu auto` or `gpu set` is
+    /// called at least once. `gpu auto` matches the ceiling to your TDP
+    /// preset automatically, exactly like auto-cooling; `gpu set` pins an
+    /// explicit MHz range and disengages auto-follow; `gpu reset` hands it
+    /// back to firmware. Hidden/unsupported on hardware with no
+    /// programmable GPU clock range — `gpu limits` reports an empty result
+    /// in that case.
+    Gpu {
+        #[clap(subcommand)]
+        action: GpuAction,
+    },
     /// Diagnose and repair hpd's power ownership (polkit + competing daemons)
     ///
     /// `hpdctl doctor` reports whether the polkit policy is installed and
@@ -268,6 +287,25 @@ enum CoolAction {
         )]
         points: Vec<String>,
     },
+}
+
+#[derive(Subcommand)]
+enum GpuAction {
+    /// Let the daemon infer the GPU clock ceiling from the current TDP
+    Auto,
+    /// Set an explicit MHz range (advanced) and disengage auto-follow
+    Set {
+        #[arg(help = "Minimum clock in MHz")]
+        min_mhz: u32,
+        #[arg(help = "Maximum clock in MHz")]
+        max_mhz: u32,
+    },
+    /// Hand the GPU clock back to firmware automatic control
+    Reset,
+    /// Show the current GPU clock mode and committed range
+    Get,
+    /// Show this device's supported GPU clock range (live OD_RANGE)
+    Limits,
 }
 
 /// Parse the 8 `"temp:pwm"` CLI arguments of `cool set-custom` into the
@@ -509,6 +547,60 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
                     other => other,
                 };
                 println!("🔧 Power mode: {} ({})", friendly, profile);
+            }
+        },
+        Commands::Gpu { action } => match action {
+            GpuAction::Auto => {
+                if let Err(e) = proxy.enable_gpu_auto_follow().await {
+                    eprintln!("❌ Error enabling GPU clock auto-follow: {}", e);
+                } else {
+                    println!("🔄 GPU clock auto-follow enabled (follows TDP).");
+                }
+            }
+            GpuAction::Set { min_mhz, max_mhz } => {
+                if let Err(e) = proxy.set_gpu_clock_range(min_mhz, max_mhz).await {
+                    eprintln!("❌ Error setting GPU clock range: {}", e);
+                } else {
+                    println!("🖥️ GPU clock range set to {}-{} MHz.", min_mhz, max_mhz);
+                }
+            }
+            GpuAction::Reset => {
+                if let Err(e) = proxy.reset_gpu_clocks().await {
+                    eprintln!("❌ Error resetting GPU clock: {}", e);
+                } else {
+                    println!("🔄 GPU clock handed back to firmware automatic control.");
+                }
+            }
+            GpuAction::Get => {
+                let selection = proxy.gpu_clock_range().await?;
+                if selection == "auto" {
+                    println!("🖥️ GPU clock: firmware auto (not managed)");
+                } else {
+                    let mode = if proxy.gpu_follows_tdp().await? {
+                        "auto"
+                    } else {
+                        "manual"
+                    };
+                    let (min_mhz, max_mhz) = proxy.get_gpu_clock_range().await?;
+                    println!(
+                        "🖥️ GPU clock: {} ({}) — {}-{} MHz",
+                        selection, mode, min_mhz, max_mhz
+                    );
+                }
+            }
+            GpuAction::Limits => {
+                let map = proxy.get_gpu_clock_constraints().await?;
+                match (
+                    telemetry_u32(&map, "range_min_mhz"),
+                    telemetry_u32(&map, "range_max_mhz"),
+                ) {
+                    (Some(min), Some(max)) => {
+                        println!("📊 GPU clock range supported by this device:");
+                        println!("  • Min: {} MHz", min);
+                        println!("  • Max: {} MHz", max);
+                    }
+                    _ => println!("This device has no programmable GPU clock range."),
+                }
             }
         },
         Commands::AcLock { state } => match state.as_deref() {

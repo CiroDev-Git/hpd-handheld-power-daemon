@@ -117,4 +117,42 @@ trait PowerDaemon {
     /// The call errors against an older daemon; callers degrade to
     /// "unknown / update hpd".
     fn get_ppd_shim_active(&self) -> zbus::Result<bool>;
+
+    /// Manual override: program an explicit GPU clock frequency range
+    /// (daemon ≥ 2.12.0) and disengage auto-follow. Validated against
+    /// `get_gpu_clock_constraints` both here and again independently by
+    /// the daemon.
+    async fn set_gpu_clock_range(&self, min_mhz: u32, max_mhz: u32) -> zbus::Result<()>;
+
+    /// Re-enable GPU-clock auto-follow: the daemon infers a clock
+    /// ceiling from the active TDP envelope, mirroring `set_fan_auto`.
+    /// The opt-in the whole feature is gated behind — the daemon never
+    /// touches the GPU clock until this or `set_gpu_clock_range` is
+    /// called at least once.
+    async fn enable_gpu_auto_follow(&self) -> zbus::Result<()>;
+
+    /// Hand the GPU clock back to firmware auto.
+    async fn reset_gpu_clocks(&self) -> zbus::Result<()>;
+
+    /// This device's GPU clock range bounds (daemon ≥ 2.12.0): the
+    /// kernel-reported live `OD_RANGE`, keys `range_min_mhz`/
+    /// `range_max_mhz` (`u`). Empty map when the device has no
+    /// programmable GPU clock range, or the live read failed.
+    fn get_gpu_clock_constraints(&self) -> zbus::Result<HashMap<String, OwnedValue>>;
+
+    /// The GPU clock range `(min_mhz, max_mhz)` currently committed to
+    /// hardware. `(0, 0)` when the device has no programmable range or
+    /// the daemon isn't managing GPU clocks (firmware auto).
+    fn get_gpu_clock_range(&self) -> zbus::Result<(u32, u32)>;
+
+    /// Active GPU-clock selection: a preset name (`silent`, `balanced`,
+    /// `aggressive`), `custom` for an explicit range, or `auto` when the
+    /// firmware is in charge.
+    #[zbus(property)]
+    fn gpu_clock_range(&self) -> zbus::Result<String>;
+
+    /// Whether the daemon is currently inferring the GPU clock ceiling
+    /// from the TDP envelope (mirrors `auto_cooling` for the fan curve).
+    #[zbus(property)]
+    fn gpu_follows_tdp(&self) -> zbus::Result<bool>;
 }
