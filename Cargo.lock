@@ -571,6 +571,7 @@ dependencies = [
  "hpd-capabilities",
  "hpd-error",
  "hpd-sysfs",
+ "tracing",
 ]
 
 [[package]]

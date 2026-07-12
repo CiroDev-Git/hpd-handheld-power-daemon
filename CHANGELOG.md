@@ -11,6 +11,26 @@ not part of the published repository.
 
 ---
 
+## [2.12.2] — 2026-07-11
+
+### Fixed
+
+- **Transient `EINVAL` on SPPT/FPPT writes right after a large SPL jump.**
+  Found on-device during AC-lock QA of 2.12.1: forcing max TDP
+  (`ac-lock on` right after being at a low battery-side SPL, e.g.
+  12W → 35W) occasionally hit an `EINVAL` from the ASUS EC on the SPPT
+  write — a mathematically valid value (within the now-corrected
+  `PowerEnvelopeLimits`), rejected only because the sustained-rail
+  change from the SPL write immediately before it hadn't settled yet.
+  A retry with the identical value always succeeded, confirming this as
+  EC timing, not a value-range bug. `AsusPowerBackend::set_target` now
+  retries the SPPT/FPPT writes once, after a short (75ms) settle delay,
+  before propagating the error; SPL itself has not shown this failure
+  mode and is left unretried. The existing rollback in
+  `Executor::rollback`/`SyncPowerTarget` is unchanged and still converges
+  `ProfileState` to whatever the hardware reports if even the retry
+  fails.
+
 ## [2.12.1] — 2026-07-12
 
 ### Fixed
