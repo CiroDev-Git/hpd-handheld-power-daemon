@@ -41,6 +41,8 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 #[cfg(feature = "vendor-asus")]
+use hpd_capabilities::charge::{MAX_CHARGE_THRESHOLD, MIN_CHARGE_THRESHOLD};
+#[cfg(feature = "vendor-asus")]
 use hpd_capabilities::fan_curve::FanCurveSelection;
 #[cfg(feature = "vendor-asus")]
 use hpd_capabilities::power::PowerEnvelopeTarget;
@@ -333,9 +335,21 @@ where
                 .profile()
                 .and_then(|p| p.get_active_profile().ok())
                 .unwrap_or(ProfileName::Balanced);
+            // Reject an out-of-range read the same way a missing capability
+            // or a failed read is handled: fall back to the configured
+            // default. Found on-device (2026-07-12): right at daemon
+            // startup the ASUS EC/driver can transiently report
+            // `charge_control_end_threshold == 0` before it has settled,
+            // which isn't a valid threshold (never 0, always 20-100) — an
+            // unfiltered read fed that straight into the boot re-assert's
+            // `ApplyChargeThreshold`, which the backend correctly rejected,
+            // logging an ERROR and rolling the in-memory value back to
+            // whatever the next read happened to return (self-healing, but
+            // noisy and briefly wrong).
             let current_charge_limit = backend
                 .charge()
                 .and_then(|c| c.get_end_threshold().ok())
+                .filter(|t| (MIN_CHARGE_THRESHOLD..=MAX_CHARGE_THRESHOLD).contains(t))
                 .unwrap_or(daemon_config.default_charge_threshold);
 
             ProfileState {
