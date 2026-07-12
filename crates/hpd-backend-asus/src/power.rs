@@ -20,6 +20,15 @@ const ATTR_FPPT: &str = "ppt_pl3_fppt";
 const ASUS_DEFAULT_SPPT_MAX_MW: u32 = 43_000;
 const ASUS_DEFAULT_FPPT_MAX_MW: u32 = 53_000;
 
+// Fallback boost-rail *minima* for ASUS handhelds when `min_value` is not
+// exposed by the driver. Verified live on the ROG Xbox Ally X (RC73XA):
+// `ppt_pl2_sppt`/`ppt_pl3_fppt` report 13W/19W respectively, both above
+// `ppt_pl1_spl`'s 7W floor — assumed to hold across the same family as
+// the maxima above (same silicon generation), pending confirmation on
+// other boards.
+const ASUS_DEFAULT_SPPT_MIN_MW: u32 = 13_000;
+const ASUS_DEFAULT_FPPT_MIN_MW: u32 = 19_000;
+
 /// [`PowerEnvelope`] implementation for ASUS handhelds.
 ///
 /// Reads and writes the SPL / SPPT / FPPT rails through the upstream
@@ -66,10 +75,16 @@ impl<S: SysfsIo> PowerEnvelope for AsusPowerBackend<S> {
         let spl_min = self.read_watts(ATTR_SPL, "min_value")?;
         let spl_max = self.read_watts(ATTR_SPL, "max_value")?;
 
-        // Fallbacks for hardware that doesn't expose the max attribute.
+        // Fallbacks for hardware that doesn't expose the min/max attribute.
+        let sppt_min = self
+            .read_watts(ATTR_SPPT, "min_value")
+            .unwrap_or(PowerMilliwatts(ASUS_DEFAULT_SPPT_MIN_MW));
         let sppt_max = self
             .read_watts(ATTR_SPPT, "max_value")
             .unwrap_or(PowerMilliwatts(ASUS_DEFAULT_SPPT_MAX_MW));
+        let fppt_min = self
+            .read_watts(ATTR_FPPT, "min_value")
+            .unwrap_or(PowerMilliwatts(ASUS_DEFAULT_FPPT_MIN_MW));
         let fppt_max = self
             .read_watts(ATTR_FPPT, "max_value")
             .unwrap_or(PowerMilliwatts(ASUS_DEFAULT_FPPT_MAX_MW));
@@ -77,7 +92,9 @@ impl<S: SysfsIo> PowerEnvelope for AsusPowerBackend<S> {
         Ok(PowerEnvelopeLimits {
             spl_min,
             spl_max,
+            sppt_min,
             sppt_max,
+            fppt_min,
             fppt_max,
         })
     }
@@ -171,6 +188,10 @@ mod tests {
         // ASUS_DEFAULT_FPPT_MAX_MW (53000), so this `55_000` assertion is
         // what proves the canonical attribute is being read.
         assert_eq!(limits.fppt_max, PowerMilliwatts(55000));
+        // No `min_value` seeded for SPPT/FPPT above — falls back to the
+        // documented ASUS defaults (13W/19W), not to 0 or to spl_min.
+        assert_eq!(limits.sppt_min, PowerMilliwatts(13000));
+        assert_eq!(limits.fppt_min, PowerMilliwatts(19000));
 
         // 3. Act & Assert (Write): write 25000mW and check that disk stored "25".
         let new_target = PowerEnvelopeTarget {
@@ -197,5 +218,49 @@ mod tests {
 
         assert_eq!(spl_written, "20", "20000mW must translate to string '20'");
         assert_eq!(sppt_written, "25", "25000mW must translate to string '25'");
+    }
+
+    #[test]
+    fn get_limits_reads_sppt_fppt_min_value_when_present() {
+        // Regression found on-device (2026-07-12) on the ROG Xbox Ally X
+        // (RC73XA): `ppt_pl2_sppt`/`ppt_pl3_fppt` report a `min_value`
+        // *above* `ppt_pl1_spl`'s — a derived envelope that only floors at
+        // SPL, not at these, can undershoot the real hardware minimum and
+        // get rejected with `EINVAL` on write. `get_limits` must surface
+        // the real values instead of silently assuming they track `spl_min`.
+        let mock = MockSysfs::new();
+        mock.create_file(
+            "sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/min_value",
+            "7",
+        );
+        mock.create_file(
+            "sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl1_spl/max_value",
+            "35",
+        );
+        mock.create_file(
+            "sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl2_sppt/min_value",
+            "13",
+        );
+        mock.create_file(
+            "sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl2_sppt/max_value",
+            "45",
+        );
+        mock.create_file(
+            "sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl3_fppt/min_value",
+            "19",
+        );
+        mock.create_file(
+            "sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl3_fppt/max_value",
+            "55",
+        );
+
+        let backend = AsusPowerBackend::new(mock);
+        let limits = backend.get_limits().expect("must read limits");
+
+        assert_eq!(limits.spl_min, PowerMilliwatts(7_000));
+        assert_eq!(limits.sppt_min, PowerMilliwatts(13_000));
+        assert_eq!(limits.sppt_max, PowerMilliwatts(45_000));
+        assert_eq!(limits.fppt_min, PowerMilliwatts(19_000));
+        assert_eq!(limits.fppt_max, PowerMilliwatts(55_000));
     }
 }

@@ -37,6 +37,21 @@ not part of the published repository.
   briefly wrong). The cold-boot path now discards an out-of-range read the
   same way it already handles a missing capability or a failed read —
   falling back to `default_charge_threshold`.
+- **A low TDP could fail to apply at all.** Also found on-device: the ASUS
+  ROG Xbox Ally X's SPPT/FPPT firmware attributes (`ppt_pl2_sppt`,
+  `ppt_pl3_fppt`) report their own `min_value` (13W/19W) — **above**
+  `ppt_pl1_spl`'s `min_value` (7W). `derive_boosted_envelope` only floored
+  SPPT at SPL and FPPT at SPPT, so a low SPL (e.g. the Eco preset) could
+  scale down to an SPPT/FPPT that still satisfied `SPPT >= SPL` but
+  undershot the hardware's real floor — rejected by the firmware with
+  `EINVAL` (`I/O error ... Invalid argument (os error 22)`), rolled back,
+  logged as an `ERROR`. `PowerEnvelopeLimits` gains `sppt_min`/`fppt_min`
+  (read from the same `min_value` attributes, with documented ASUS-family
+  fallbacks matching the existing `*_max` fallback convention);
+  `derive_boosted_envelope` now floors at these too, and the manual
+  `SetEnvelope` path — which previously ran **no** hardware-range check at
+  all, only the smart-mode `SetSpl` did — now validates SPL/SPPT/FPPT
+  against the full device range via `validate_power_envelope`.
 
 ## [2.12.0] — 2026-07-11
 

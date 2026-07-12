@@ -15,8 +15,20 @@ pub struct PowerEnvelopeLimits {
     pub spl_min: PowerMilliwatts,
     /// Maximum SPL allowed by the platform.
     pub spl_max: PowerMilliwatts,
+    /// Minimum SPPT (short-window boost) allowed by the platform. Can be
+    /// **higher** than `spl_min` — confirmed on the ROG Xbox Ally X
+    /// (RC73XA), whose `ppt_pl2_sppt` firmware attribute reports
+    /// `min_value = 13W` against `ppt_pl1_spl`'s `min_value = 7W`. A
+    /// derived SPPT that only floors at SPL (not at this) can undershoot
+    /// the firmware's real minimum and get rejected with `EINVAL` on
+    /// write.
+    pub sppt_min: PowerMilliwatts,
     /// Maximum SPPT (short-window boost) allowed by the platform.
     pub sppt_max: PowerMilliwatts,
+    /// Minimum FPPT (fast/burst boost) allowed by the platform. Same
+    /// caveat as `sppt_min` — confirmed higher than `spl_min` on the
+    /// RC73XA (`ppt_pl3_fppt`'s `min_value = 19W`).
+    pub fppt_min: PowerMilliwatts,
     /// Maximum FPPT (fast/burst boost) allowed by the platform.
     pub fppt_max: PowerMilliwatts,
 }
