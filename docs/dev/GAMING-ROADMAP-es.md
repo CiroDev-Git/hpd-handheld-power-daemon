@@ -193,6 +193,12 @@ nuevos que esa fase lee.
 
 ## 1. Fase 1 — Telemetría ampliada
 
+> ✅ **Shipped en v2.8.0** (`get_telemetry() -> a{sv}` con las claves
+> descritas en esta fase) **y en v2.11.0** (`cpu_busy_pct`, la pieza que
+> le faltaba a la heurística de diagnóstico de la fase 5 — ver
+> `CHANGELOG.md`). El resto de esta sección queda como el diseño
+> original, ya materializado.
+
 ### En cristiano 🗣️
 
 **Qué hace.** Hoy hpd dice temperatura, RPM y vatios del chip. Esta
@@ -425,6 +431,11 @@ Robustez:
 juego. Es además la fase de daemon más barata: la maquinaria ya existe
 y solo se re-expone el setter retirado en 2.5.0.)*
 
+> ✅ **Shipped en v2.9.0** (`set_fan_curve(cpu, gpu)` reintroducido +
+> `get_fan_curve_constraints()` nuevo — ver `CHANGELOG.md`). El diseño
+> de abajo se materializó tal cual: 8 puntos por ventilador, validación
+> doble frontera+backend, zona segura por `safety_floor`.
+
 ### En cristiano 🗣️
 
 **Qué hace.** Hoy eliges entre 3 curvas prediseñadas. Esta fase te deja
@@ -514,6 +525,11 @@ Claves de `get_fan_curve_constraints`:
 ---
 
 ## 4. Fase 4 — Shim net.hadess.PowerProfiles
+
+> ✅ **Shipped en v2.10.0** (shim completo en `/net/hadess/PowerProfiles`
+> + fix de detección de conflictos para no confundir el shim con un PPD
+> rival — ver `CHANGELOG.md`). Los 4 actos de abajo describen el diseño
+> ya implementado.
 
 *(Prioridad subida por feedback: "todo lo que tenga que ver con
 bajarnos el rendimiento o solaparse con lo que hacemos" es prioritario.
@@ -833,6 +849,21 @@ Dudas legítimas del feedback: ¿qué gana vs simplemente ajustar TDP?,
   qué hace — nunca en la pantalla principal.
 
 ### 7b. GPU clamps (reloj mín/máx)
+
+> ✅ **Shipped en v2.12.0** (control de rango de reloj GPU —
+> `GpuClockRangeControl`, `set_gpu_clock_range`/`enable_gpu_auto_follow`/
+> `reset_gpu_clocks`/`get_gpu_clock_constraints`/`get_gpu_clock_range`,
+> con validación de rango y acoplamiento automático a los presets de TDP
+> vía `gpu_follows_tdp`, tal como pedían los requisitos de la decisión
+> de abajo) **y v2.13.0** (`hpdctl gpu` — la superficie de CLI que
+> faltaba, y el fixture de simulador macOS para `gpu limits`/`get`/
+> `reset` — ver `CHANGELOG.md` en ambos casos). **Lo que sigue abierto**
+> de este ítem de backlog: la segunda mitad del experimento de admisión
+> original — demostrar mejora *medible* de varianza de frametimes en un
+> juego con stuttering conocido — sigue bloqueada por no existir todavía
+> una fuente de FPS/frametimes (ver §11.1); no bloquea lo ya
+> implementado, solo la evidencia cuantitativa de que el min-clock
+> "ayuda a los tirones" en la práctica.
 
 > **Decisión 2026-07-11**: aprobado — se revisa e implementa junto con
 > la capability de GPU (AUDITORIA §6.2 / roadmap item 18), **sin**

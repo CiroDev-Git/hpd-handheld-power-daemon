@@ -11,17 +11,22 @@
 
 ## Purpose
 
-Implements all four L2 capability traits against the upstream Linux
-`asus-armoury` firmware-attributes driver and the standard ACPI
-platform-profile interface. The aggregate [`AsusBackend`] is a thin
-composition of four single-responsibility sub-backends:
+Implements all eight L2 capability traits against the upstream Linux
+`asus-armoury` firmware-attributes driver, the standard ACPI
+platform-profile interface, and amdgpu's hwmon/DRM sysfs surfaces. The
+aggregate [`AsusBackend`] is a thin composition of eight
+single-responsibility sub-backends:
 
-| Sub-backend           | Trait              | Sysfs surface                                                |
-|-----------------------|--------------------|--------------------------------------------------------------|
-| `AsusPowerBackend`    | `PowerEnvelope`    | `/sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl{1,2,3}_*` |
-| `AsusChargeBackend`   | `ChargeControl`    | `/sys/class/power_supply/BAT0/charge_control_end_threshold`  |
-| `AsusProfileBackend`  | `PlatformProfile`  | `/sys/firmware/acpi/platform_profile{,_choices}`             |
-| `AsusFanBackend`      | `FanControl`       | `/sys/class/hwmon/hwmonN/fan{1,2}_input` (probe order varies)|
+| Sub-backend              | Trait                  | Sysfs surface                                                |
+|---------------------------|------------------------|--------------------------------------------------------------|
+| `AsusPowerBackend`        | `PowerEnvelope`        | `/sys/class/firmware-attributes/asus-armoury/attributes/ppt_pl{1,2,3}_*` |
+| `AsusChargeBackend`       | `ChargeControl`        | `/sys/class/power_supply/BAT0/charge_control_end_threshold`  |
+| `AsusProfileBackend`      | `PlatformProfile`      | `/sys/firmware/acpi/platform_profile{,_choices}`              |
+| `AsusFanBackend`          | `FanControl`           | `/sys/class/hwmon/hwmonN/fan{1,2}_input` (probe order varies) |
+| `AsusFanCurveBackend`     | `FanCurveControl`      | `asus_custom_fan_curve` hwmon node: `pwm{1,2}_auto_point{1..8}_{temp,pwm}` + `pwm{1,2}_enable` (`pwm1` = CPU/SoC fan, `pwm2` = GPU fan) |
+| `AsusThermalBackend`      | `ThermalSensors`       | `k10temp` hwmon `temp1_input` (CPU/SoC Tctl), `amdgpu` hwmon `temp1_input` (GPU edge) + `power1_input` (SoC power) |
+| `AsusTelemetryBackend`    | `SystemTelemetry`      | `power_supply` node with `type == "Battery"`; `/sys/devices/system/cpu/cpufreq/policy*` (CPU freq); `amdgpu` hwmon's sibling DRM `device/` dir (`gpu_busy_percent`, `mem_info_vram_{used,total}`, `freq1_input`/`pp_dpm_sclk`); `/proc/stat` (CPU busy %) |
+| `AsusGpuClockBackend`     | `GpuClockRangeControl` | `amdgpu` hwmon `device/power_dpm_force_performance_level` + `device/pp_od_clk_voltage` (OverDrive `OD_RANGE`/`OD_SCLK`) |
 
 Detection lives in `detect.rs`: `matches_asus_handheld(&DmiInfo)`
 returns `Some(AsusModel)` only when both the DMI vendor (`ASUSTeK

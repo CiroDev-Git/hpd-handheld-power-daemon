@@ -206,9 +206,12 @@ then lives in `state.toml` and is flipped via `set_ac_max_performance`
   daemon's always-on default). Both unplug paths reduce on an `is_ac_connected
   = false` view so the lock doesn't gate their own internal `SetPreset`.
 - **The lock.** While `is_ac_connected && ac_max_performance`, the reducer
-  treats the seven user power/cooling writes (`SetSpl`, `SetPreset`,
-  `SetEnvelope`, `SetProfile`, `SetCoolingLevel`, `EnableFanAuto`,
-  `ResetFanCurve`) as **no-ops** (`is_locked_write`). The D-Bus setters also
+  treats every user power/cooling write (`SetSpl`, `SetPreset`,
+  `SetEnvelope`, `SetProfile`, `SetCoolingLevel`, `SetCustomFanCurve`,
+  `EnableFanAuto`, `ResetFanCurve`, `SetGpuClockRange`,
+  `EnableGpuAutoFollow`, `ResetGpuClocks`, `RestoreDefaults` — the full
+  `is_locked_write` list, keep this in sync when a new lever transition
+  is added) as **no-ops**. The D-Bus setters also
   `reject_if_locked()` up-front. `ChargeThresholdChanged` and
   `SetAcMaxPerformance` are **never** gated — the battery limit stays editable,
   and the toggle is how you *release* the lock. `Sync*` rollbacks,

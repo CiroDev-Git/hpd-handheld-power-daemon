@@ -47,6 +47,14 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
 | `GetDiagnostics` | `() → (b as)` | `(polkit_ok, missing_action_ids)`. `polkit_ok == false` ⇒ the polkit policy is not installed and **every** gated setter fails with `AuthFailed`. Live check; safe to poll. | — (read) |
 | `SetProfile` | `(s profile)` | **The power-profile lever** (ACPI platform profile / EPP): `power-saver`/`balanced`/`performance`. Decoupled from cooling; defaults to `performance` so the SPL is the real limit. Lower it only for an efficiency bias. | `set-profile` |
 | `SetAcMaxPerformance` | `(b enabled)` | Toggle the **"lock to max on AC"** preference (daemon ≥ 2.7.0). On = plugging in pins Performance/Max/Aggressive + locks power/cooling; off = AC fully manual. Persisted; applied immediately. **Not** rejected while locked (this releases the lock). | `set-profile` |
+| `SetGpuClockRange` | `(u min_mhz, u max_mhz)` | **GPU clock range editor backend** (daemon ≥ 2.12.0). Programs an explicit `(min_mhz, max_mhz)` and latches manual GPU-clock mode — the GPU counterpart of `SetFanCurve`. Validated against `GetGpuClockConstraints` — a violation returns `InvalidArgs`. Latches manual mode and the `GpuClockRange` property then reads `custom`. | `set-profile` |
+| `EnableGpuAutoFollow` | `()` | Re-enable GPU-clock auto-follow: the daemon resumes inferring a clock ceiling from the active TDP envelope, applying it immediately rather than waiting for the next TDP change (daemon ≥ 2.12.0, mirrors `SetFanAuto`). **This is the opt-in the whole feature is gated behind** — the daemon never touches the GPU clock until this or `SetGpuClockRange` is called at least once (opt-in *forever*, not just at first boot — unlike auto-cooling, whose steady state is never "off", GPU-clock management genuinely defaults to permanently untouched). | `set-profile` |
+| `ResetGpuClocks` | `()` | Hand the GPU clock back to firmware automatic control (daemon ≥ 2.12.0, mirrors `ResetFanCurve`). | `set-profile` |
+| `GetGpuClockConstraints` | `() → a{sv}` | This device's GPU clock range bounds (daemon ≥ 2.12.0): `range_min_mhz`/`range_max_mhz` (`u`), read **live from the kernel's `OD_RANGE`** on every call — unlike the fan-curve safety floor (a per-model calibration), this is Class-A generic-kernel-interface data needing no recalibration on a new device. Empty map if the device has no programmable GPU clock range, or the live read failed. | — (read) |
+| `GetGpuClockRange` | `() → (u, u)` | The GPU clock range **actually committed to hardware** (daemon ≥ 2.12.0), read back from the backend exactly like `GetFanCurve` — not the constraints. `(0, 0)` is the daemon's own sentinel for "not applicable" (no programmable range, firmware auto, or an unreachable read) — 0 MHz is never a real value on any exposed hardware, mirroring `GetThermalStatus`'s `i32::MIN` convention at this narrower unsigned-only boundary. | — (read) |
+| `GetPowerConflicts` | `() → as` | Friendly names of competing power daemons currently live on the bus (daemon ≥ 2.2.0), e.g. `["steamos-manager"]` — daemons that write the same TDP/platform-profile/charge surfaces hpd owns, so its settings may not stick. Empty list = hpd is the sole power owner. **Non-blocking**: never folds into `last_error` or gates a control; drives a dismissible warning banner only. | — (read) |
+| `GetAdvisoryDaemons` | `() → as` | Friendly names of power-adjacent *advisory* daemons currently live on the bus (daemon ≥ 2.3.0) — today Feral `gamemoded`, activated by Steam/Lutris around a running game. Unlike `GetPowerConflicts`, these are **not** rivals to neutralize — reported only, never masked. Empty list = none live. Errors against a daemon predating this method; callers should degrade to "unknown" rather than treating an error as "none". | — (read) |
+| `GetPpdShimActive` | `() → b` | Whether hpd's `net.hadess.PowerProfiles` compatibility shim actually claimed its bus name at startup (daemon ≥ 2.10.0). `false` means a real `power-profiles-daemon`/`tuned-ppd` was live and unmasked, so PPD-only clients (KDE's power applet, `powerprofilesctl`) still see no owner. Purely informational — the plugin has no action to take on this beyond display. | — (read) |
 
 > **The AC-lock contract (daemon ≥ 2.7.0).** While `AcLocked` is `true`, the
 > daemon **rejects** `SetSpl` / `SetPreset` / `SetProfile` / `SetCoolingLevel`
@@ -68,6 +76,8 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
 | `AcConnected` | `b` | Charger plugged in (daemon ≥ 2.4.0). **Emits `PropertiesChanged`** — subscribe instead of polling `IsAcConnected()`. Falls back to the method on older daemons. |
 | `AcLocked` | `b` | Power/cooling controls are **locked** because the device is on AC with the lock preference on (daemon ≥ 2.7.0). Disable the TDP/preset/power-mode/cooling controls while `true`; battery charge stays editable. |
 | `AcMaxPerformance` | `b` | The toggleable **"lock to max on AC" preference** itself (daemon ≥ 2.7.0), vs `AcLocked` (the live state). Drives the Settings toggle. |
+| `GpuClockRange` | `s` | Active GPU-clock selection (daemon ≥ 2.12.0): `silent`/`balanced`/`aggressive`/`custom`/`auto`. `auto` = firmware in charge — the **permanent default** until the user opts in via `EnableGpuAutoFollow`/`SetGpuClockRange`. Mirrors `FanCurve`. |
+| `GpuFollowsTdp` | `b` | Whether the daemon is currently inferring the GPU clock ceiling from the TDP envelope (daemon ≥ 2.12.0). `false` is the permanent default until opt-in (same trigger as `GpuClockRange` above). Mirrors `AutoCooling`. |
 
 ## Feature → UI mapping, by priority
 
@@ -156,6 +166,29 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
     tracks your **TDP** now, and cooling just trades fan noise for a few
     degrees). Source the wording from [`../MANUAL.md`](../MANUAL.md) →
     "What's normal vs. what to worry about".
+16. **GPU clock range control** (daemon ≥ 2.12.0) — mirrors the custom
+    fan-curve editor's shape one-for-one: drag/set a `(min_mhz, max_mhz)`
+    ceiling, an **Auto** toggle (`EnableGpuAutoFollow` / `GpuFollowsTdp`),
+    and a Reset (`ResetGpuClocks`). Build the control's bounds from
+    **`GetGpuClockConstraints()`** — never hardcode a MHz range. **Hidden
+    entirely** when `GetGpuClockConstraints()` returns an empty map (no
+    programmable range on this device, or an older daemon) — this is a
+    stricter gate than the fan-curve editor's, because unlike cooling,
+    GPU-clock management is genuinely **opt-in forever**: do not add a
+    default-on toggle or auto-enable this from any other control (not
+    even "Restore defaults" turns it on — it only resets a range the user
+    already opted into).
+17. **Competing-power-daemon banner** (`GetPowerConflicts`, daemon ≥
+    2.2.0) — a dismissible, non-blocking warning when another daemon
+    (`power-profiles-daemon`, `steamos-manager`, …) is live on the bus
+    and writing the same TDP/profile/charge surfaces hpd does. Poll on
+    panel open (not on a timer); re-poll after the user runs the fix.
+    Never gates a control and never folds into the generic error state.
+18. **Advisory-daemon / PPD-shim status** (`GetAdvisoryDaemons`,
+    `GetPpdShimActive`, daemons ≥ 2.3.0 / ≥ 2.10.0) — informational-only
+    reads (e.g. a "compat PPD: active" line): a live `gamemoded` around a
+    running game is expected and never reported as a problem, and the PPD
+    shim's active/inactive state has no plugin action attached to it.
 
 ## Update strategy
 
@@ -167,6 +200,15 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
   change). Static between changes.
 - **`GetFanCurveConstraints`:** on-demand, once per session (opening the
   curve editor) — it's a static per-device fact, not live state.
+- **`GetGpuClockConstraints`:** on-demand, once per connection (opening
+  the GPU clock control) — like `GetFanCurveConstraints`, treat it as a
+  static per-device fact even though the daemon itself re-reads the
+  kernel live on every call.
+- **`GetGpuClockRange`:** on-demand (opening the GPU clock control /
+  after a GPU-clock change), same cadence as `GetFanCurve`.
+- **`GetPowerConflicts` / `GetAdvisoryDaemons` / `GetPpdShimActive`:**
+  poll-only (no signal); primed on connect / panel open, and re-polled
+  after the user runs the conflict-resolution fix. Not on a timer.
 
 ## Conditional capability surfacing (graceful degradation)
 
@@ -179,6 +221,8 @@ The plugin should not assume every reading exists:
 | `GetFanCurve` returns empty vectors | hide the curve graph (firmware-only / no programmable curve). |
 | `GetThermalStatus` `gpu_*` == `i32::MIN` | single-fan / no discrete GPU sensor → show CPU only. |
 | `GetFanCurveConstraints` returns an empty map | hide the curve editor (no programmable curve on this device). |
+| `GetGpuClockConstraints` returns an empty map | hide the GPU clock range control entirely (no programmable range on this device, or an older daemon). |
+| `GetGpuClockRange` returns `(0, 0)` | render "not applicable" — firmware auto, no programmable range, or the read failed; never show it as `0 MHz`. |
 | `ChargeEndThreshold` unreadable | hide the battery-cap control. |
 
 ## ⚠️ Limitations (so you don't design around them)
@@ -192,6 +236,31 @@ The plugin should not assume every reading exists:
 - **`GetTelemetry` keys can vary by device and daemon version** — always
   check for key presence, never assume a fixed set (this is *why* it's
   an `a{sv}` map and not a tuple).
+- **A `PropertiesChanged` echo can arrive before the matching `Get*` call
+  reflects the new value.** The executor publishes the new `ProfileState`
+  (and so the property echo) before it finishes dispatching the effect
+  that actually writes the hardware — this is a property of the daemon's
+  executor loop generally, not specific to one feature. It's already
+  documented for the fan curve (`FanCurve == "custom"` can echo before
+  `GetFanCurve` reflects the new points) and applies identically to
+  `GpuClockRange == "custom"` vs. `GetGpuClockRange`. Harmless either way:
+  a beat of staleness that self-corrects, and not an issue at all for an
+  editor that already knows the curve/range it just sent.
+- **GPU clock management is opt-in *forever*, not just at first boot**
+  (daemon ≥ 2.12.0). Unlike auto-cooling — whose real steady state is
+  never "off" — `GpuClockRange`/`GpuFollowsTdp` stay `auto`/`false`,
+  meaning the daemon never touches the GPU clock at all, until the user
+  calls `EnableGpuAutoFollow`/`SetGpuClockRange` at least once. No other
+  daemon action (an AC plug, `RestoreDefaults`, a fresh install) ever
+  opts a user into this.
+- **`GetGpuClockConstraints`/`GetGpuClockRange`/`ResetGpuClocks` work
+  against the `HPD_SIMULATOR` dev build (daemon ≥ 2.13.0), but
+  `EnableGpuAutoFollow`/`SetGpuClockRange` do not.** `pp_od_clk_voltage`
+  is a *command* file on real hardware — the driver updates its own
+  `OD_SCLK`/`OD_RANGE` report only after a `s`/`c` write, a
+  commit-and-read-back the simulator's flat `MockSysfs` store can't model
+  yet. If a change against the simulator build silently fails only on
+  those two calls, this is why — it is not a regression to chase.
 
 ## Suggested minimal panel
 

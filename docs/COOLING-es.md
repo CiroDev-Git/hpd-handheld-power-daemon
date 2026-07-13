@@ -159,17 +159,18 @@ Regla mental:
 
 ### D-Bus (interfaz `dev.cirodev.hpd.PowerDaemon1`)
 
-| Método / propiedad | Qué hace ahora |
-|---|---|
-| `SetSpl(w)` / `SetEnvelope(...)` | **La perilla de potencia.** El SPL es el límite real. |
-| `SetCoolingLevel(level: s)` | **Solo ventilador**: `silent`/`balanced`/`aggressive`. Lo que llama `cool set`. |
-| `SetFanAuto()` | La curva sigue al TDP (`cool auto`). |
-| `ResetFanCurve()` | Ventilador a firmware (`cool reset`). |
-| `SetProfile(profile: s)` | Perilla de potencia manual: `performance`/`balanced`/`power-saver`. |
-| `GetThermalStatus() → (i,i,i,i)` | `(cpu_temp, gpu_temp, cpu_rpm, gpu_rpm)`; `i32::MIN` si falta un sensor. |
-| `fan_curve` (prop) | Curva activa: `silent`/`balanced`/`aggressive`/`custom`/`auto`. |
-| `auto_cooling` (prop) | `true` = auto (sigue TDP), `false` = manual. |
-| `current_spl`, `active_profile`, `charge_end_threshold`, `is_ac_connected` | Estado. |
+La superficie D-Bus completa (TDP, cooling, curvas custom, perfil de
+energía, reloj de GPU, telemetría extendida, propiedades de AC-lock,
+etc.) creció bastante desde que se escribió esta guía, y mantener una
+segunda tabla aquí sincronizada a mano con el código es un costo que no
+vale la pena — mejor un solo lugar de verdad. Para la referencia
+completa y actualizada, incluyendo tipos, versión mínima de daemon
+requerida y acción de polkit de cada método/propiedad, ver:
+
+**[`docs/decky-plugin/V2-INTEGRATION.md`](decky-plugin/V2-INTEGRATION.md)**
+
+Ese documento es el contrato que consume el plugin Decky y se actualiza
+con cada release que toca la superficie D-Bus.
 
 ### Qué debería hacer el plugin (para que el cambio se entienda)
 
