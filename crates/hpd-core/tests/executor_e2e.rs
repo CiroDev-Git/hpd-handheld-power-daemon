@@ -180,6 +180,79 @@ async fn test_executor_applies_envelope_and_persists() {
 }
 
 #[tokio::test]
+async fn test_executor_restore_defaults_dispatches_composed_effects() {
+    // A dirty starting state, off every RestoreDefaults target. Verifies
+    // the real executor dispatch loop (not just the pure reducer) drives
+    // the composed transition through to the backend for every write
+    // MockBackend can observe (power, profile, charge — it has no
+    // fan-curve/GPU-clock capability, so those two are only verifiable
+    // via the resulting state, exactly as the reducer-level tests already
+    // cover in detail).
+    let mut dirty = initial_state();
+    dirty.active_profile = ProfileName::PowerSaver;
+    dirty.charge_end_threshold = 60;
+    dirty.active_gpu_clock = None; // MockBackend has no GPU-clock capability
+
+    let backend = MockBackend::new(dirty.power_target.clone(), limits());
+    let backend_handle = backend.clone();
+
+    let path = fresh_temp_path("restore_defaults");
+    let persister = StatePersister::new(&path);
+
+    let (tx, rx) = mpsc::channel(32);
+    let (executor, mut state_rx) = Executor::new(
+        backend,
+        dirty,
+        limits(),
+        config(),
+        rx,
+        tx.clone(),
+        persister,
+    );
+    let exec_handle = tokio::spawn(executor.run());
+
+    tx.send(Transition::RestoreDefaults).await.unwrap();
+    let final_state = wait_state(&mut state_rx, |s| {
+        s.active_profile == ProfileName::Performance
+    })
+    .await;
+
+    assert_eq!(final_state.power_target.spl, PowerMilliwatts(21_000));
+    assert_eq!(final_state.active_profile, ProfileName::Performance);
+    assert_eq!(final_state.charge_end_threshold, 100);
+    assert_eq!(final_state.active_fan_curve, None);
+    assert!(!final_state.fan_follows_tdp);
+
+    wait_until(
+        || {
+            let calls = backend_handle.calls();
+            calls.iter().any(
+                |c| matches!(c, RecordedCall::SetTarget(t) if t.spl == PowerMilliwatts(21_000)),
+            ) && calls
+                .iter()
+                .any(|c| matches!(c, RecordedCall::SetProfile(ProfileName::Performance)))
+                && calls
+                    .iter()
+                    .any(|c| matches!(c, RecordedCall::SetChargeThreshold(100)))
+        },
+        1_000,
+        "SetTarget(21000)/SetProfile(Performance)/SetChargeThreshold(100) on backend",
+    )
+    .await;
+    wait_until(|| path.exists(), 1_000, "persisted state file").await;
+
+    let persisted = StatePersister::new(&path)
+        .load()
+        .await
+        .expect("PersistState effect should have written the TOML state file");
+    assert_eq!(persisted.active_profile, ProfileName::Performance);
+    assert_eq!(persisted.charge_end_threshold, 100);
+
+    exec_handle.abort();
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
 async fn test_executor_rolls_back_on_hardware_failure() {
     // When set_target fails, the executor must read the real hardware value
     // (via get_target) and reinject SyncPowerTarget. The visible end state

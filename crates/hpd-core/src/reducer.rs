@@ -387,6 +387,75 @@ pub fn reduce(
             }
         }
 
+        Transition::RestoreDefaults => {
+            // Bundles five existing per-lever transitions into one atomic
+            // action, threading state through recursive reduce() calls
+            // exactly like SetPreset -> SetSpl above, just chained.
+            //
+            // ORDER MATTERS: SetProfile must run before ResetFanCurve.
+            // SetProfile's reassert_curve_after_profile() re-applies
+            // whatever curve is active after writing platform_profile (the
+            // EC can drop a custom curve on a profile write) — running it
+            // after ResetFanCurve would silently re-arm a curve
+            // ResetFanCurve just cleared.
+            let mut cur = state.clone();
+
+            let step = reduce(
+                &cur,
+                Transition::SetPreset(TdpPreset::Balanced),
+                device_limits,
+                config,
+            )?;
+            cur = step.new_state;
+            effects.extend(step.effects);
+
+            let step = reduce(
+                &cur,
+                Transition::SetProfile(ProfileName::Performance),
+                device_limits,
+                config,
+            )?;
+            cur = step.new_state;
+            effects.extend(step.effects);
+
+            let step = reduce(
+                &cur,
+                Transition::ChargeThresholdChanged(100),
+                device_limits,
+                config,
+            )?;
+            cur = step.new_state;
+            effects.extend(step.effects);
+
+            let step = reduce(&cur, Transition::ResetFanCurve, device_limits, config)?;
+            cur = step.new_state;
+            effects.extend(step.effects);
+
+            // GPU clock stays opt-in-forever: only reset it if the user had
+            // already opted in — never opt a fresh user in here.
+            if cur.active_gpu_clock.is_some() {
+                let step = reduce(&cur, Transition::ResetGpuClocks, device_limits, config)?;
+                cur = step.new_state;
+                effects.extend(step.effects);
+            }
+
+            new_state = cur;
+
+            // Each composed sub-reduce() may have pushed its own
+            // Effect::PersistState (redundant-but-correct — its handler
+            // re-reads the already-merged final state; state_tx.send()
+            // happens once, before any effect dispatch, using this whole
+            // arm's single combined output). Collapse to at most one, at
+            // the end, and only if something actually changed — an
+            // already-at-defaults state must still produce zero effects,
+            // matching every individual reset's own no-op guard.
+            let anything_changed = effects.iter().any(|e| matches!(e, Effect::PersistState));
+            effects.retain(|e| !matches!(e, Effect::PersistState));
+            if anything_changed {
+                effects.push(Effect::PersistState);
+            }
+        }
+
         Transition::EnableFanAuto => {
             // Infer and apply the curve directly (mirrors SetCoolingLevel)
             // instead of recursing into SetEnvelope(power_target): that
@@ -558,6 +627,7 @@ fn is_locked_write(transition: &Transition) -> bool {
             | Transition::SetGpuClockRange { .. }
             | Transition::EnableGpuAutoFollow
             | Transition::ResetGpuClocks
+            | Transition::RestoreDefaults
     )
 }
 
@@ -1852,6 +1922,7 @@ mod tests {
             },
             Transition::EnableGpuAutoFollow,
             Transition::ResetGpuClocks,
+            Transition::RestoreDefaults,
         ];
         for t in writes {
             let label = format!("{t:?}");
@@ -2258,6 +2329,144 @@ mod tests {
         .unwrap();
         assert_eq!(out.new_state, state);
         assert!(out.effects.is_empty());
+    }
+
+    #[test]
+    fn test_restore_defaults_applies_all_levers_from_dirty_state() {
+        use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
+        use hpd_capabilities::gpu_clock::{GpuClockRange, GpuClockSelection};
+
+        let mut state = setup_state(); // spl=15000mw (off the 21000mw balanced midpoint), charge=80
+        state.active_profile = ProfileName::PowerSaver;
+        state.active_fan_curve = Some(FanCurveSelection::Preset(FanCurvePreset::Silent));
+        state.fan_follows_tdp = false;
+        state.active_gpu_clock = Some(GpuClockSelection::Custom(GpuClockRange {
+            min_mhz: 600,
+            max_mhz: 1_800,
+        }));
+        state.gpu_follows_tdp = false;
+
+        let out = reduce(
+            &state,
+            Transition::RestoreDefaults,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+
+        // Balanced = midpoint of setup_limits()'s 7000..35000mw SPL range.
+        assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(21_000));
+        assert_eq!(out.new_state.active_profile, ProfileName::Performance);
+        assert_eq!(out.new_state.charge_end_threshold, 100);
+        assert_eq!(out.new_state.active_fan_curve, None);
+        assert!(!out.new_state.fan_follows_tdp);
+        assert_eq!(out.new_state.active_gpu_clock, None);
+        assert!(!out.new_state.gpu_follows_tdp);
+
+        assert!(out
+            .effects
+            .contains(&Effect::ApplyPlatformProfile(ProfileName::Performance)));
+        assert!(out.effects.contains(&Effect::ApplyChargeThreshold(100)));
+        assert!(out.effects.contains(&Effect::ResetFanCurve));
+        assert!(out.effects.contains(&Effect::ResetGpuClocks));
+        assert_eq!(
+            out.effects
+                .iter()
+                .filter(|e| matches!(e, Effect::PersistState))
+                .count(),
+            1,
+            "must collapse redundant PersistState effects to exactly one, got {:?}",
+            out.effects
+        );
+        assert_eq!(
+            out.effects.last(),
+            Some(&Effect::PersistState),
+            "the single PersistState must be last, got {:?}",
+            out.effects
+        );
+    }
+
+    #[test]
+    fn test_restore_defaults_is_a_full_no_op_when_already_at_defaults() {
+        // Seed a state already at the 21W balanced midpoint via the same
+        // SetSpl path SetPreset(Balanced) itself uses, so the envelope's
+        // derived SPPT/FPPT match exactly (rather than hand-computing
+        // them and risking a mismatch with RuntimeConfig::DEFAULT's boost
+        // factors).
+        let seeded = reduce(
+            &setup_state(),
+            Transition::SetSpl(21),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        let mut state = seeded.new_state;
+        state.active_profile = ProfileName::Performance;
+        state.charge_end_threshold = 100;
+        state.active_fan_curve = None;
+        state.fan_follows_tdp = false;
+        state.active_gpu_clock = None;
+        state.gpu_follows_tdp = false;
+
+        let out = reduce(
+            &state,
+            Transition::RestoreDefaults,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+
+        assert_eq!(out.new_state, state);
+        assert!(
+            out.effects.is_empty(),
+            "an already-at-defaults state must produce zero effects, got {:?}",
+            out.effects
+        );
+    }
+
+    #[test]
+    fn test_restore_defaults_resets_gpu_clock_when_opted_in() {
+        use hpd_capabilities::gpu_clock::{GpuClockRange, GpuClockSelection};
+
+        let mut state = setup_state();
+        state.active_gpu_clock = Some(GpuClockSelection::Custom(GpuClockRange {
+            min_mhz: 600,
+            max_mhz: 1_800,
+        }));
+
+        let out = reduce(
+            &state,
+            Transition::RestoreDefaults,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+
+        assert!(out.effects.contains(&Effect::ResetGpuClocks));
+        assert_eq!(out.new_state.active_gpu_clock, None);
+    }
+
+    #[test]
+    fn test_restore_defaults_does_not_opt_in_gpu_clock() {
+        // active_gpu_clock = None (never touched) — RestoreDefaults must
+        // never auto-opt the user in, mirroring ResetGpuClocks's own
+        // no-op guard.
+        let state = setup_state();
+        assert_eq!(state.active_gpu_clock, None);
+
+        let out = reduce(
+            &state,
+            Transition::RestoreDefaults,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+
+        assert!(!out
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::ResetGpuClocks | Effect::ApplyGpuClockRange(_))));
+        assert_eq!(out.new_state.active_gpu_clock, None);
     }
 
     #[test]

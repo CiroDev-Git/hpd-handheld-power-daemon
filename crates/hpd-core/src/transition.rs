@@ -98,6 +98,17 @@ pub enum Transition {
     EnableFanAuto,
     /// Hand fan control back to the firmware's automatic curve.
     ResetFanCurve,
+    /// Restore a recommended baseline in one shot: TDP -> Balanced preset,
+    /// Power mode -> Performance, Charge cap -> 100%, Cooling -> firmware
+    /// auto, and — only if the device is already opted into a custom GPU
+    /// clock range — GPU clock -> firmware auto too. Composed from the
+    /// existing single-lever transitions in `reduce()`'s own match arm;
+    /// GPU clock is never auto-opted-in by this (mirrors `ResetGpuClocks`'s
+    /// own no-op-when-untouched guard). The single primitive backing
+    /// `hpdctl restore-defaults` and the Decky plugin's "Restore
+    /// recommended defaults" button — see CLAUDE.md "Adding a new D-Bus /
+    /// CLI command".
+    RestoreDefaults,
     /// Hot-reload of runtime-tunable config. Intercepted by the Executor
     /// before `reduce()` is called: the executor swaps its own
     /// `RuntimeConfig` and the next transition uses the new values. The

@@ -11,6 +11,32 @@ not part of the published repository.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`RestoreDefaults()` D-Bus method + `hpdctl restore-defaults` subcommand.**
+  A single daemon transaction to reset the whole power/cooling picture back
+  to a recommended baseline in one shot: TDP → the Balanced preset (the
+  midpoint of this device's own SPL range, never a hardcoded per-model
+  number), Power mode → Performance, battery charge cap → 100%, cooling →
+  firmware auto, and — only if the device is already opted into a custom
+  GPU clock range — GPU clock → firmware auto too (it never opts a fresh
+  user in; GPU clock control stays opt-in forever, per the existing
+  `ResetGpuClocks` design). Composed atomically from the existing
+  single-lever transitions (`SetPreset`, `SetProfile`,
+  `ChargeThresholdChanged`, `ResetFanCurve`, `ResetGpuClocks`) inside one
+  `reduce()` call, so no other bus caller's transition can interleave
+  partway through, and is rejected as a whole while AC-locked (same as
+  every other lever this composes). Reuses the three existing polkit
+  actions (`set-tdp` + `set-charge` + `set-profile`, gated on all three) —
+  no new policy file. This closes a gap the Decky plugin's own
+  architecture rules flagged: the plugin had shipped an equivalent
+  "Restore recommended defaults" button by sequencing five separate
+  D-Bus calls from its own TypeScript, which `hpdctl`-only users had no
+  access to at all — the daemon is now the single source of truth for
+  this action, exactly like every other lever.
+
 ## [2.13.0] — 2026-07-11
 
 ### Added
