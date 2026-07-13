@@ -136,8 +136,9 @@ trait PowerDaemon {
 
     /// Restore recommended defaults in one daemon transaction (daemon ≥
     /// 2.14.0): TDP -> Balanced, Power mode -> Performance, Charge cap ->
-    /// 100%, Cooling -> firmware auto, and GPU clock -> firmware auto
-    /// (only if already opted into a custom range).
+    /// 80% (the long-battery-life default), Cooling -> firmware auto, and
+    /// GPU clock -> firmware auto (only if already opted into a custom
+    /// range).
     async fn restore_defaults(&self) -> zbus::Result<()>;
 
     /// This device's GPU clock range bounds (daemon ≥ 2.12.0): the

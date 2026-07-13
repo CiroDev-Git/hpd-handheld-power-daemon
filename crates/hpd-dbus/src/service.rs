@@ -791,9 +791,10 @@ impl PowerDaemonInterface {
     }
 
     /// Restore recommended defaults in one daemon transaction: TDP ->
-    /// Balanced, Power mode -> Performance, Charge cap -> 100%, Cooling ->
-    /// firmware auto, and GPU clock -> firmware auto (only if already
-    /// opted into a custom range — never auto-opts a user in).
+    /// Balanced, Power mode -> Performance, Charge cap -> 80% (the
+    /// long-battery-life default, not 100%, which disables the cap),
+    /// Cooling -> firmware auto, and GPU clock -> firmware auto (only if
+    /// already opted into a custom range — never auto-opts a user in).
     ///
     /// `polkit` actions: `dev.cirodev.hpd.set-tdp` AND
     /// `dev.cirodev.hpd.set-charge` AND `dev.cirodev.hpd.set-profile` —

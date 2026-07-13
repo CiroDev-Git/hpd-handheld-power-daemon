@@ -99,8 +99,10 @@ pub enum Transition {
     /// Hand fan control back to the firmware's automatic curve.
     ResetFanCurve,
     /// Restore a recommended baseline in one shot: TDP -> Balanced preset,
-    /// Power mode -> Performance, Charge cap -> 100%, Cooling -> firmware
-    /// auto, and — only if the device is already opted into a custom GPU
+    /// Power mode -> Performance, Charge cap -> `DEFAULT_CHARGE_THRESHOLD`
+    /// (80%, the long-battery-life sweet spot — not 100%, which disables
+    /// the cap entirely), Cooling -> firmware auto, and — only if the
+    /// device is already opted into a custom GPU
     /// clock range — GPU clock -> firmware auto too. Composed from the
     /// existing single-lever transitions in `reduce()`'s own match arm;
     /// GPU clock is never auto-opted-in by this (mirrors `ResetGpuClocks`'s

@@ -219,7 +219,7 @@ async fn test_executor_restore_defaults_dispatches_composed_effects() {
 
     assert_eq!(final_state.power_target.spl, PowerMilliwatts(21_000));
     assert_eq!(final_state.active_profile, ProfileName::Performance);
-    assert_eq!(final_state.charge_end_threshold, 100);
+    assert_eq!(final_state.charge_end_threshold, 80);
     assert_eq!(final_state.active_fan_curve, None);
     assert!(!final_state.fan_follows_tdp);
 
@@ -233,10 +233,10 @@ async fn test_executor_restore_defaults_dispatches_composed_effects() {
                 .any(|c| matches!(c, RecordedCall::SetProfile(ProfileName::Performance)))
                 && calls
                     .iter()
-                    .any(|c| matches!(c, RecordedCall::SetChargeThreshold(100)))
+                    .any(|c| matches!(c, RecordedCall::SetChargeThreshold(80)))
         },
         1_000,
-        "SetTarget(21000)/SetProfile(Performance)/SetChargeThreshold(100) on backend",
+        "SetTarget(21000)/SetProfile(Performance)/SetChargeThreshold(80) on backend",
     )
     .await;
     wait_until(|| path.exists(), 1_000, "persisted state file").await;
@@ -246,7 +246,7 @@ async fn test_executor_restore_defaults_dispatches_composed_effects() {
         .await
         .expect("PersistState effect should have written the TOML state file");
     assert_eq!(persisted.active_profile, ProfileName::Performance);
-    assert_eq!(persisted.charge_end_threshold, 100);
+    assert_eq!(persisted.charge_end_threshold, 80);
 
     exec_handle.abort();
     let _ = std::fs::remove_file(&path);
