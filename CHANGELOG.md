@@ -19,7 +19,9 @@ not part of the published repository.
   A single daemon transaction to reset the whole power/cooling picture back
   to a recommended baseline in one shot: TDP → the Balanced preset (the
   midpoint of this device's own SPL range, never a hardcoded per-model
-  number), Power mode → Performance, battery charge cap → 100%, cooling →
+  number), Power mode → Performance, battery charge cap → 80% (the
+  existing `DEFAULT_CHARGE_THRESHOLD` — not 100%, which disables the cap
+  entirely and undercuts the whole point of "recommended"), cooling →
   firmware auto, and — only if the device is already opted into a custom
   GPU clock range — GPU clock → firmware auto too (it never opts a fresh
   user in; GPU clock control stays opt-in forever, per the existing

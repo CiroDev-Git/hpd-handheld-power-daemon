@@ -4,6 +4,7 @@
 
 use tracing::info;
 
+use hpd_capabilities::charge::DEFAULT_CHARGE_THRESHOLD;
 use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
 use hpd_capabilities::gpu_clock::GpuClockSelection;
 use hpd_capabilities::power::PowerEnvelopeLimits;
@@ -420,7 +421,7 @@ pub fn reduce(
 
             let step = reduce(
                 &cur,
-                Transition::ChargeThresholdChanged(100),
+                Transition::ChargeThresholdChanged(DEFAULT_CHARGE_THRESHOLD),
                 device_limits,
                 config,
             )?;
@@ -764,7 +765,6 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
-    use hpd_capabilities::charge::DEFAULT_CHARGE_THRESHOLD;
     use hpd_capabilities::power::{PowerEnvelopeLimits, PowerEnvelopeTarget};
     use hpd_capabilities::profile::{ProfileName, RuntimeConfig};
     use hpd_capabilities::units::PowerMilliwatts;
@@ -2336,8 +2336,12 @@ mod tests {
         use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
         use hpd_capabilities::gpu_clock::{GpuClockRange, GpuClockSelection};
 
-        let mut state = setup_state(); // spl=15000mw (off the 21000mw balanced midpoint), charge=80
+        let mut state = setup_state(); // spl=15000mw, off the 21000mw balanced midpoint
         state.active_profile = ProfileName::PowerSaver;
+        // setup_state()'s own charge default IS DEFAULT_CHARGE_THRESHOLD
+        // (80) — override to something genuinely off-target so this test
+        // still exercises the charge-reset effect.
+        state.charge_end_threshold = 60;
         state.active_fan_curve = Some(FanCurveSelection::Preset(FanCurvePreset::Silent));
         state.fan_follows_tdp = false;
         state.active_gpu_clock = Some(GpuClockSelection::Custom(GpuClockRange {
@@ -2357,7 +2361,7 @@ mod tests {
         // Balanced = midpoint of setup_limits()'s 7000..35000mw SPL range.
         assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(21_000));
         assert_eq!(out.new_state.active_profile, ProfileName::Performance);
-        assert_eq!(out.new_state.charge_end_threshold, 100);
+        assert_eq!(out.new_state.charge_end_threshold, DEFAULT_CHARGE_THRESHOLD);
         assert_eq!(out.new_state.active_fan_curve, None);
         assert!(!out.new_state.fan_follows_tdp);
         assert_eq!(out.new_state.active_gpu_clock, None);
@@ -2366,7 +2370,9 @@ mod tests {
         assert!(out
             .effects
             .contains(&Effect::ApplyPlatformProfile(ProfileName::Performance)));
-        assert!(out.effects.contains(&Effect::ApplyChargeThreshold(100)));
+        assert!(out
+            .effects
+            .contains(&Effect::ApplyChargeThreshold(DEFAULT_CHARGE_THRESHOLD)));
         assert!(out.effects.contains(&Effect::ResetFanCurve));
         assert!(out.effects.contains(&Effect::ResetGpuClocks));
         assert_eq!(
@@ -2402,7 +2408,7 @@ mod tests {
         .unwrap();
         let mut state = seeded.new_state;
         state.active_profile = ProfileName::Performance;
-        state.charge_end_threshold = 100;
+        state.charge_end_threshold = DEFAULT_CHARGE_THRESHOLD;
         state.active_fan_curve = None;
         state.fan_follows_tdp = false;
         state.active_gpu_clock = None;
