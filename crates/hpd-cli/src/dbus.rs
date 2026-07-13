@@ -134,6 +134,12 @@ trait PowerDaemon {
     /// Hand the GPU clock back to firmware auto.
     async fn reset_gpu_clocks(&self) -> zbus::Result<()>;
 
+    /// Restore recommended defaults in one daemon transaction (daemon ≥
+    /// 2.14.0): TDP -> Balanced, Power mode -> Performance, Charge cap ->
+    /// 100%, Cooling -> firmware auto, and GPU clock -> firmware auto
+    /// (only if already opted into a custom range).
+    async fn restore_defaults(&self) -> zbus::Result<()>;
+
     /// This device's GPU clock range bounds (daemon ≥ 2.12.0): the
     /// kernel-reported live `OD_RANGE`, keys `range_min_mhz`/
     /// `range_max_mhz` (`u`). Empty map when the device has no

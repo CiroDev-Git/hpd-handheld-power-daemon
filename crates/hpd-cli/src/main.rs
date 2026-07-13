@@ -189,6 +189,16 @@ enum Commands {
         #[clap(subcommand)]
         action: GpuAction,
     },
+    /// Restore recommended defaults in one shot
+    ///
+    /// Sets TDP to the Balanced preset, Power mode to Performance, the
+    /// battery charge cap to 100%, and hands cooling back to firmware
+    /// auto — the same one-tap action available in the Decky plugin.
+    /// Resets the GPU clock range too, but only if you'd already opted in
+    /// with `hpdctl gpu` (`gpu auto`/`gpu set`); if you've never touched
+    /// `gpu`, this leaves it alone — GPU clock control is opt-in and this
+    /// command never turns it on for you.
+    RestoreDefaults,
     /// Diagnose and repair hpd's power ownership (polkit + competing daemons)
     ///
     /// `hpdctl doctor` reports whether the polkit policy is installed and
@@ -432,6 +442,16 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
             } else {
                 println!("✅ Preset applied successfully.");
                 println!("(Cooling profile has changed automatically).");
+            }
+        }
+        Commands::RestoreDefaults => {
+            println!("🔄 Restoring recommended defaults...");
+            if let Err(e) = proxy.restore_defaults().await {
+                eprintln!("❌ Error restoring defaults: {}", e);
+            } else {
+                println!(
+                    "✅ Restored to recommended defaults (TDP → Balanced, Power mode → Performance, Cooling → firmware auto, Charge cap → 100%)."
+                );
             }
         }
         Commands::Limits => {

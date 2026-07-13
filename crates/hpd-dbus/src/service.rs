@@ -790,6 +790,32 @@ impl PowerDaemonInterface {
         self.send(Transition::ResetGpuClocks).await
     }
 
+    /// Restore recommended defaults in one daemon transaction: TDP ->
+    /// Balanced, Power mode -> Performance, Charge cap -> 100%, Cooling ->
+    /// firmware auto, and GPU clock -> firmware auto (only if already
+    /// opted into a custom range — never auto-opts a user in).
+    ///
+    /// `polkit` actions: `dev.cirodev.hpd.set-tdp` AND
+    /// `dev.cirodev.hpd.set-charge` AND `dev.cirodev.hpd.set-profile` —
+    /// all three, since this bundles levers each individually gates; a
+    /// caller authorized for only one of them shouldn't get the other two
+    /// for free through this composite door. No new polkit action.
+    async fn restore_defaults(
+        &self,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        debug!("D-Bus received request to restore recommended defaults");
+        self.reject_if_locked()?;
+        let authorized = polkit::check(conn, &header, PolkitAction::SetTdp).await
+            && polkit::check(conn, &header, PolkitAction::SetCharge).await
+            && polkit::check(conn, &header, PolkitAction::SetProfile).await;
+        if !authorized {
+            return Err(auth_denied());
+        }
+        self.send(Transition::RestoreDefaults).await
+    }
+
     /// This device's GPU clock range bounds — the kernel-reported LIVE
     /// `OD_RANGE` (Class A data: a generic kernel interface, not a
     /// per-model calibration, so it needs no recalibration on other
