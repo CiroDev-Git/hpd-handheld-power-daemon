@@ -8,6 +8,7 @@ Versión en inglés: [`MANUAL.md`](MANUAL.md). ¿Lo querés en **diagramas**?
 
 - [Qué es hpd](#qué-es-hpd)
 - [Las dos perillas: Potencia y Enfriamiento](#las-dos-perillas)
+- [Rango de clock de GPU (avanzado, opcional)](#rango-de-clock-de-gpu-avanzado-opcional)
 - [Lista de comandos](#lista-de-comandos)
 - [Qué hace cada combinación](#qué-hace-cada-combinación)
 - [Cómo se asigna el cooling](#cómo-se-asigna-el-cooling-vos-nunca-seteás-el-profile-directo)
@@ -86,6 +87,67 @@ hpdctl charge set 80   # dejar de cargar en 80 %
 hpdctl charge get
 ```
 
+## Rango de clock de GPU (avanzado, opcional)
+
+Una **cuarta perilla**, totalmente separada de las tres de arriba — y la
+única excepción en este manual a "hpd la maneja desde el momento en que
+se instala". El rango de clock de GPU (`min_mhz`–`max_mhz`, el mismo tipo
+de palanca que "Minimum/Maximum Frequency" de Adrenalin de AMD en
+Windows) te deja moldear el techo de frecuencia de la GPU además de lo
+que ya hacen el TDP y el cooling.
+
+**Para qué la usarías:** el TDP ya limita la potencia total del chip, y
+el cooling ya limita la temperatura — el rango de clock de GPU es una
+tercera herramienta, más quirúrgica, para los casos que esas dos no
+cubren bien: fijar un techo más bajo para ahorrar batería o bajar el
+ruido de coil en un juego que no necesita el clock máximo, o subirlo a
+propósito para un título exigente.
+
+```
+hpdctl gpu auto             # seguir al TDP (espeja `cool auto`)
+hpdctl gpu set <min> <max>  # rango explícito en MHz (avanzado), desactiva el auto-follow
+hpdctl gpu reset            # devolver el clock de GPU al firmware, deja de manejarlo del todo
+hpdctl gpu get              # ver el modo actual + el rango aplicado
+hpdctl gpu limits           # ver el rango de MHz que soporta este device (solo lectura)
+```
+
+**Auto vs manual, la misma forma que el cooling:**
+- **`gpu auto`**: hpd infiere un techo de clock a partir de tu TDP
+  actual, usando el mismo nivel silent/balanced/aggressive que ya se
+  calcula para la curva del ventilador — un TDP bajo infiere un techo más
+  bajo, un TDP alto infiere un techo cerca del rango completo del device.
+- **`gpu set <min> <max>`**: fijás vos mismo un rango explícito en MHz y
+  desactivás el auto-follow. Se valida contra el rango real soportado por
+  este device (`hpdctl gpu limits`); un par fuera de rango o inválido se
+  rechaza con un error específico.
+- **`gpu reset`**: devuelve el clock al control automático del firmware —
+  y, a diferencia de `cool reset` (que devuelve la *curva del
+  ventilador* a uno de varios modos que el daemon sigue rastreando), esto
+  devuelve el clock de GPU por completo a "hpd no está manejando esto en
+  absoluto", el mismo estado en el que arranca una instalación nueva.
+
+> **Opcional y opt-in, para siempre — no solo en el primer arranque.**
+> hpd nunca toca el clock de GPU — ni lo lee, ni lo escribe, nada — hasta
+> que vos corrés `gpu auto` o `gpu set` al menos una vez. Esto es
+> distinto del cooling: el estado estable real del cooling nunca es
+> "apagado" (el daemon siempre está manejando *alguna* curva), pero el
+> estado estable del clock de GPU genuinamente es "sin tocar" por
+> defecto. Nada más en hpd lo activa por vos — ni `restore-defaults`, ni
+> enchufar el cargador, ni una instalación nueva o un upgrade. Una vez
+> que ya optaste por activarlo, `restore-defaults` y desenchufar el
+> cargador devuelven el clock de GPU al automático del firmware junto con
+> todo lo demás, igual que hacen con el cooling — solo que nunca prenden
+> el primer switch por vos.
+
+**Qué es normal:** `hpdctl gpu get` reporta "firmware auto (not
+managed)" por defecto en toda instalación nueva, y de nuevo después de
+`gpu reset` — ese es el estado inicial esperado y permanente, no un bug.
+Una vez que activás la función, `hpdctl gpu limits` muestra el rango real
+soportado por este device, leído en vivo del kernel cada vez (en el ROG
+Xbox Ally X esto es aproximadamente **600–2900 MHz**) — nunca es un
+número hardcodeado, así que es correcto sea cual sea el handheld donde
+corras hpd.
+
 ## Lista de comandos
 
 | Comando | Qué hace |
@@ -100,8 +162,14 @@ hpdctl charge get
 | `hpdctl cool reset` | Ventilador al firmware |
 | `hpdctl cool get` | Ver nivel + modo |
 | `hpdctl cool curve` | Dibujar la curva activa |
+| `hpdctl cool set-custom <8 pares temp:pwm>` | Setear tu propia curva de 8 puntos dibujada a mano (avanzado) |
 | `hpdctl power set <modo>` / `power get` | Modo de potencia (avanzado): `performance` / `balanced` / `eco` |
 | `hpdctl charge set <%>` / `charge get` | Tope de carga de batería |
+| `hpdctl gpu auto` | El rango de clock de GPU sigue al TDP (avanzado, opt-in) |
+| `hpdctl gpu set <min> <max>` | Setear un rango explícito de clock de GPU en MHz (avanzado) |
+| `hpdctl gpu reset` | Devolver el clock de GPU al firmware, sin manejo alguno |
+| `hpdctl gpu get` | Ver el modo actual del clock de GPU + el rango aplicado |
+| `hpdctl gpu limits` | Ver el rango de clock de GPU soportado por este device |
 
 Los comandos de lectura no piden contraseña. Cambiar cosas no pide
 contraseña si sos el dueño de la consola (grupo `wheel`) — incluso por
@@ -333,13 +401,26 @@ debería reflejar eso: un control de cooling, no tres.
 | `SetFanAuto()` | La curva sigue al TDP (modo auto). |
 | `ResetFanCurve()` | Fans al firmware. |
 | `GetThermalStatus() → (i,i,i,i)` | En vivo `(cpu_temp, gpu_temp, cpu_rpm, gpu_rpm)`; `i32::MIN` = sensor ausente. |
+| `GetTelemetry() → a{sv}` | Telemetría extendida (daemon ≥ 2.8.0): potencia/porcentaje/estado/salud/ciclos de batería, clocks de CPU/GPU, % de uso de GPU, VRAM. Una key solo está presente si el hardware la expone. |
 | `GetFanCurve() → (a(uu), a(uu))` | Los 8 puntos `(temp,pwm)` de las curvas CPU y GPU, para dibujar el gráfico. |
+| `SetFanCurve(a(yy), a(yy))` | Backend del editor de curva custom (daemon ≥ 2.9.0): exactamente 8 puntos `(temp_c, pwm)` por fan; pasa a cooling manual igual que `SetCoolingLevel`. |
+| `GetFanCurveConstraints() → a{sv}` | Los límites de curva + piso de seguridad de este device (daemon ≥ 2.9.0): `temp_min_c`/`temp_max_c`, `pwm_min`/`pwm_max`, `safety_floor`. Usalo para los ejes del editor, nunca hardcodees. |
 | `GetVersion() → (s)` | La versión del daemon (daemon ≥ 2.4.2; daemons viejos dan error → "unknown"). |
 | `fan_curve` (prop) | Nivel activo: `silent`/`balanced`/`aggressive`/`custom`/`auto`. |
 | `auto_cooling` (prop) | `true` = auto, `false` = manual. |
 | `current_spl`, `active_profile`, `charge_end_threshold`, `is_ac_connected` | Estado de potencia / perfil / batería / AC. |
 | `SetSpl(u)`, `SetPreset(s)`, `SetChargeThreshold(y)` | Setters de potencia y batería. |
 | `SetProfile(s)` | La palanca de potencia (`performance`/`balanced`/`power-saver`), decoplada del cooling. |
+| `SetAcMaxPerformance(b)` | Prende/apaga la preferencia "lock a máximo en AC" (daemon ≥ 2.7.0). |
+| `ac_locked` (prop) | En vivo: los controles de potencia/cooling están bloqueados porque el AC está enchufado y la preferencia de lock está prendida (daemon ≥ 2.7.0). |
+| `ac_max_performance` (prop) | La preferencia "lock a máximo en AC" en sí (daemon ≥ 2.7.0), a diferencia de `ac_locked` (el estado en vivo). |
+| `SetGpuClockRange(u, u)` | Control de rango de clock de GPU (daemon ≥ 2.12.0): `(min_mhz, max_mhz)` explícito, activa el modo manual de clock de GPU. |
+| `EnableGpuAutoFollow()` | Reactiva el auto-follow del clock de GPU respecto al TDP (daemon ≥ 2.12.0) — el opt-in del que depende toda la función. |
+| `ResetGpuClocks()` | Devuelve el clock de GPU al automático del firmware (daemon ≥ 2.12.0). |
+| `GetGpuClockConstraints() → a{sv}` | El rango de clock de GPU soportado en vivo por este device (`range_min_mhz`/`range_max_mhz`, daemon ≥ 2.12.0). Mapa vacío si no es programable. |
+| `GetGpuClockRange() → (u, u)` | El rango de clock de GPU realmente aplicado al hardware (daemon ≥ 2.12.0); `(0, 0)` = no aplica (auto de firmware / sin rango programable). |
+| `gpu_clock_range` (prop) | Selección activa de clock de GPU: `silent`/`balanced`/`aggressive`/`custom`/`auto` (daemon ≥ 2.12.0), espeja `fan_curve`. |
+| `gpu_follows_tdp` (prop) | `true` = el clock de GPU sigue al TDP, `false` = manual o sin manejo (daemon ≥ 2.12.0), espeja `auto_cooling`. |
 
 **UI sugerida (post-desacople):**
 - Un slider de **TDP** — *este es el control de potencia* (`current_spl` /
@@ -361,6 +442,13 @@ debería reflejar eso: un control de cooling, no tres.
   `PropertiesChanged`; daemon ≥ 2.4.0) — o polleá `is_ac_connected()` en
   daemons viejos. El fix del nodo `AC0` hace que el valor sea correcto en
   el Xbox Ally X.
+- Un control **opcional y avanzado de rango de clock de GPU**
+  (`gpu_clock_range` / `SetGpuClockRange` / `EnableGpuAutoFollow` /
+  `ResetGpuClocks`, daemon ≥ 2.12.0) — ocultalo por completo cuando
+  `GetGpuClockConstraints()` devuelve un mapa vacío (sin rango
+  programable en este device, o un daemon viejo). Nunca lo actives por
+  defecto; el propio daemon nunca opta por vos (ver la sección de clock
+  de GPU más arriba).
 
 Para el razonamiento térmico y los datos detrás de todo esto, ver
 [`fan-curves.md`](fan-curves.md).

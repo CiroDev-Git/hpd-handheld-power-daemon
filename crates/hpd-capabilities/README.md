@@ -17,16 +17,22 @@ returns each capability via an accessor:
 
 ```rust
 pub trait HwBackend: Send + Sync {
-    fn power(&self)   -> &dyn PowerEnvelope;
-    fn charge(&self)  -> Option<&dyn ChargeControl>    { None }
-    fn profile(&self) -> Option<&dyn PlatformProfile>  { None }
-    fn fan(&self)     -> Option<&dyn FanControl>       { None }
+    fn power(&self)      -> &dyn PowerEnvelope;
+    fn charge(&self)     -> Option<&dyn ChargeControl>        { None }
+    fn profile(&self)    -> Option<&dyn PlatformProfile>      { None }
+    fn fan(&self)        -> Option<&dyn FanControl>           { None }
+    fn fan_curve(&self)  -> Option<&dyn FanCurveControl>      { None }
+    fn thermal(&self)    -> Option<&dyn ThermalSensors>       { None }
+    fn telemetry(&self)  -> Option<&dyn SystemTelemetry>      { None }
+    fn gpu_clock(&self)  -> Option<&dyn GpuClockRangeControl> { None }
 }
 ```
 
 `PowerEnvelope` is mandatory; the rest are `Option<_>` so partial
 hardware (e.g. a future backend that only models TDP) can still
-participate. The ASUS backend returns `Some(...)` for all four.
+participate. The ASUS backend returns `Some(...)` for all seven
+optional accessors (eight capability traits in total, including the
+mandatory `power()`).
 
 Value types live in `units.rs` (`PowerMilliwatts`, `Rpm`) and
 domain enums in `profile.rs` (`ProfileName`, `TdpPreset`,

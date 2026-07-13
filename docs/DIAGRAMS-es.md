@@ -313,7 +313,26 @@ sequenceDiagram
     UI-->>U: "✓ Aggressive" (manual)
 ```
 
-### 3.4 Caso de uso — enchufar el cargador
+### 3.4 Caso de uso — setear un rango de clock de GPU (avanzado, opt-in)
+
+```mermaid
+sequenceDiagram
+    actor U as Usuario
+    participant UI as Plugin
+    participant D as Daemon
+    participant HW as /sys (amdgpu)
+
+    Note over D: El clock de GPU no fue tocado hasta ahora — nunca corrió gpu auto/set
+    U->>UI: abre Avanzado → Clock de GPU, setea 1200-2400 MHz
+    UI->>D: SetGpuClockRange(1200, 2400)
+    D->>D: valida contra GetGpuClockConstraints() (OD_RANGE en vivo)
+    D->>HW: escribe pp_od_clk_voltage (pasa a DPM manual, commitea el rango)
+    D-->>UI: PropertiesChanged(GpuClockRange="custom", GpuFollowsTdp=false)
+    UI-->>U: "✓ 1200-2400 MHz" (manual)
+    Note over D,UI: este llamado es lo que activa la función — hpd nunca<br/>toca el clock de GPU por su cuenta antes de esto
+```
+
+### 3.5 Caso de uso — enchufar el cargador
 
 ```mermaid
 sequenceDiagram
@@ -329,7 +348,7 @@ sequenceDiagram
     Note over D,UI: mientras AcLocked, el daemon rechaza escrituras de potencia/cooling; al desenchufar restaura el snapshot DC
 ```
 
-### 3.5 Caso de uso — cambio externo (hpdctl en una terminal)
+### 3.6 Caso de uso — cambio externo (hpdctl en una terminal)
 
 ```mermaid
 sequenceDiagram
@@ -347,7 +366,7 @@ sequenceDiagram
     Note over D,UI: una sola fuente de verdad: el daemon.<br/>CLI y plugin siempre coinciden.
 ```
 
-### 3.6 Caso de uso — falta polkit / hay un rival
+### 3.7 Caso de uso — falta polkit / hay un rival
 
 ```mermaid
 flowchart TD
@@ -441,6 +460,13 @@ Cómo se llama lo mismo en cada lado (todo termina en el daemon):
 | Ver AC lock | `ac-lock` | `AcLocked` / `AcMaxPerformance` (props) | banner + toggle en Settings | — |
 | Salud / polkit | `doctor` | `GetDiagnostics()` | banner Setup | — |
 | Rivales | `doctor` | `GetPowerConflicts()` | banner Conflicto | — |
+| Curva custom (avanzado) | `cool set-custom <8 pares>` | `SetFanCurve(a(yy), a(yy))` | Editor de curva | `set-profile` |
+| Telemetría extendida | `status` / `monitor` | `GetTelemetry()` | Sección de telemetría extendida | — |
+| **Clock de GPU (avanzado, opt-in)** | `gpu auto` | `EnableGpuAutoFollow()` | Avanzado → Clock de GPU → Auto | `set-profile` |
+| Clock de GPU — rango manual | `gpu set <min> <max>` | `SetGpuClockRange(u, u)` | Avanzado → editor de clock de GPU | `set-profile` |
+| Clock de GPU — reset | `gpu reset` | `ResetGpuClocks()` | Avanzado → Clock de GPU → Reset | `set-profile` |
+| Clock de GPU — lectura | `gpu get` | `GetGpuClockRange()` / `GpuClockRange` (prop) | Control de clock de GPU (reactivo) | — |
+| Clock de GPU — límites | `gpu limits` | `GetGpuClockConstraints()` | Control de clock de GPU (límites) | — |
 
 ---
 

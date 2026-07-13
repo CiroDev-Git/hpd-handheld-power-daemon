@@ -198,6 +198,85 @@ So power and cooling are now **separate levers**:
 Auto-cooling (`fan_follows_tdp`) therefore now infers the *fan curve* from
 the TDP (`infer_fan_curve_from_spl`), not the platform profile.
 
+### 7. Custom (hand-drawn) curves — the 2.9.0 editor
+
+The three presets above (§1) are a good fit for most people, but they are
+still someone else's curve. Daemon 2.9.0 added a real **custom-curve
+editor**: a caller supplies its own 8 `(temp_c, pwm)` points per fan
+instead of picking `silent`/`balanced`/`aggressive`. This is a *new*,
+safety-floor-aware setter — distinct from the old, raw preset-only
+`set_fan_curve` D-Bus method retired in 2.5.0 (§5); the name is reused
+because that method is long gone and this is its natural, much safer
+replacement.
+
+**CLI syntax:**
+
+```
+hpdctl cool set-custom 45:20 54:50 62:95 69:145 75:190 80:225 85:255 92:255
+```
+
+Exactly 8 `temp_c:pwm` pairs (`pwm` 0–255), coolest to hottest, applied to
+*both* fans in one call (the underlying `SetFanCurve(cpu, gpu)` D-Bus
+method actually takes independent CPU/GPU curves — `hpdctl cool
+set-custom` just sends the same 8 points to both, which is what the CLI's
+single point list is for; a direct D-Bus caller, like the Decky plugin's
+future editor, can differentiate the two fans). Like `cool set`, it
+latches manual cooling.
+
+**Why a safety floor, and how a device communicates its own bounds.**
+Handing a user a raw 8-point curve editor is dangerous without limits: a
+badly-drawn curve could leave the fans near-silent at a temperature where
+the chip actually needs airflow. So every custom curve is checked against
+a **`FanCurveConstraints`** value for the running device — fetched live
+over D-Bus via `GetFanCurveConstraints() -> a{sv}`:
+
+| Key | Meaning |
+|---|---|
+| `points` (`u`) | Always `8` — the fixed point count every curve needs. |
+| `temp_min_c` / `temp_max_c` (`y`) | The temperature range a point may sit in. |
+| `pwm_min` / `pwm_max` (`y`) | The duty range a point may sit in (`pwm_max` is `PWM_MAX` = 255). |
+| `safety_floor` (`a(yy)`) | Unordered `(temp_threshold_c, min_pwm)` pairs: **at or above** `temp_threshold_c`, `pwm` must be **at least** `min_pwm`. |
+
+On the ROG Xbox Ally X (RC73XA, the only model with an on-device capture
+so far — `rc73xa_fan_curve_constraints()` in
+`hpd-backend-asus/src/fan_curve.rs`), the constraints are `temp_min_c:
+30`, `temp_max_c: 95`, `pwm_min: 0`, `pwm_max: 255`, and a
+`safety_floor` of `[(85, 150), (90, 200)]` — i.e. **at ≥ 85 °C, pwm must
+be ≥ 150; at ≥ 90 °C, pwm must be ≥ 200**. A point that satisfies the
+*strictest* threshold it has reached passes (e.g. a point at 92 °C is
+checked against both thresholds and must clear the higher one, pwm ≥
+200). Every other ASUS handheld this crate targets shares the same
+`asus_custom_fan_curve` EC interface, so it inherits this same
+conservative floor until its own on-device capture lands — a new device
+should never ship with *no* floor.
+
+`FanCurve::validate_against` (`hpd-capabilities/src/fan_curve.rs`) is the
+function that actually enforces this — stricter than the plain
+`validate()` used for the compile-time presets (§1), because a
+hand-drawn curve gets no benefit of the doubt:
+
+- **Strictly increasing temperatures** — no two points at the same
+  temperature (a preset tail may legitimately repeat a temperature to
+  mean "flat past here"; a hand-drawn curve may not).
+- **Non-decreasing duty** — a curve may plateau, never dip.
+- **Every point inside `[temp_min_c, temp_max_c] × [pwm_min, pwm_max]`.**
+- **Every point at or above a `safety_floor` threshold meets that
+  threshold's minimum duty** — defense in depth on top of the EC's own
+  firmware failsafes; hpd refuses to even *ask* the EC for a reckless
+  curve rather than trusting the EC alone to reject it.
+
+Validation happens **twice**, matching the pattern already used
+elsewhere in this document (§4's read-back-and-fail-closed write): once
+at the D-Bus boundary against the live `GetFanCurveConstraints()`, and
+again, independently, by the L1 backend immediately before it writes to
+the EC. A violation returns `InvalidArgs` naming the offending point
+one-based (matching the hwmon `auto_pointN` numbering), e.g. `"point 8:
+92°C requires pwm ≥ 200"` — precise enough to fix without guessing.
+
+`polkit` action: `dev.cirodev.hpd.set-profile` — the same "cooling
+levers" bucket as `set_cooling_level`/`reset_fan_curve`; no new polkit
+action was added for the custom-curve surface.
+
 ## Calibration
 
 Two measurement passes on the ROG Xbox Ally X (RC73XA): one that exposed
@@ -290,14 +369,17 @@ existing cooling/power flows:
   hwmon name).
 
 On-device validation of all of the above is scripted in
-[`docs/dev/FAN_CURVE_TESTING.md`](dev/FAN_CURVE_TESTING.md).
+[`docs/dev/GAMING-ROADMAP-es.md`](dev/GAMING-ROADMAP-es.md) ("Fase 3 —
+Curvas de ventilador personalizadas"), including the 2.9.0 custom-curve
+editor covered in depth in [§7](#7-custom-hand-drawn-curves--the-290-editor)
+above.
 
 ## Where this lives in the code
 
 | Concern | Location |
 |---|---|
-| Capability trait + value types | `hpd-capabilities/src/fan_curve.rs` |
-| ASUS curve write/read-back + presets | `hpd-backend-asus/src/fan_curve.rs` |
+| Capability trait + value types (incl. `FanCurveConstraints`, `validate_against`) | `hpd-capabilities/src/fan_curve.rs` |
+| ASUS curve write/read-back + presets + safety floor (`rc73xa_fan_curve_constraints`) | `hpd-backend-asus/src/fan_curve.rs` |
 | hwmon lookup by stable `name` | `hpd-backend-asus/src/hwmon.rs` |
 | State machine (transition/effect/reducer) | `hpd-core/src/{transition,effect,reducer}.rs` |
 | Auto-cooling fan-curve inference | `hpd-core/src/inference.rs` (`infer_fan_curve_from_spl`) |

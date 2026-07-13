@@ -22,7 +22,7 @@ If you've just cloned the repo, the entry-point reading is:
 | Welcome                                                          | Out of scope                                                 |
 |------------------------------------------------------------------|--------------------------------------------------------------|
 | Bug fixes with a regression test.                                | Fan-curve control — read-only by design (firmware owns curves). |
-| A new L1 vendor backend (see [`docs/ARCHITECTURE.md` §10](docs/ARCHITECTURE.md#10-extending-the-system)). | Per-app / per-game profiles — belongs in a user-space agent above the daemon. |
+| A new L1 vendor backend (see [`docs/ARCHITECTURE.md` §13](docs/ARCHITECTURE.md#13-extending-the-system)). | Per-app / per-game profiles — belongs in a user-space agent above the daemon. |
 | Improvements to the reducer / executor with new tests.           | RGB / haptics / display — different problem domain.          |
 | Documentation, examples, dev-guide additions.                    | Packaging for non-systemd init systems.                      |
 | Better D-Bus / CLI ergonomics (without breaking the v1 surface). | Cross-compiling to non-Linux runtime targets.                |
@@ -92,7 +92,7 @@ or anything under `package/`, run the matrix locally too.
 |--------------------------------------------------------------------------------------|---------------------------------------------------------------------------|
 | `cargo fmt --all -- --check`                                                         | `rustfmt` default style, workspace-wide.                                  |
 | `cargo clippy ... -- -D warnings`                                                    | `[workspace.lints]`: `unsafe_code = forbid`, `missing_docs = warn`, `clippy::{unwrap_used, expect_used, panic} = warn`. Every warning is an error in CI. |
-| `cargo test --workspace`                                                             | All 58 (and counting) tests pass on Linux + macOS.                        |
+| `cargo test --workspace`                                                             | The full suite passes on Linux + macOS (220+ tests and growing — see the CI run for the exact count, not this table). |
 | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace`                                   | Every `///` and `//!` block is valid rustdoc; intra-doc links resolve.    |
 | CI feature matrix                                                                    | `--no-default-features`, `--features vendor-asus`, `--features simulator` all build cleanly. |
 | `cargo audit` + `cargo deny check`                                                   | Dependency CVEs + license allowlist (GPL-compatible only).                |
@@ -259,7 +259,7 @@ maintainer will decide. Defaulting to MAJOR is always safe.
 ## 7. Adding a new D-Bus method / CLI command
 
 The full recipe lives in
-[`docs/ARCHITECTURE.md` §10](docs/ARCHITECTURE.md#10-extending-the-system).
+[`docs/ARCHITECTURE.md` §13](docs/ARCHITECTURE.md#13-extending-the-system).
 The short form (each step is mandatory):
 
 1. `Transition` variant in `hpd-core/src/transition.rs`.
@@ -285,7 +285,7 @@ The short form (each step is mandatory):
 
 ## 8. Adding a new vendor backend
 
-See [`docs/ARCHITECTURE.md` §10](docs/ARCHITECTURE.md#adding-a-new-vendor-backend)
+See [`docs/ARCHITECTURE.md` §13](docs/ARCHITECTURE.md#adding-a-new-vendor-backend)
 for the full recipe. Key constraints:
 
 - The backend must implement `PowerEnvelope` at minimum;

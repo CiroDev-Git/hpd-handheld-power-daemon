@@ -250,18 +250,23 @@ downstream consumers by definition.
 
 | Action                                                  | Who                |
 |---------------------------------------------------------|--------------------|
-| Push to `main`                                          | Anyone with PR-merge rights. |
+| Direct push to `main`                                   | **Nobody.** `main` is branch-protected — every change, including a release version bump, lands through a pull request (CI green → squash-merge). See [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md#3d-commit-on-a-release-branch-and-open-the-pr). |
+| Open a PR into `main`                                   | Anyone.            |
+| Approve / squash-merge a PR into `main`                 | Anyone with PR-merge rights. |
 | Create lightweight tag in a branch (local convenience)  | Anyone.            |
-| Push an annotated `v*` or `v*-rc.*` tag to `origin`     | **Maintainers only.** |
-| Configure repository secrets (`GPG_PRIVATE_KEY`, `AUR_SSH_KEY`) | **Repo owner only.** |
+| Push an annotated `v*` or `v*-rc.*` tag to `origin`     | **Maintainers only.** Tags bypass branch protection — pushed straight to `origin`, never through a PR — which is exactly what triggers `release.yml`. |
+| Configure repository secrets (`GPG_PRIVATE_KEY`, `AUR_SSH_KEY`, `RELEASE_PAT`) | **Repo owner only.** |
 | Edit / unpublish a Draft Release                        | Maintainers.       |
 | Edit / re-publish a Public Release body                 | Maintainers (rarely; releases are immutable). |
 | Cut a stable release that ships breaking changes        | **Maintainer + CHANGELOG SemVer review.** |
 
-Branch protection on `main` is recommended but not enforced
-programmatically yet — it's a repo-settings concern. The required
-CI checks under branch protection should be the four jobs in
-`ci.yml`.
+Branch protection on `main` is enforced at the repo-settings level (since
+2026-06-03 — see `RELEASE_CHECKLIST.md`'s own header note). The required
+CI checks under that protection are the four jobs in `ci.yml`. Even the
+release version bump (`Cargo.toml` + `Cargo.lock` + `CHANGELOG.md`, §3
+above) goes through a normal PR on a `release/vX.Y.Z` branch — there is
+no privileged bypass for maintainers on `main` itself, only on the
+annotated tag push in §2/§4, which branch protection does not cover.
 
 ---
 
@@ -323,4 +328,6 @@ CI checks under branch protection should be the four jobs in
 
 ---
 
-*Last updated: 2026-05-24 (Phase 5 design — Lote 49).*
+*Last updated: 2026-07-13 — §8 permissions model synced with
+`RELEASE_CHECKLIST.md`'s branch-protection flow (`main` protected since
+2026-06-03; original design: 2026-05-24, Phase 5 — Lote 49).*

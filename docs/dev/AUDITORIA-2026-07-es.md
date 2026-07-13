@@ -1,5 +1,14 @@
 # Auditoría integral — hpd 2.7.2 en ROG Xbox Ally X (RC73XA) + CachyOS
 
+> **📦 ARCHIVADO — snapshot histórico, no un documento vivo.** Los 11
+> ítems de §8 ("Corrección — hacer ya" + "Ecosistema CachyOS — hacer
+> pronto") están **todos resueltos**, confirmado contra el `CHANGELOG.md`
+> de la entrada `[2.7.3]`. La sección de roadmap (§6) está superseded por
+> [`GAMING-ROADMAP-es.md`](GAMING-ROADMAP-es.md) — "ante discrepancias,
+> manda el roadmap" (ya lo dice este mismo documento). Se conserva sin
+> borrar porque `CHANGELOG.md` lo cita como registro histórico de la
+> auditoría 2.7.3/2.10.0; léase como eso, no como una lista de pendientes.
+
 > Fecha: 2026-07-07 · Base: `main` @ `4f65db2` (workspace 2.7.2)
 > Objetivo: sacar el máximo provecho del daemon + plugin Decky en un
 > ROG Xbox Ally X (2025, RC73XA) con CachyOS, apuntando a la mayor

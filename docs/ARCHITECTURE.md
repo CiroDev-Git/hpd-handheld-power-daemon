@@ -143,8 +143,8 @@ calling backend methods directly from D-Bus handlers or monitors.
    `tracing::info!` fields.
 2. **All side-effects via `Effect`.** Today: `ApplyPowerEnvelope`,
    `ApplyPlatformProfile`, `ApplyChargeThreshold`, `ApplyFanCurve`,
-   `ResetFanCurve`, `PersistState`. The Executor is the only thing that
-   dispatches them.
+   `ResetFanCurve`, `ApplyGpuClockRange`, `ResetGpuClocks`,
+   `PersistState`. The Executor is the only thing that dispatches them.
 3. **`ConfigReload` is intercepted *before* `reduce()` is called.**
    The Executor atomically swaps its `RuntimeConfig`. The next
    transition uses the new values. The reducer treats `ConfigReload`
@@ -169,18 +169,105 @@ curve only. This replaced the pre-decouple behaviour where the cooling
 level and the TDP auto-follow both drove the platform profile, whose EPP
 silently clamped the SoC below the configured SPL.
 
+### Custom fan curves (daemon ≥ 2.9.0)
+
+Alongside the three named presets, a client can hand the daemon an
+explicit, hand-drawn curve: `Transition::SetFanCurve` carries exactly 8
+`(temp_c, pwm)` points per fan and behaves like `SetCoolingLevel` in every
+way that matters — it latches manual cooling (`fan_follows_tdp` off) and
+emits the same `ApplyFanCurve` effect, just built from
+`FanCurveSelection::Custom` instead of a preset. What's new is
+*validation*: the curve is checked twice, once at the D-Bus boundary
+against `get_fan_curve_constraints()` and again independently by the L1
+backend immediately before the EC write, so a violation is caught even if
+a caller bypasses the first check. The constraints
+(`FanCurveConstraints` — point count, temp/pwm ranges, and a
+`safety_floor` of `(temp_threshold_c, min_pwm)` pairs) are Class C data in
+the multi-device sense used elsewhere in this document: hardcoded per
+model (e.g. `rc73xa_fan_curve_constraints()` for the RC73XA) because the
+EC's safety floor has no generic kernel source to read live — a device
+without its own capture inherits the most conservative floor in its
+family rather than none. `FanCurve::validate_against` is the stricter
+sibling of the `validate()` used for the compile-time presets: it
+requires *strictly* increasing temperatures, not merely non-decreasing.
+This re-exposes, under the same method name but a genuinely different
+signature, functionality the raw preset-only `set_fan_curve` had before
+its 2.5.0 retirement — the two are unrelated beyond sharing a name.
+
+### GPU clock range control (daemon ≥ 2.12.0)
+
+`GpuClockRangeControl` gives GPU tuning parity with the TDP/cooling
+levers: on-device research on the ROG Xbox Ally X found the amdgpu
+OverDrive interface exposes exactly one real knob at this generation —
+the SCLK frequency range (`pp_od_clk_voltage`'s `OD_SCLK`) — with no
+separate VRAM clock, no voltage curve, and no GPU power cap distinct from
+the SPL/SPPT/FPPT budget the daemon already manages. The new D-Bus
+surface mirrors the fan curve one-for-one: `set_gpu_clock_range(min_mhz,
+max_mhz)` is the manual override, `enable_gpu_auto_follow` /
+`reset_gpu_clocks` mirror `set_fan_auto` / `reset_fan_curve`, and
+`get_gpu_clock_constraints()` / `get_gpu_clock_range()` mirror the fan
+curve's constraints/active-curve reads. All of it reuses the existing
+`dev.cirodev.hpd.set-profile` polkit action — no new action ID needed.
+
+Two things about this feature are deliberately asymmetric with the fan
+curve, and both are load-bearing:
+
+- **The constraints are Class A, not Class C.** Unlike the fan curve's
+  hardcoded-per-model safety floor, `GpuClockConstraints` is read
+  **live** from the kernel's `OD_RANGE` on every call — a generic amdgpu
+  interface, portable to a future device with zero recalibration. Don't
+  "optimize" `GpuClockRangeControl::constraints` into a cached or
+  hardcoded value; the live read is the point.
+- **`active_gpu_clock` defaults to `None` forever, not just at first
+  boot.** The fan curve's steady state is never "off" — the daemon
+  always manages *some* curve. GPU clock is the opposite: the daemon
+  must never touch `power_dpm_force_performance_level` /
+  `pp_od_clk_voltage` until the user calls `enable_gpu_auto_follow` or
+  `set_gpu_clock_range` at least once. Every site that unconditionally
+  re-pins the fan curve (`force_ac_max_performance`, the AC-plug-restore
+  branch, `SystemResumed`'s full reapply) guards its matching GPU-clock
+  effect on `active_gpu_clock.is_some()` — otherwise plugging in AC on a
+  fresh install would silently auto-opt every user into managed GPU
+  clocks the moment they first charge the device.
+
+A GPU-clock write is also a genuinely riskier hardware operation than a
+fan-curve write: it's two sequential steps (switch DPM to `manual`, then
+commit a range) with a real unsafe intermediate state a crash could land
+in. That's why `SystemResumed`, when a GPU clock is actively managed,
+does `ResetGpuClocks` *then* `ApplyGpuClockRange` rather than a bare
+re-apply — resuming into a known-clean firmware-auto baseline before
+reapplying, instead of risking a resume that inherits a half-written
+state. It's also why `Effect::ApplyGpuClockRange` carries the *abstract*
+`GpuClockSelection` (`Custom(range)` or `Preset(tier)`) rather than a
+pre-resolved `GpuClockRange`: resolving a `Preset(tier)` needs both
+`RuntimeConfig::gpu_clock_fractions` (which the pure reducer holds but
+must never use to do I/O) and a live `OD_RANGE` read (which the reducer
+must never perform, and which the L1 backend must never resolve itself
+since it never sees `RuntimeConfig`). Only the `Executor` holds both
+inputs, so it alone calls `gpu_clock_range_for_tier` immediately before
+`GpuClockRangeControl::set_range`. When `gpu_follows_tdp` is on, a TDP
+change re-infers a ceiling from the same `FanCurvePreset` tier already
+computed for the fan curve — `fan_follows_tdp` and `gpu_follows_tdp` are
+independent flags; either, both, or neither can be on at once.
+
 ### Rollback contract
 
-If any `Apply*` effect fails:
+If any `Apply*` / `Reset*` effect fails:
 
 1. The Executor logs the failure.
 2. It re-reads the live hardware state through the backend.
 3. It re-injects a matching `Sync*` transition (`SyncPowerTarget`,
-   `SyncPlatformProfile`, `SyncChargeThreshold`) so the in-memory
-   `ProfileState` matches what the kernel actually has.
+   `SyncPlatformProfile`, `SyncChargeThreshold`, `SyncFanCurve`,
+   `SyncGpuClockRange`) so the in-memory `ProfileState` matches what the
+   kernel actually has. `SyncFanCurve`/`SyncGpuClockRange` read back
+   through `FanCurveControl::active_selection` /
+   `GpuClockRangeControl::active_range`, which map the live EC/OD_RANGE
+   state back to a preset, `custom`, or firmware `auto`/`None`.
 
-Lote 38 made this uniform across all three apply effects (only
-`Apply{PowerEnvelope}` rolled back in pre-1.0 versions).
+Lote 38 made this uniform across the original three apply effects (only
+`Apply{PowerEnvelope}` rolled back in pre-1.0 versions); the fan-curve
+and GPU-clock effects added later followed the same contract from the
+day they shipped.
 
 ### Transition catalogue
 
@@ -191,7 +278,12 @@ Lote 38 made this uniform across all three apply effects (only
 | `SetPreset(TdpPreset)`           | `hpdctl preset`, D-Bus `set_preset`               |
 | `SetProfile(ProfileName)`        | `hpdctl power set`, D-Bus `set_profile`           |
 | `SetCoolingLevel(FanCurvePreset)`| `hpdctl cool set`, D-Bus `set_cooling_level`      |
+| `SetFanCurve { cpu, gpu }`       | `hpdctl cool set-custom`, D-Bus `set_fan_curve` (daemon ≥ 2.9.0) |
+| `ResetFanCurve`                  | `hpdctl cool reset`, D-Bus `reset_fan_curve`      |
 | `EnableFanAuto`                  | `hpdctl cool auto`, D-Bus `set_fan_auto`          |
+| `SetGpuClockRange { min_mhz, max_mhz }` | `hpdctl gpu set`, D-Bus `set_gpu_clock_range` (daemon ≥ 2.12.0) |
+| `EnableGpuAutoFollow`            | `hpdctl gpu auto`, D-Bus `enable_gpu_auto_follow` (daemon ≥ 2.12.0) |
+| `ResetGpuClocks`                 | `hpdctl gpu reset`, D-Bus `reset_gpu_clocks` (daemon ≥ 2.12.0) |
 | `SetAcMaxPerformance(bool)`      | `hpdctl ac-lock on/off`, D-Bus `set_ac_max_performance` |
 | `ChargeThresholdChanged(u8)`     | `hpdctl charge set`, D-Bus `set_charge_threshold` |
 | `AcPowerChanged(bool)`           | `hpd-netlink` udev event                          |
@@ -199,6 +291,8 @@ Lote 38 made this uniform across all three apply effects (only
 | `SyncPowerTarget(target)`        | Rollback after `ApplyPowerEnvelope` failure       |
 | `SyncPlatformProfile(name)`      | Rollback after `ApplyPlatformProfile` failure     |
 | `SyncChargeThreshold(u8)`        | Rollback after `ApplyChargeThreshold` failure     |
+| `SyncFanCurve(Option<selection>)`| Rollback after `ApplyFanCurve`/`ResetFanCurve` failure |
+| `SyncGpuClockRange(Option<range>)` | Rollback after `ApplyGpuClockRange`/`ResetGpuClocks` failure |
 | `ConfigReload(RuntimeConfig)`    | SIGHUP handler in `hpd-daemon`                    |
 | `Shutdown`                       | SIGINT / SIGTERM handler in `hpd-daemon`          |
 
@@ -411,7 +505,167 @@ feature.
 
 ---
 
-## 7. Persistence
+## 7. Competing power daemons
+
+`hpd` expects to be the **sole** manager of the platform's power knobs.
+Several daemons commonly found on handheld Linux images write the same
+underlying files and so fight it — whoever writes last wins, and the
+effective TDP/profile/fan state visibly flaps. They fall into two
+buckets:
+
+- **Hard rivals**, which must never co-run and which `hpdctl doctor
+  --fix` masks outright: `power-profiles-daemon` (writes
+  `platform_profile` + EPP), Valve's `steamos-manager` (TDP / charge /
+  fan behind Game Mode), `tuned` (Fedora/Bazzite's default tuner, whose
+  `tuned-ppd` shim also claims the PPD bus name), and `hhd` (Handheld
+  Daemon, Bazzite's default on Ally hardware).
+- **Advisory** daemons, which are wanted and so are only *reported*,
+  never masked: Feral's `gamemoded` (governor boost during games),
+  ASUS's own `asusd` (also drives platform profile / fan / charge, but
+  additionally owns keyboard RGB / Aura, so masking it would be the
+  wrong call), and `auto-cpufreq` (governor / EPP only).
+
+Detection has to work even for rivals with no persistent process
+identity, so `hpd_dbus::conflicts` uses two independent mechanisms and
+unions them: a **D-Bus name check** (`NameHasOwner`, which deliberately
+never D-Bus-activates a name — checking for a rival can never revive
+it) for daemons that own a bus name, and a **systemd unit check**
+(`ListUnitsByPatterns` over `org.freedesktop.systemd1`, read-only and
+allowed under `ProtectSystem=strict`) for the ones that don't (`hhd`,
+`auto-cpufreq`). The daemon runs `power_conflicts()` once at startup
+(logging a loud warning if anything hard turns up) and exposes both the
+hard-rival and advisory lists live over D-Bus
+(`get_power_conflicts()`/`get_advisory_daemons()`); a regression test
+keeps the two lists disjoint on both detection axes so `doctor --fix`
+can never mask something that was only ever meant to be reported.
+Nothing can see a tool that writes TDP from *inside* the same process
+tree without its own service or bus name — a Decky plugin doing raw
+`ryzenadj` calls, for instance — that class of conflict is undetectable
+by design and stays out of scope.
+
+The split mirrors how polkit setup issues are handled: **the daemon
+detects, the CLI repairs, the packaging only informs.**
+`hpdctl doctor` reports polkit health, conflicts, advisory daemons, and
+gamescope-session status through a shared renderer
+(`doctor::print_health`, also tacked onto the end of `hpdctl status`);
+`hpdctl doctor --fix` elevates once and both `disable --now`s +
+`mask`s the rival system units *and* installs the polkit policy — a
+superset of the narrower `fix-polkit` repair. The daemon itself cannot
+perform any of this (`ProtectSystem=strict` makes `/usr`, and therefore
+`systemctl`'s unit files, read-only to it), so the privileged write has
+to originate from the user-invoked CLI. At the packaging level, only
+`power-profiles-daemon` gets automatic, unconditional neutralization —
+`package/hpd.service` declares `Conflicts=power-profiles-daemon.service`
+and the AUR `post_install` hook runs `doctor --fix`. That's a deliberate
+asymmetry, not an oversight: PPD is headless, ubiquitous, and
+boot-race-proven safe to mask silently, whereas `tuned` and `hhd` are
+user-chosen stacks that some installations may genuinely want — their
+neutralization stays opt-in through `doctor --fix` rather than being
+forced at install time. (`Conflicts=` is also symmetric, so unlike
+`tuned` — which is D-Bus-activatable and would otherwise be revived and
+kill hpd, the exact v2.2.2 regression — it only helps once a rival is
+already masked.)
+
+## 8. PPD compatibility shim (`net.hadess.PowerProfiles`)
+
+Masking the real `power-profiles-daemon` fixes the fight over
+`platform_profile`, but it has a side effect: every client that only
+ever talks to *whoever currently owns* the `net.hadess.PowerProfiles`
+bus name goes dark. That includes the KDE Plasma battery applet's
+Eco/Balanced/Performance selector, the `powerprofilesctl` CLI, and
+CachyOS's `game-performance` launch wrapper. None of those clients ever
+touch hardware directly — they are pure D-Bus callers, so from their
+point of view "no PPD" and "some other program answering as PPD" are
+indistinguishable.
+
+Since daemon **2.10.0**, `hpd-daemon` exploits exactly that
+indistinguishability: at startup it best-effort claims the
+`net.hadess.PowerProfiles` name itself
+(`request_name_with_flags(DoNotQueue)`, deliberately **without**
+`ReplaceExisting` — a real, unmasked PPD or `tuned-ppd` must never be
+stolen from), and `hpd_dbus::ppd_shim::PowerProfilesShim` implements the
+real-world subset of PPD's D-Bus API at `/net/hadess/PowerProfiles`:
+the read-write `ActiveProfile` property, `Profiles`, `Actions`,
+`ActiveProfileHolds`, `PerformanceInhibited`, `PerformanceDegraded`, the
+`HoldProfile`/`ReleaseProfile` methods, and the `ProfileReleased`
+signal. Every request the shim receives becomes an ordinary
+`Transition::SetProfile` fed through the same reducer, AC-lock, and
+rollback path as any other caller — the shim is a second *door*, not a
+second source of truth or a parallel state machine.
+
+`HoldProfile` — the method `game-performance` actually uses — snapshots
+the current profile, forces `power-saver` or `performance` for the
+duration of the hold, and restores the snapshot once every outstanding
+hold has drained; concurrent holds resolve with upstream PPD's own
+precedence (`power-saver` outranks `performance`). A holder that
+disconnects without calling `ReleaseProfile` — a crashed game, say — is
+caught by watching `NameOwnerChanged` and its holds are released the
+same way a clean `ReleaseProfile` would. Deliberately, this whole
+surface has **no polkit gating**: upstream PPD requires none for
+`ActiveProfile` or the hold methods, and adding it to the shim would
+silently regress the exact clients it exists to revive.
+
+One subtlety worth flagging for anyone touching conflict detection: now
+that hpd can legitimately own the PPD bus name itself, a naive
+"does anything own `net.hadess.PowerProfiles`" check would misreport
+hpd's own shim as the rival it's standing in for. `power_conflicts()`
+avoids this by comparing the name's *owner* (`GetNameOwner`) against
+the connection's own unique name, rather than just asking
+`NameHasOwner` — only a name owned by someone else counts as a live
+PPD rival. `hpdctl status`/`doctor` surface the shim's state as a
+"compat PPD: active/inactive" line, backed by the `get_ppd_shim_active`
+D-Bus method.
+
+## 9. Extended telemetry (`GetTelemetry`, daemon ≥ 2.8.0)
+
+`GetThermalStatus`'s fixed `(cpu_temp_c, gpu_temp_c, cpu_rpm, gpu_rpm,
+soc_power_mw)` tuple can never grow without breaking every existing
+client — a `(iiiii)` D-Bus signature is load-bearing wire format, not
+just a return type. Since 2.8.0, everything new lands instead on
+`get_telemetry() -> a{sv}`, an open-ended map where a key is present
+**only** when the running hardware genuinely exposes that reading: a
+battery-less board, or one without amdgpu's `gpu_busy_percent`, simply
+omits the corresponding key rather than reporting a placeholder zero.
+`get_thermal_status` itself is unchanged and stays fully supported —
+`get_telemetry` is a superset, not a replacement, and also carries the
+original five readings under the same key names (`cpu_temp_c`,
+`gpu_temp_c`, `cpu_fan_rpm`, `gpu_fan_rpm`, `soc_power_mw`) so a client
+that has already migrated needs only the one call.
+
+The new keys cover the ground `GetThermalStatus` never could:
+`battery_power_mw` (discharge only), `battery_percent`,
+`battery_status` (the raw kernel string), `battery_health_pct`
+(current vs. design capacity), `battery_cycles`, `cpu_freq_mhz`
+(averaged across every `cpufreq/policy*`), `gpu_freq_mhz` (amdgpu
+hwmon's `freq1_input`, falling back to the active `pp_dpm_sclk` line),
+`gpu_busy_pct`, and `vram_used_mb`/`vram_total_mb`. `gpu_throttle_status`
+is defined in the capability trait but not yet populated by the ASUS
+backend — there is no stable, non-debugfs sysfs source for it at time
+of writing. Since **2.11.0**, the map also carries `cpu_busy_pct`
+(0–100), the one telemetry field the plugin's bottleneck-diagnosis
+heuristic needed and didn't have: because `/proc/stat`'s aggregate
+`cpu` line reports cumulative jiffies since boot rather than a rate, a
+percentage requires a delta between two time-separated samples. That
+makes `cpu_busy_pct` the daemon's first genuinely *stateful*
+telemetry accessor — every other `get_telemetry` field is a stateless
+instantaneous read — backed by a mutex-guarded previous sample that
+returns `None` on the first call after daemon start or on any call
+within 200 ms of the last one.
+
+Implementation-wise, the new `hpd-capabilities::telemetry::
+SystemTelemetry` trait is an additive, optional `HwBackend::telemetry()`
+accessor — the same "capability that may simply be absent" pattern used
+throughout the trait hierarchy — with `hpd-backend-asus::telemetry`
+providing the ASUS implementation. Like `GetThermalStatus` and
+`GetFanCurve`, `GetTelemetry` is **poll-only**: it has no
+`PropertiesChanged` signal, so a client (the plugin, `hpdctl monitor`)
+samples it at roughly 1 Hz while it actually needs the data, and
+`Variant`-wrapped values arrive needing an unwrap step at the D-Bus
+client boundary.
+
+---
+
+## 10. Persistence
 
 State is persisted to `/var/lib/hpd/state.toml` via the standard
 atomic `tempfile + rename` pattern. Under systemd the path is
@@ -445,7 +699,7 @@ first transition after boot.
 
 ---
 
-## 8. Configuration
+## 11. Configuration
 
 `DaemonConfig` (`hpd-daemon/src/config.rs`) is loaded from
 `/etc/hpd/config.toml` at startup, resolved via
@@ -481,17 +735,21 @@ override defaults; `install.sh` never overwrites an existing
 
 ---
 
-## 9. Where to look for things
+## 12. Where to look for things
 
 | You want to find…                                | Look in                                                  |
 |--------------------------------------------------|----------------------------------------------------------|
 | The state machine (transitions / reducer / effects)| `hpd-core/src/{transition,reducer,effect,executor}.rs`    |
-| Hardware-write contracts                         | `hpd-capabilities/src/{power,charge,fan,platform_profile}.rs` |
-| ASUS firmware-attribute paths                    | `hpd-backend-asus/src/{power,charge,fan,profile}.rs`     |
+| Hardware-write contracts                         | `hpd-capabilities/src/{power,charge,fan,fan_curve,gpu_clock,thermal,platform_profile,telemetry}.rs` |
+| ASUS firmware-attribute paths                    | `hpd-backend-asus/src/{power,charge,fan,fan_curve,gpu_clock,thermal,profile}.rs` |
+| GPU clock ceiling inference (tier → MHz)         | `hpd-core/src/inference.rs::gpu_clock_range_for_tier` + `RuntimeConfig::gpu_clock_fractions` in `hpd-capabilities/src/profile.rs` |
 | DMI detection                                    | `hpd-daemon/src/probe.rs`, `hpd-backend-asus/src/detect.rs` |
 | D-Bus method / property surface                  | `hpd-dbus/src/service.rs`                                |
 | Polkit action IDs                                | `hpd-dbus/src/actions.rs`                                |
 | Polkit fail-closed contract                      | `hpd-dbus/src/polkit.rs`                                 |
+| Competing power-daemon detection                 | `hpd-dbus/src/conflicts.rs` + `hpd-daemon/src/main.rs` startup check + `get_power_conflicts`/`get_advisory_daemons` in `hpd-dbus/src/service.rs` |
+| PPD compat shim (`net.hadess.PowerProfiles`)     | `hpd-dbus/src/ppd_shim.rs` + name-claim/task-spawn in `hpd-daemon/src/main.rs` + `get_ppd_shim_active` in `hpd-dbus/src/service.rs` |
+| Power-ownership repair + shared health block     | `hpd-cli/src/doctor.rs` (`doctor::print_health`, reused by `hpdctl status`) |
 | Config schema + reload behaviour                 | `hpd-daemon/src/config.rs`                               |
 | Composition root / signal wiring                 | `hpd-daemon/src/main.rs`                                 |
 | Suspend / resume monitor                         | `hpd-daemon/src/suspend.rs`                              |
@@ -504,7 +762,7 @@ override defaults; `install.sh` never overwrites an existing
 
 ---
 
-## 10. Extending the system
+## 13. Extending the system
 
 ### Adding a new vendor backend
 
@@ -555,7 +813,7 @@ override defaults; `install.sh` never overwrites an existing
 
 ---
 
-## 11. Things that look weird but are intentional
+## 14. Things that look weird but are intentional
 
 - **L2 sits before L1 in the workspace manifest.** Backends depend
   on capability traits, not the other way around.
@@ -582,10 +840,26 @@ override defaults; `install.sh` never overwrites an existing
 - **`hpd-daemon`'s `simulator` feature transitively pulls
   `vendor-asus` + `hpd-dbus/simulator`.** The simulator needs the
   ASUS firmware model and the polkit bypass in the same build.
+- **GPU clock constraints are read live; fan-curve constraints are
+  hardcoded.** `GpuClockConstraints` comes straight from the kernel's
+  `OD_RANGE` on every call — a generic amdgpu interface that needs no
+  per-device recalibration. `FanCurveConstraints` is the opposite: a
+  hardcoded-per-model constant, because the EC's safety floor has no
+  generic kernel source to read. Don't try to make these two symmetric.
+- **`active_gpu_clock` defaults to `None` forever, not just at first
+  boot** — unlike `active_fan_curve`, whose real steady state is never
+  `None`. The daemon must never touch `power_dpm_force_performance_level`
+  / `pp_od_clk_voltage` until the user opts in at least once via
+  `enable_gpu_auto_follow` or `set_gpu_clock_range`.
+- **`SystemResumed` resets GPU clocks before reapplying them**, unlike
+  the fan curve's plain re-apply. A GPU-clock write is a two-step
+  hardware operation with a real unsafe intermediate state a crash
+  could land in, so resume goes through a known-clean firmware-auto
+  baseline first.
 
 ---
 
-## 12. Reading order
+## 15. Reading order
 
 If you've just opened the repo and have an hour:
 
@@ -598,9 +872,11 @@ If you've just opened the repo and have an hour:
 5. `crates/hpd-backend-asus/README.md` for a concrete backend.
 6. `crates/hpd-dbus/README.md` for the public surface.
 
-If you want to *add* something: jump straight to §10 above, then
+If you want to *add* something: jump straight to §13 above, then
 read the file referenced for the layer you're touching.
 
 ---
 
-*Last updated: 2026-05-24 (v1.0.0 + Phase 3 documentation).*
+*Last updated: 2026-07-13 (synced through v2.13.0: competing power
+daemons, the PPD compat shim, extended telemetry, custom fan curves,
+and GPU clock range control).*

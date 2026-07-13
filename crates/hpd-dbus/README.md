@@ -16,28 +16,45 @@ object path `/dev/cirodev/hpd/PowerDaemon1`. Every privileged
 setter is gated through `polkit::check` *before* a `Transition` is
 enqueued.
 
-| D-Bus member            | Kind     | Polkit action                       |
-|-------------------------|----------|-------------------------------------|
-| `set_spl(u32)`          | method   | `dev.cirodev.hpd.set-tdp`           |
-| `set_preset(s)`         | method   | `dev.cirodev.hpd.set-tdp`           |
-| `set_charge_threshold(y)`| method  | `dev.cirodev.hpd.set-charge`        |
-| `set_profile(s)`        | method   | `dev.cirodev.hpd.set-profile`       |
-| `set_cooling_level(s)`  | method   | `dev.cirodev.hpd.set-profile`       |
-| `set_fan_auto()`        | method   | `dev.cirodev.hpd.set-profile`       |
-| `reset_fan_curve()`     | method   | `dev.cirodev.hpd.set-profile`       |
-| `set_ac_max_performance(b)` | method | `dev.cirodev.hpd.set-profile`     |
-| `get_hardware_limits()` / `get_version()` / `get_thermal_status()` / `get_fan_curve()` / `get_diagnostics()` / `get_power_conflicts()` | method | — |
-| `is_ac_connected()`     | method   | —                                   |
-| `current_spl`           | property | —                                   |
-| `active_profile`        | property | —                                   |
-| `charge_end_threshold`  | property | —                                   |
-| `auto_cooling`          | property | —                                   |
-| `fan_curve`             | property | —                                   |
-| `ac_connected`          | property | —                                   |
-| `ac_locked` / `ac_max_performance` | property | —                        |
+| D-Bus member                          | Kind     | Polkit action                              | Since  |
+|----------------------------------------|----------|---------------------------------------------|--------|
+| `set_spl(u32)`                        | method   | `dev.cirodev.hpd.set-tdp`                   | —      |
+| `set_preset(s)`                       | method   | `dev.cirodev.hpd.set-tdp`                   | —      |
+| `set_charge_threshold(y)`             | method   | `dev.cirodev.hpd.set-charge`                | —      |
+| `set_profile(s)`                      | method   | `dev.cirodev.hpd.set-profile`               | —      |
+| `set_cooling_level(s)`                | method   | `dev.cirodev.hpd.set-profile`               | —      |
+| `set_fan_auto()`                      | method   | `dev.cirodev.hpd.set-profile`               | —      |
+| `reset_fan_curve()`                   | method   | `dev.cirodev.hpd.set-profile`               | —      |
+| `set_ac_max_performance(b)`           | method   | `dev.cirodev.hpd.set-profile`               | 2.7.0  |
+| `set_fan_curve(cpu: a(yy), gpu: a(yy))` | method | `dev.cirodev.hpd.set-profile`             | 2.9.0  |
+| `set_gpu_clock_range(min_mhz: u32, max_mhz: u32)` | method | `dev.cirodev.hpd.set-profile`   | 2.12.0 |
+| `enable_gpu_auto_follow()`            | method   | `dev.cirodev.hpd.set-profile`               | 2.12.0 |
+| `reset_gpu_clocks()`                  | method   | `dev.cirodev.hpd.set-profile`               | 2.12.0 |
+| `restore_defaults()`                  | method   | `set-tdp` **and** `set-charge` **and** `set-profile` (all three) | Unreleased — merged to `main`, not yet in a tagged release (next after `2.13.0`, expected `2.14.0`) |
+| `get_hardware_limits()` / `get_version()` / `get_thermal_status()` / `get_fan_curve()` | method | — | — |
+| `is_ac_connected()`                   | method   | —                                            | —      |
+| `get_diagnostics()`                   | method   | —                                            | 2.1.0  |
+| `get_power_conflicts()`               | method   | —                                            | 2.2.0  |
+| `get_advisory_daemons()`              | method   | —                                            | 2.3.0  |
+| `get_telemetry()`                     | method   | —                                            | 2.8.0  |
+| `get_fan_curve_constraints()`         | method   | —                                            | 2.9.0  |
+| `get_ppd_shim_active()`               | method   | — (whether the `net.hadess.PowerProfiles` compat shim claimed its bus name) | 2.10.0 |
+| `get_gpu_clock_constraints()`         | method   | —                                            | 2.12.0 |
+| `get_gpu_clock_range()`               | method   | —                                            | 2.12.0 |
+| `current_spl`                         | property | —                                            | —      |
+| `active_profile`                      | property | —                                            | —      |
+| `charge_end_threshold`                | property | —                                            | —      |
+| `auto_cooling`                        | property | —                                            | —      |
+| `fan_curve`                           | property | —                                            | —      |
+| `ac_connected`                        | property | —                                            | 2.4.0  |
+| `ac_locked` / `ac_max_performance`    | property | —                                            | 2.7.0  |
+| `gpu_clock_range` / `gpu_follows_tdp` | property | —                                            | 2.12.0 |
 
-While `ac_locked` is `true` (on AC with the lock preference on), the six
-power/cooling setters reject with a "locked on AC" error;
+While `ac_locked` is `true` (on AC with the lock preference on), every
+power/cooling setter (`set_spl`, `set_preset`, `set_profile`,
+`set_cooling_level`, `set_fan_auto`, `reset_fan_curve`, `set_fan_curve`,
+`set_gpu_clock_range`, `enable_gpu_auto_follow`, `reset_gpu_clocks`,
+`restore_defaults`) rejects with a "locked on AC" error;
 `set_charge_threshold` and `set_ac_max_performance` are exempt.
 
 Property changes emit `PropertiesChanged` signals — the daemon's

@@ -23,8 +23,9 @@ Three principles enforced here:
 1. **`reduce()` is pure.** No I/O, no async, no globals, no
    `println!`. Logging is via structured `tracing` fields only.
 2. **All side-effects go through `Effect`.** `ApplyPowerEnvelope`,
-   `ApplyPlatformProfile`, `ApplyChargeThreshold`, `PersistState`.
-   The Executor is the only thing that dispatches them.
+   `ApplyPlatformProfile`, `ApplyChargeThreshold`, `ApplyFanCurve`,
+   `ResetFanCurve`, `ApplyGpuClockRange`, `ResetGpuClocks`,
+   `PersistState`. The Executor is the only thing that dispatches them.
 3. **`ConfigReload` is intercepted before `reduce`.** The Executor
    atomically swaps its `RuntimeConfig`; the next transition uses
    the new values. The reducer treats `ConfigReload` as a no-op.
@@ -40,15 +41,24 @@ lock preference.
 
 If a hardware-write Effect fails, the Executor re-reads the live
 state from the backend and re-injects a `Sync*` transition so the
-in-memory state matches reality. Lote 38 made this uniform across
-`Apply{PowerEnvelope, PlatformProfile, ChargeThreshold}`.
+in-memory state matches reality. This is uniform across
+`Apply{PowerEnvelope, PlatformProfile, ChargeThreshold}` and the fan
+curve / GPU clock rails (`ApplyFanCurve`/`ResetFanCurve`,
+`ApplyGpuClockRange`/`ResetGpuClocks`), each with its matching
+`Sync*` transition (`SyncPowerTarget`, `SyncPlatformProfile`,
+`SyncChargeThreshold`, `SyncFanCurve`, `SyncGpuClockRange`).
 
-## Auto-profile inference
+## Auto-cooling inference
 
-When `RuntimeConfig::fan_follows_tdp == true`, a TDP change in
-`reduce()` also emits a `ApplyPlatformProfile` in the same batch.
-The mapping lives in `inference.rs` (`infer_profile_from_target`)
-and is the single source of truth for the auto-cooling behaviour.
+**Power and cooling are decoupled** (since the 2.4.0 power↔cooling
+decouple — see the daemon repo's `docs/fan-curves.md`). When a
+per-lever `fan_follows_tdp == true`, a TDP change in `reduce()` also
+infers and emits a new **fan curve** (`Effect::ApplyFanCurve`) in the
+same batch — it does **not** touch the platform profile. The mapping
+lives in `inference.rs` (`infer_fan_curve_from_spl`) and is the
+single source of truth for the auto-cooling behaviour. `SetProfile`
+(the separate Power-mode lever) is never inferred from TDP in either
+direction.
 
 ## Dependencies
 
@@ -73,8 +83,8 @@ let limits = PowerEnvelopeLimits { /* … */ };
 let cfg    = RuntimeConfig::default();
 let state  = ProfileState::default();
 
-let (next, effects) = reduce(&state, Transition::SetSpl(15), &limits, &cfg);
-assert_eq!(next.power_target.spl.as_watts(), 15);
+let output = reduce(&state, Transition::SetSpl(15), &limits, &cfg)?;
+assert_eq!(output.new_state.power_target.spl.as_watts(), 15);
 ```
 
 ## Docs

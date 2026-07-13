@@ -19,7 +19,11 @@ spawns the netlink / suspend monitors, and drives the lifecycle
 
 Publishes `dev.cirodev.hpd.PowerDaemon1` on the **system bus** in
 production and on the **session bus** when built with
-`--features simulator`.
+`--features simulator`. Also owns the `net.hadess.PowerProfiles`
+compatibility shim (since 2.10.0) — a thin PPD-protocol server on the
+same bus so the KDE power applet, `powerprofilesctl`, and CachyOS's
+`game-performance` all transparently drive `hpd` instead of a real
+`power-profiles-daemon`.
 
 ## Architecture
 

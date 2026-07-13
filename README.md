@@ -20,10 +20,11 @@ Everything sits behind a single D-Bus interface
 (`dev.cirodev.hpd.PowerDaemon1`) on the system bus, and a thin CLI
 (`hpdctl`) drives it.
 
-> **Status:** `v1.0.0` — the public surface (D-Bus interface, `hpdctl`
+> **Status:** `v2.13.0` — the public surface (D-Bus interface, `hpdctl`
 > CLI, on-disk state at `/var/lib/hpd/state.toml`, polkit action IDs)
 > is stable and follows [SemVer](https://semver.org/). Future
-> breaking changes require a major bump. See [`CHANGELOG.md`](CHANGELOG.md).
+> breaking changes require a major bump. See [`CHANGELOG.md`](CHANGELOG.md)
+> for the exact version and everything shipped since.
 
 ---
 
@@ -168,9 +169,12 @@ hpdctl cool auto               # let the daemon pick the fan curve from TDP
 hpdctl cool reset              # hand the fans back to firmware control
 hpdctl cool get                # current level + mode
 hpdctl cool curve              # draw the active fan curve
+hpdctl cool set-custom 45:20 54:50 62:95 69:145 75:190 80:225 85:255 92:255
+                                # hand-drawn 8-point curve (temp_c:pwm), advanced
 
-# (The power profile / EPP is a separate lever, default `performance`,
-#  available over D-Bus as set_profile for advanced power tuning.)
+# Power mode / EPP — a separate lever from TDP and cooling, default `performance`
+hpdctl power set performance|balanced|eco
+hpdctl power get
 
 # GPU clock range — optional, opt-in frequency ceiling (daemon >= 2.12.0)
 hpdctl gpu limits              # this device's supported range (live OD_RANGE)
@@ -186,6 +190,10 @@ hpdctl charge get
 # AC lock — pin max performance while plugged in (on by default)
 hpdctl ac-lock                 # show the current state
 hpdctl ac-lock on|off          # on = lock max on AC; off = AC fully manual
+
+# Restore recommended defaults in one shot (daemon >= 2.14.0)
+hpdctl restore-defaults        # TDP->Balanced, Power->Performance, Charge->80%,
+                                # Cooling->firmware auto, GPU clock only if opted in
 
 # Live monitor
 hpdctl monitor                 # refreshes once a second
@@ -238,8 +246,10 @@ Ally X at a fixed SPL: `power-saver` drew ~13 W, `performance` ~29–40 W.
 combination, and a "what's normal vs. what to worry about" guide.
 
 See [`docs/fan-curves.md`](docs/fan-curves.md) for the thermal rationale
-and [`docs/dev/FAN_CURVE_TESTING.md`](docs/dev/FAN_CURVE_TESTING.md) for
-the on-device validation plan. A plain-language explainer in Spanish
+and [`docs/dev/GAMING-ROADMAP-es.md`](docs/dev/GAMING-ROADMAP-es.md)
+("Fase 3 — Curvas de ventilador personalizadas") for the on-device
+validation plan, including the 2.9.0 custom-curve editor. A
+plain-language explainer in Spanish
 (the power↔cooling decouple, auto vs manual, what changed and why) lives
 in [`docs/COOLING-es.md`](docs/COOLING-es.md). For a **visual** walkthrough
 (diagrams of the daemon, the Decky plugin, and how they talk — every

@@ -258,9 +258,12 @@ the charger; the journal should show:
 INFO hpd_netlink: ⚡ Hardware event detected: Charger connected = true
 ```
 
-If you don't see it: the udev subsystem name might be unusual on
-your distro. The crate matches on names containing `AC` or `ADP`
-(case-insensitive). Custom kernel? Inspect with:
+If you don't see it: the crate scans every `power_supply` device for
+one whose `type` attribute reads `Mains` (not a name substring match
+on `AC`/`ADP` — some boards, e.g. the ROG Ally X, expose USB-C PD
+ports as separate `power_supply` nodes that must NOT be confused with
+the real AC node). If detection seems wrong on your distro, inspect
+with:
 
 ```bash
 udevadm monitor --subsystem-match=power_supply --property
