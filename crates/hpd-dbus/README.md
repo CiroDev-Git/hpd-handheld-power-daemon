@@ -30,7 +30,7 @@ enqueued.
 | `set_gpu_clock_range(min_mhz: u32, max_mhz: u32)` | method | `dev.cirodev.hpd.set-profile`   | 2.12.0 |
 | `enable_gpu_auto_follow()`            | method   | `dev.cirodev.hpd.set-profile`               | 2.12.0 |
 | `reset_gpu_clocks()`                  | method   | `dev.cirodev.hpd.set-profile`               | 2.12.0 |
-| `restore_defaults()`                  | method   | `set-tdp` **and** `set-charge` **and** `set-profile` (all three) | Unreleased — merged to `main`, not yet in a tagged release (next after `2.13.0`, expected `2.14.0`) |
+| `restore_defaults()`                  | method   | `set-tdp` **and** `set-charge` **and** `set-profile` (all three) | 2.14.0 |
 | `get_hardware_limits()` / `get_version()` / `get_thermal_status()` / `get_fan_curve()` | method | — | — |
 | `is_ac_connected()`                   | method   | —                                            | —      |
 | `get_diagnostics()`                   | method   | —                                            | 2.1.0  |

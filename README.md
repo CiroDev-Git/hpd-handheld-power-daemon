@@ -20,7 +20,7 @@ Everything sits behind a single D-Bus interface
 (`dev.cirodev.hpd.PowerDaemon1`) on the system bus, and a thin CLI
 (`hpdctl`) drives it.
 
-> **Status:** `v2.13.0` — the public surface (D-Bus interface, `hpdctl`
+> **Status:** `v2.14.0` — the public surface (D-Bus interface, `hpdctl`
 > CLI, on-disk state at `/var/lib/hpd/state.toml`, polkit action IDs)
 > is stable and follows [SemVer](https://semver.org/). Future
 > breaking changes require a major bump. See [`CHANGELOG.md`](CHANGELOG.md)
