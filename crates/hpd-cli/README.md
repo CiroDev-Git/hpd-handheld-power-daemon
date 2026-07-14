@@ -44,7 +44,7 @@ The CLI surface is stable under SemVer from `1.0.0` forward.
 | `hpdctl gpu reset`            | Hand the GPU clock back to firmware auto. Daemon ≥ 2.12.0; `hpdctl gpu` shipped in 2.13.0. |
 | `hpdctl gpu get`              | Show current GPU clock mode and committed range. Daemon ≥ 2.12.0; `hpdctl gpu` shipped in 2.13.0. |
 | `hpdctl gpu limits`           | Show this device's supported GPU clock range (live `OD_RANGE`). Daemon ≥ 2.12.0; `hpdctl gpu` shipped in 2.13.0. |
-| `hpdctl restore-defaults`     | Restore recommended defaults in one shot: TDP → Balanced, Power mode → Performance, Charge cap → 80%, Cooling → firmware auto, GPU clock → firmware auto (only if already opted in). Unreleased — merged to `main`, not yet in a tagged release (next after `2.13.0`, expected `2.14.0`). |
+| `hpdctl restore-defaults`     | Restore recommended defaults in one shot: TDP → Balanced, Power mode → Performance, Charge cap → 80%, Cooling → firmware auto, GPU clock → firmware auto (only if already opted in). Daemon ≥ 2.14.0. |
 | `hpdctl doctor`               | Report whether polkit is installed and whether a competing power daemon is fighting hpd over TDP/profile/charge. Read-only. |
 | `hpdctl doctor --fix`         | Neutralize competing daemons (mask) and install the polkit policy in one elevated step — a superset of `fix-polkit`. |
 | `hpdctl fix-polkit`           | Install the polkit policy + rules and reload polkit (self-elevates via pkexec/sudo). |

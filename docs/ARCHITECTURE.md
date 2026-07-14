@@ -284,6 +284,7 @@ day they shipped.
 | `SetGpuClockRange { min_mhz, max_mhz }` | `hpdctl gpu set`, D-Bus `set_gpu_clock_range` (daemon ≥ 2.12.0) |
 | `EnableGpuAutoFollow`            | `hpdctl gpu auto`, D-Bus `enable_gpu_auto_follow` (daemon ≥ 2.12.0) |
 | `ResetGpuClocks`                 | `hpdctl gpu reset`, D-Bus `reset_gpu_clocks` (daemon ≥ 2.12.0) |
+| `RestoreDefaults`                | `hpdctl restore-defaults`, D-Bus `restore_defaults` (daemon ≥ 2.14.0) — composes `SetPreset(Balanced)` → `SetProfile(Performance)` → `ChargeThresholdChanged(80)` → `ResetFanCurve` → conditionally `ResetGpuClocks` (only if already opted in) via recursive `reduce()` calls inside one atomic transaction; a full no-op if already at every default |
 | `SetAcMaxPerformance(bool)`      | `hpdctl ac-lock on/off`, D-Bus `set_ac_max_performance` |
 | `ChargeThresholdChanged(u8)`     | `hpdctl charge set`, D-Bus `set_charge_threshold` |
 | `AcPowerChanged(bool)`           | `hpd-netlink` udev event                          |
@@ -877,6 +878,7 @@ read the file referenced for the layer you're touching.
 
 ---
 
-*Last updated: 2026-07-13 (synced through v2.13.0: competing power
+*Last updated: 2026-07-14 (synced through v2.14.0: competing power
 daemons, the PPD compat shim, extended telemetry, custom fan curves,
-and GPU clock range control).*
+GPU clock range control, and the `RestoreDefaults` composed
+transaction).*
