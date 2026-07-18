@@ -193,8 +193,10 @@ enum Commands {
     ///
     /// Sets TDP to the Balanced preset, Power mode to Performance, the
     /// battery charge cap to 80% (the long-battery-life default — not
-    /// 100%, which disables the cap), and hands cooling back to firmware
-    /// auto — the same one-tap action available in the Decky plugin.
+    /// 100%, which disables the cap), and switches cooling to auto (the
+    /// fan curve follows your TDP — the daemon's own recommended mode,
+    /// same as `cool auto`) — the same one-tap action available in the
+    /// Decky plugin.
     /// Resets the GPU clock range too, but only if you'd already opted in
     /// with `hpdctl gpu` (`gpu auto`/`gpu set`); if you've never touched
     /// `gpu`, this leaves it alone — GPU clock control is opt-in and this
@@ -451,7 +453,7 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
                 eprintln!("❌ Error restoring defaults: {}", e);
             } else {
                 println!(
-                    "✅ Restored to recommended defaults (TDP → Balanced, Power mode → Performance, Cooling → firmware auto, Charge cap → 80%)."
+                    "✅ Restored to recommended defaults (TDP → Balanced, Power mode → Performance, Cooling → auto (follows TDP), Charge cap → 80%)."
                 );
             }
         }
