@@ -826,8 +826,13 @@ override defaults; `install.sh` never overwrites an existing
   state.
 - **`SetSpl` derives SPPT and FPPT.** `SetSpl(u32)` multiplies SPL
   by `sppt_factor` (default 1.15×) and `fppt_factor` (default
-  1.25×), capped at the hardware envelope. The manual escape
-  hatch is `SetEnvelope` (takes all three explicitly).
+  1.25×), capped at the hardware envelope — except at `spl ==
+  spl_max`, where both boost rails go straight to their own
+  hardware ceiling (`sppt_max`/`fppt_max`) instead of through the
+  multiplier (≥ 2.14.2): the factors are tuned for the sustained
+  middle of the range, and "Max" should mean the actual maximum,
+  bursts included. The manual escape hatch is `SetEnvelope`
+  (takes all three explicitly).
 - **`hpd-capabilities::error` is a one-line `pub use` shim** —
   re-exports `hpd_error::*` for backwards compat across the
   workspace's own callers. New code imports from `hpd_error`
