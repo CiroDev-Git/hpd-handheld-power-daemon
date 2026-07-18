@@ -208,10 +208,10 @@ then lives in `state.toml` and is flipped via `set_ac_max_performance`
 - **The lock.** While `is_ac_connected && ac_max_performance`, the reducer
   treats every user power/cooling write (`SetSpl`, `SetPreset`,
   `SetEnvelope`, `SetProfile`, `SetCoolingLevel`, `SetCustomFanCurve`,
-  `EnableFanAuto`, `ResetFanCurve`, `SetGpuClockRange`,
-  `EnableGpuAutoFollow`, `ResetGpuClocks`, `RestoreDefaults` — the full
-  `is_locked_write` list, keep this in sync when a new lever transition
-  is added) as **no-ops**. The D-Bus setters also
+  `EnableFanAuto`, `ResetFanCurve`, `EnableGpuAutoFollow`,
+  `ResetGpuClocks`, `RestoreDefaults` — the full `is_locked_write` list,
+  keep this in sync when a new lever transition is added) as
+  **no-ops**. The D-Bus setters also
   `reject_if_locked()` up-front. `ChargeThresholdChanged` and
   `SetAcMaxPerformance` are **never** gated — the battery limit stays editable,
   and the toggle is how you *release* the lock. `Sync*` rollbacks,
@@ -608,12 +608,19 @@ and exits cleanly rather than letting systemd `SIGKILL` it mid-write.
   at first boot** — unlike `active_fan_curve`, whose real steady state is
   never `None`. The daemon must never touch
   `power_dpm_force_performance_level`/`pp_od_clk_voltage` until the user
-  calls `enable_gpu_auto_follow`/`set_gpu_clock_range` at least once.
-  `force_ac_max_performance`, the AC-plug-restore branch, and
-  `SystemResumed`'s full reapply all guard their GPU-clock effect on
-  `active_gpu_clock.is_some()` — mirroring the fan curve's unconditional
-  re-pin there would silently auto-opt every fresh install into managed
-  GPU clocks the first time AC is plugged in.
+  calls `enable_gpu_auto_follow` at least once — the only opt-in; there
+  is no manual-range D-Bus method (`SetGpuClockRange`/`hpdctl gpu set`
+  existed through the 2.x line and were removed in 3.0.0 — see
+  `CHANGELOG.md` — real-world use found a manually-pinned range was the
+  one control in the whole stack a user could set once and silently cap
+  performance with). `force_ac_max_performance`, the AC-plug-restore
+  branch, and `SystemResumed`'s full reapply all guard their GPU-clock
+  effect on `active_gpu_clock.is_some()` — mirroring the fan curve's
+  unconditional re-pin there would silently auto-opt every fresh install
+  into managed GPU clocks the first time AC is plugged in.
+  `GpuClockSelection`'s second variant, `Unmanaged(GpuClockRange)`, is
+  rollback-only (see `SyncGpuClockRange`) — never something any
+  transition lets a caller construct directly.
 - **`SystemResumed` does `ResetGpuClocks` then `ApplyGpuClockRange`, not a
   bare re-apply**, when a GPU clock is managed — asymmetric with the fan
   curve's plain re-apply. A GPU-clock write is two hardware steps

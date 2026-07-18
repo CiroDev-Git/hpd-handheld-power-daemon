@@ -13,6 +13,39 @@ not part of the published repository.
 
 ## [Unreleased]
 
+### Breaking — operators / packagers
+
+- **Removed the GPU clock manual-range D-Bus method and CLI subcommand:
+  `SetGpuClockRange(u min_mhz, u max_mhz)` and `hpdctl gpu set <min>
+  <max>`.** Found during a TDP/preset consistency audit: this was the
+  one control across the entire daemon+plugin stack a user could set
+  once and forget, silently capping GPU performance below what their
+  TDP/cooling would otherwise allow, with no way for the daemon to
+  distinguish a deliberate efficiency choice from an oversight — unlike
+  a low TDP or a Silent fan curve, a low pinned MHz ceiling has no
+  legitimate everyday use case that `EnableGpuAutoFollow`/`gpu auto`
+  doesn't already cover. **Migration**: there is no replacement flag.
+  Scripts calling `hpdctl gpu set` or the D-Bus method directly must
+  switch to `hpdctl gpu auto` / `EnableGpuAutoFollow()` (TDP-derived
+  ceiling) or drop the call entirely (firmware auto, the default).
+  Everything else on this lever is unchanged: `gpu auto`/
+  `EnableGpuAutoFollow`, `gpu reset`/`ResetGpuClocks`, `gpu get`/
+  `gpu limits` and their D-Bus equivalents all still work exactly as
+  before.
+  - `GpuClockSelection`'s `Custom(GpuClockRange)` variant is renamed to
+    `Unmanaged(GpuClockRange)` and is now rollback-only — the daemon
+    itself never lets a caller construct it; it only appears after a
+    failed hardware write whose own best-effort cleanup also failed.
+    The `gpu_clock_range` D-Bus property reports this rare case as
+    `unknown` (previously `custom`).
+  - `Effect::ApplyGpuClockRange`'s payload narrowed from
+    `GpuClockSelection` to a plain `FanCurvePreset` tier — internal
+    `hpd-core` API, not part of the D-Bus/CLI surface, but noted for
+    anyone vendoring this crate directly.
+  - Per `docs/release/VERSIONING.md`, removing a D-Bus method/CLI
+    subcommand is always a MAJOR bump — this release is `3.0.0`, not a
+    patch, despite shipping alongside the unrelated fixes below.
+
 ### Fixed
 
 - **`Preset::Max` (and the AC-lock's forced-max envelope) now reach the

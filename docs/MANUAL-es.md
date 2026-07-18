@@ -98,46 +98,54 @@ que ya hacen el TDP y el cooling.
 
 **Para qué la usarías:** el TDP ya limita la potencia total del chip, y
 el cooling ya limita la temperatura — el rango de clock de GPU es una
-tercera herramienta, más quirúrgica, para los casos que esas dos no
-cubren bien: fijar un techo más bajo para ahorrar batería o bajar el
-ruido de coil en un juego que no necesita el clock máximo, o subirlo a
-propósito para un título exigente.
+tercera herramienta, más quirúrgica, para el caso que esas dos no
+cubren bien: un techo de eficiencia que escala con cuánto TDP le diste
+realmente al chip, para que una sesión de TDP bajo no desperdicie
+margen dejando que la GPU persiga clocks que no puede sostener igual.
 
 ```
 hpdctl gpu auto             # seguir al TDP (espeja `cool auto`)
-hpdctl gpu set <min> <max>  # rango explícito en MHz (avanzado), desactiva el auto-follow
 hpdctl gpu reset            # devolver el clock de GPU al firmware, deja de manejarlo del todo
 hpdctl gpu get              # ver el modo actual + el rango aplicado
 hpdctl gpu limits           # ver el rango de MHz que soporta este device (solo lectura)
 ```
 
-**Auto vs manual, la misma forma que el cooling:**
+**Auto o apagado — no hay pin manual:**
 - **`gpu auto`**: hpd infiere un techo de clock a partir de tu TDP
   actual, usando el mismo nivel silent/balanced/aggressive que ya se
   calcula para la curva del ventilador — un TDP bajo infiere un techo más
   bajo, un TDP alto infiere un techo cerca del rango completo del device.
-- **`gpu set <min> <max>`**: fijás vos mismo un rango explícito en MHz y
-  desactivás el auto-follow. Se valida contra el rango real soportado por
-  este device (`hpdctl gpu limits`); un par fuera de rango o inválido se
-  rechaza con un error específico.
+  Se re-deriva en cada cambio de TDP, así que nunca es un valor viejo que
+  quedó de una sesión anterior.
 - **`gpu reset`**: devuelve el clock al control automático del firmware —
   y, a diferencia de `cool reset` (que devuelve la *curva del
   ventilador* a uno de varios modos que el daemon sigue rastreando), esto
   devuelve el clock de GPU por completo a "hpd no está manejando esto en
   absoluto", el mismo estado en el que arranca una instalación nueva.
 
+Existía un tercer comando, `gpu set <min> <max>`, que fijaba un rango
+explícito en MHz ignorando el TDP por completo. Se eliminó en la 3.0.0:
+el uso real en dispositivos encontró que era el único control de todo
+el daemon que un usuario podía dejar puesto y olvidar, capando en
+silencio el rendimiento de la GPU por debajo de lo que su TDP/cooling
+permitirían, sin forma de que hpd avisara al respecto — a diferencia de
+un TDP bajo o una curva Silent, un rango MHz fijo bajo no tiene un caso
+de uso legítimo cotidiano que `gpu auto` no cubra ya. Si buscás `gpu
+set` después de actualizar, esta es la razón por la que ya no está; no
+hay flag de reemplazo.
+
 > **Opcional y opt-in, para siempre — no solo en el primer arranque.**
 > hpd nunca toca el clock de GPU — ni lo lee, ni lo escribe, nada — hasta
-> que vos corrés `gpu auto` o `gpu set` al menos una vez. Esto es
-> distinto del cooling: el estado estable real del cooling nunca es
-> "apagado" (el daemon siempre está manejando *alguna* curva), pero el
-> estado estable del clock de GPU genuinamente es "sin tocar" por
-> defecto. Nada más en hpd lo activa por vos — ni `restore-defaults`, ni
-> enchufar el cargador, ni una instalación nueva o un upgrade. Una vez
-> que ya optaste por activarlo, `restore-defaults` y desenchufar el
-> cargador devuelven el clock de GPU al automático del firmware junto con
-> todo lo demás, igual que hacen con el cooling — solo que nunca prenden
-> el primer switch por vos.
+> que vos corrés `gpu auto` al menos una vez. Esto es distinto del
+> cooling: el estado estable real del cooling nunca es "apagado" (el
+> daemon siempre está manejando *alguna* curva), pero el estado estable
+> del clock de GPU genuinamente es "sin tocar" por defecto. Nada más en
+> hpd lo activa por vos — ni `restore-defaults`, ni enchufar el cargador,
+> ni una instalación nueva o un upgrade. Una vez que ya optaste por
+> activarlo, `restore-defaults` y desenchufar el cargador devuelven el
+> clock de GPU al automático del firmware junto con todo lo demás, igual
+> que hacen con el cooling — solo que nunca prenden el primer switch
+> por vos.
 
 **Qué es normal:** `hpdctl gpu get` reporta "firmware auto (not
 managed)" por defecto en toda instalación nueva, y de nuevo después de
@@ -166,7 +174,6 @@ corras hpd.
 | `hpdctl power set <modo>` / `power get` | Modo de potencia (avanzado): `performance` / `balanced` / `eco` |
 | `hpdctl charge set <%>` / `charge get` | Tope de carga de batería |
 | `hpdctl gpu auto` | El rango de clock de GPU sigue al TDP (avanzado, opt-in) |
-| `hpdctl gpu set <min> <max>` | Setear un rango explícito de clock de GPU en MHz (avanzado) |
 | `hpdctl gpu reset` | Devolver el clock de GPU al firmware, sin manejo alguno |
 | `hpdctl gpu get` | Ver el modo actual del clock de GPU + el rango aplicado |
 | `hpdctl gpu limits` | Ver el rango de clock de GPU soportado por este device |
@@ -414,12 +421,11 @@ debería reflejar eso: un control de cooling, no tres.
 | `SetAcMaxPerformance(b)` | Prende/apaga la preferencia "lock a máximo en AC" (daemon ≥ 2.7.0). |
 | `ac_locked` (prop) | En vivo: los controles de potencia/cooling están bloqueados porque el AC está enchufado y la preferencia de lock está prendida (daemon ≥ 2.7.0). |
 | `ac_max_performance` (prop) | La preferencia "lock a máximo en AC" en sí (daemon ≥ 2.7.0), a diferencia de `ac_locked` (el estado en vivo). |
-| `SetGpuClockRange(u, u)` | Control de rango de clock de GPU (daemon ≥ 2.12.0): `(min_mhz, max_mhz)` explícito, activa el modo manual de clock de GPU. |
-| `EnableGpuAutoFollow()` | Reactiva el auto-follow del clock de GPU respecto al TDP (daemon ≥ 2.12.0) — el opt-in del que depende toda la función. |
+| `EnableGpuAutoFollow()` | Reactiva el auto-follow del clock de GPU respecto al TDP (daemon ≥ 2.12.0) — el opt-in del que depende toda la función. No existe método para fijar un rango arbitrario; `SetGpuClockRange` existió en la línea 2.x y se eliminó en la 3.0.0. |
 | `ResetGpuClocks()` | Devuelve el clock de GPU al automático del firmware (daemon ≥ 2.12.0). |
 | `GetGpuClockConstraints() → a{sv}` | El rango de clock de GPU soportado en vivo por este device (`range_min_mhz`/`range_max_mhz`, daemon ≥ 2.12.0). Mapa vacío si no es programable. |
 | `GetGpuClockRange() → (u, u)` | El rango de clock de GPU realmente aplicado al hardware (daemon ≥ 2.12.0); `(0, 0)` = no aplica (auto de firmware / sin rango programable). |
-| `gpu_clock_range` (prop) | Selección activa de clock de GPU: `silent`/`balanced`/`aggressive`/`custom`/`auto` (daemon ≥ 2.12.0), espeja `fan_curve`. |
+| `gpu_clock_range` (prop) | Selección activa de clock de GPU: `silent`/`balanced`/`aggressive`/`auto` (daemon ≥ 2.12.0), espeja `fan_curve`. `unknown` es el caso raro de rollback, nunca un estado que se pueda pedir. |
 | `gpu_follows_tdp` (prop) | `true` = el clock de GPU sigue al TDP, `false` = manual o sin manejo (daemon ≥ 2.12.0), espeja `auto_cooling`. |
 
 **UI sugerida (post-desacople):**
@@ -443,11 +449,11 @@ debería reflejar eso: un control de cooling, no tres.
   daemons viejos. El fix del nodo `AC0` hace que el valor sea correcto en
   el Xbox Ally X.
 - Un control **opcional y avanzado de rango de clock de GPU**
-  (`gpu_clock_range` / `SetGpuClockRange` / `EnableGpuAutoFollow` /
-  `ResetGpuClocks`, daemon ≥ 2.12.0) — ocultalo por completo cuando
-  `GetGpuClockConstraints()` devuelve un mapa vacío (sin rango
-  programable en este device, o un daemon viejo). Nunca lo actives por
-  defecto; el propio daemon nunca opta por vos (ver la sección de clock
+  (`gpu_clock_range` / `EnableGpuAutoFollow` / `ResetGpuClocks`, daemon
+  ≥ 2.12.0) — ocultalo por completo cuando `GetGpuClockConstraints()`
+  devuelve un mapa vacío (sin rango programable en este device, o un
+  daemon viejo). Solo Auto/Reset, sin control de rango manual; nunca lo
+  actives por defecto, el propio daemon nunca opta por vos (ver la sección de clock
   de GPU más arriba).
 
 Para el razonamiento térmico y los datos detrás de todo esto, ver

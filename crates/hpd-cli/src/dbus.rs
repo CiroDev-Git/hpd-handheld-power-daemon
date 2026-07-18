@@ -118,17 +118,10 @@ trait PowerDaemon {
     /// "unknown / update hpd".
     fn get_ppd_shim_active(&self) -> zbus::Result<bool>;
 
-    /// Manual override: program an explicit GPU clock frequency range
-    /// (daemon ≥ 2.12.0) and disengage auto-follow. Validated against
-    /// `get_gpu_clock_constraints` both here and again independently by
-    /// the daemon.
-    async fn set_gpu_clock_range(&self, min_mhz: u32, max_mhz: u32) -> zbus::Result<()>;
-
     /// Re-enable GPU-clock auto-follow: the daemon infers a clock
     /// ceiling from the active TDP envelope, mirroring `set_fan_auto`.
     /// The opt-in the whole feature is gated behind — the daemon never
-    /// touches the GPU clock until this or `set_gpu_clock_range` is
-    /// called at least once.
+    /// touches the GPU clock until this is called at least once.
     async fn enable_gpu_auto_follow(&self) -> zbus::Result<()>;
 
     /// Hand the GPU clock back to firmware auto.
@@ -136,15 +129,17 @@ trait PowerDaemon {
 
     /// Restore recommended defaults in one daemon transaction (daemon ≥
     /// 2.14.0): TDP -> Balanced, Power mode -> Performance, Charge cap ->
-    /// 80% (the long-battery-life default), Cooling -> firmware auto, and
-    /// GPU clock -> firmware auto (only if already opted into a custom
-    /// range).
+    /// 80% (the long-battery-life default), Cooling -> auto (follows TDP),
+    /// and GPU clock -> firmware auto (only if already opted into
+    /// auto-follow).
     async fn restore_defaults(&self) -> zbus::Result<()>;
 
     /// This device's GPU clock range bounds (daemon ≥ 2.12.0): the
     /// kernel-reported live `OD_RANGE`, keys `range_min_mhz`/
-    /// `range_max_mhz` (`u`). Empty map when the device has no
-    /// programmable GPU clock range, or the live read failed.
+    /// `range_max_mhz` (`u`). Informational — shows what range
+    /// `enable_gpu_auto_follow`'s curated tiers resolve within. Empty
+    /// map when the device has no programmable GPU clock range, or the
+    /// live read failed.
     fn get_gpu_clock_constraints(&self) -> zbus::Result<HashMap<String, OwnedValue>>;
 
     /// The GPU clock range `(min_mhz, max_mhz)` currently committed to
@@ -153,8 +148,7 @@ trait PowerDaemon {
     fn get_gpu_clock_range(&self) -> zbus::Result<(u32, u32)>;
 
     /// Active GPU-clock selection: a preset name (`silent`, `balanced`,
-    /// `aggressive`), `custom` for an explicit range, or `auto` when the
-    /// firmware is in charge.
+    /// `aggressive`), or `auto` when the firmware is in charge.
     #[zbus(property)]
     fn gpu_clock_range(&self) -> zbus::Result<String>;
 

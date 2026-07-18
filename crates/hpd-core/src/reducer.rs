@@ -144,18 +144,6 @@ pub fn reduce(
             effects.push(Effect::PersistState);
         }
 
-        Transition::SetGpuClockRange { min_mhz, max_mhz } => {
-            // Manual override, identical shape to `SetCustomFanCurve`.
-            let selection = GpuClockSelection::Custom(hpd_capabilities::gpu_clock::GpuClockRange {
-                min_mhz,
-                max_mhz,
-            });
-            new_state.gpu_follows_tdp = false;
-            new_state.active_gpu_clock = Some(selection);
-            effects.push(Effect::ApplyGpuClockRange(selection));
-            effects.push(Effect::PersistState);
-        }
-
         Transition::EnableGpuAutoFollow => {
             // Mirrors EnableFanAuto: infer and apply immediately rather than
             // waiting for the next TDP change to happen to touch the
@@ -169,9 +157,8 @@ pub fn reduce(
                     device_limits,
                     &config.profile_thresholds,
                 );
-                let selection = GpuClockSelection::Preset(inferred_tier);
-                new_state.active_gpu_clock = Some(selection);
-                effects.push(Effect::ApplyGpuClockRange(selection));
+                new_state.active_gpu_clock = Some(GpuClockSelection::Preset(inferred_tier));
+                effects.push(Effect::ApplyGpuClockRange(inferred_tier));
                 effects.push(Effect::PersistState);
             }
         }
@@ -223,11 +210,15 @@ pub fn reduce(
 
         Transition::SyncGpuClockRange(real_range) => {
             // Mirror of SyncFanCurve: the executor read the actual
-            // committed range back after a failed write. Always `Custom`
-            // (or `None`) — a rollback read-back can never be attributed
-            // to a curated `Preset` tier, only ever the concrete MHz the
-            // hardware reports.
-            new_state.active_gpu_clock = real_range.map(GpuClockSelection::Custom);
+            // committed range back after a failed `set_range`. The common
+            // case is `None` — the backend's own best-effort
+            // `reset_to_auto()` cleanup on a failed write already handed
+            // the DPM back to firmware auto (see `AsusGpuClockBackend::
+            // set_range`'s docs). `Some(range)` only happens if that
+            // cleanup itself also failed, leaving hardware pinned to a
+            // range that doesn't match any curated tier — surfaced
+            // honestly as `Unmanaged` rather than mis-reported as a tier.
+            new_state.active_gpu_clock = real_range.map(GpuClockSelection::Unmanaged);
         }
 
         Transition::AcPowerChanged(is_plugged) => {
@@ -341,6 +332,7 @@ pub fn reduce(
             }
 
             info!("Re-applying full power/cooling state to hardware (boot/resume)");
+            let mut resumed_state = state.clone();
             let mut effects = vec![
                 Effect::ApplyPowerEnvelope(state.power_target.clone()),
                 Effect::ApplyPlatformProfile(state.active_profile.clone()),
@@ -363,10 +355,22 @@ pub fn reduce(
             // half-written state.
             if let Some(selection) = state.active_gpu_clock {
                 effects.push(Effect::ResetGpuClocks);
-                effects.push(Effect::ApplyGpuClockRange(selection));
+                match selection {
+                    GpuClockSelection::Preset(tier) => {
+                        effects.push(Effect::ApplyGpuClockRange(tier));
+                    }
+                    GpuClockSelection::Unmanaged(_) => {
+                        // No known-good tier to reapply — the reset above
+                        // already recovers to a known-clean firmware-auto
+                        // baseline, which is exactly what this abnormal,
+                        // rollback-only state should resolve to. Clear it
+                        // so persisted state matches what actually landed.
+                        resumed_state.active_gpu_clock = None;
+                    }
+                }
             }
             return Ok(ReducerOutput {
-                new_state: state.clone(),
+                new_state: resumed_state,
                 effects,
             });
         }
@@ -590,7 +594,7 @@ fn apply_power_target(
                 let selection = GpuClockSelection::Preset(inferred_tier);
                 if new_state.active_gpu_clock != Some(selection) {
                     new_state.active_gpu_clock = Some(selection);
-                    effects.push(Effect::ApplyGpuClockRange(selection));
+                    effects.push(Effect::ApplyGpuClockRange(inferred_tier));
                 }
             }
         }
@@ -634,7 +638,6 @@ fn is_locked_write(transition: &Transition) -> bool {
             | Transition::SetCustomFanCurve { .. }
             | Transition::EnableFanAuto
             | Transition::ResetFanCurve
-            | Transition::SetGpuClockRange { .. }
             | Transition::EnableGpuAutoFollow
             | Transition::ResetGpuClocks
             | Transition::RestoreDefaults
@@ -739,10 +742,9 @@ fn force_ac_max_performance(
     // silently auto-opt every fresh install into managed GPU clocks the
     // first time they plug in AC.
     if base.active_gpu_clock.is_some() {
-        let gpu_selection = GpuClockSelection::Preset(FanCurvePreset::Aggressive);
-        new_state.active_gpu_clock = Some(gpu_selection);
+        new_state.active_gpu_clock = Some(GpuClockSelection::Preset(FanCurvePreset::Aggressive));
         new_state.gpu_follows_tdp = false;
-        effects.push(Effect::ApplyGpuClockRange(gpu_selection));
+        effects.push(Effect::ApplyGpuClockRange(FanCurvePreset::Aggressive));
     }
 
     ReducerOutput { new_state, effects }
@@ -777,10 +779,19 @@ fn restore_dc_state(current: &ProfileState, snapshot: &DcSnapshot) -> ReducerOut
     }
     new_state.fan_follows_tdp = snapshot.fan_follows_tdp;
     if new_state.active_gpu_clock != snapshot.active_gpu_clock {
-        new_state.active_gpu_clock = snapshot.active_gpu_clock;
         match snapshot.active_gpu_clock {
-            Some(selection) => effects.push(Effect::ApplyGpuClockRange(selection)),
-            None => effects.push(Effect::ResetGpuClocks),
+            Some(GpuClockSelection::Preset(tier)) => {
+                new_state.active_gpu_clock = snapshot.active_gpu_clock;
+                effects.push(Effect::ApplyGpuClockRange(tier));
+            }
+            // `Unmanaged` (the rare rollback-cleanup-also-failed state) and
+            // `None` both resolve the same way: nothing valid to restore,
+            // so hand the GPU clock back to firmware auto instead of
+            // resurrecting a snapshot that was never a real user choice.
+            Some(GpuClockSelection::Unmanaged(_)) | None => {
+                new_state.active_gpu_clock = None;
+                effects.push(Effect::ResetGpuClocks);
+            }
         }
     }
     new_state.gpu_follows_tdp = snapshot.gpu_follows_tdp;
@@ -1976,10 +1987,6 @@ mod tests {
             },
             Transition::EnableFanAuto,
             Transition::ResetFanCurve,
-            Transition::SetGpuClockRange {
-                min_mhz: 600,
-                max_mhz: 1_800,
-            },
             Transition::EnableGpuAutoFollow,
             Transition::ResetGpuClocks,
             Transition::RestoreDefaults,
@@ -2293,31 +2300,11 @@ mod tests {
     }
 
     // ---------- GPU clock range ----------
-
-    #[test]
-    fn test_set_gpu_clock_range_sets_custom_and_disables_follow() {
-        use hpd_capabilities::gpu_clock::{GpuClockRange, GpuClockSelection};
-        let mut state = setup_state();
-        state.gpu_follows_tdp = true;
-        let out = reduce(
-            &state,
-            Transition::SetGpuClockRange {
-                min_mhz: 600,
-                max_mhz: 1_800,
-            },
-            &setup_limits(),
-            &setup_config(),
-        )
-        .unwrap();
-        let expected = GpuClockSelection::Custom(GpuClockRange {
-            min_mhz: 600,
-            max_mhz: 1_800,
-        });
-        assert_eq!(out.new_state.active_gpu_clock, Some(expected));
-        assert!(!out.new_state.gpu_follows_tdp);
-        assert!(out.effects.contains(&Effect::ApplyGpuClockRange(expected)));
-        assert!(out.effects.contains(&Effect::PersistState));
-    }
+    //
+    // There is deliberately no test exercising an arbitrary/custom range:
+    // the only settable state is `Preset` via `EnableGpuAutoFollow` — see
+    // `GpuClockSelection`'s docs on why the explicit-range D-Bus method
+    // was removed.
 
     #[test]
     fn test_enable_gpu_auto_follow_infers_and_applies_and_persists() {
@@ -2334,7 +2321,9 @@ mod tests {
         assert!(out.new_state.gpu_follows_tdp);
         let silent = GpuClockSelection::Preset(FanCurvePreset::Silent);
         assert_eq!(out.new_state.active_gpu_clock, Some(silent));
-        assert!(out.effects.contains(&Effect::ApplyGpuClockRange(silent)));
+        assert!(out
+            .effects
+            .contains(&Effect::ApplyGpuClockRange(FanCurvePreset::Silent)));
         assert!(out.effects.contains(&Effect::PersistState));
     }
 
@@ -2355,12 +2344,10 @@ mod tests {
 
     #[test]
     fn test_reset_gpu_clocks_clears_and_emits_reset() {
-        use hpd_capabilities::gpu_clock::{GpuClockRange, GpuClockSelection};
+        use hpd_capabilities::fan_curve::FanCurvePreset;
+        use hpd_capabilities::gpu_clock::GpuClockSelection;
         let mut state = setup_state();
-        state.active_gpu_clock = Some(GpuClockSelection::Custom(GpuClockRange {
-            min_mhz: 600,
-            max_mhz: 1_800,
-        }));
+        state.active_gpu_clock = Some(GpuClockSelection::Preset(FanCurvePreset::Aggressive));
         state.gpu_follows_tdp = false;
         let out = reduce(
             &state,
@@ -2394,7 +2381,7 @@ mod tests {
     #[test]
     fn test_restore_defaults_applies_all_levers_from_dirty_state() {
         use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
-        use hpd_capabilities::gpu_clock::{GpuClockRange, GpuClockSelection};
+        use hpd_capabilities::gpu_clock::GpuClockSelection;
 
         let mut state = setup_state(); // spl=15000mw, off the 21000mw balanced midpoint
         state.active_profile = ProfileName::PowerSaver;
@@ -2404,10 +2391,7 @@ mod tests {
         state.charge_end_threshold = 60;
         state.active_fan_curve = Some(FanCurveSelection::Preset(FanCurvePreset::Silent));
         state.fan_follows_tdp = false;
-        state.active_gpu_clock = Some(GpuClockSelection::Custom(GpuClockRange {
-            min_mhz: 600,
-            max_mhz: 1_800,
-        }));
+        state.active_gpu_clock = Some(GpuClockSelection::Preset(FanCurvePreset::Aggressive));
         state.gpu_follows_tdp = false;
 
         let out = reduce(
@@ -2506,13 +2490,11 @@ mod tests {
 
     #[test]
     fn test_restore_defaults_resets_gpu_clock_when_opted_in() {
-        use hpd_capabilities::gpu_clock::{GpuClockRange, GpuClockSelection};
+        use hpd_capabilities::fan_curve::FanCurvePreset;
+        use hpd_capabilities::gpu_clock::GpuClockSelection;
 
         let mut state = setup_state();
-        state.active_gpu_clock = Some(GpuClockSelection::Custom(GpuClockRange {
-            min_mhz: 600,
-            max_mhz: 1_800,
-        }));
+        state.active_gpu_clock = Some(GpuClockSelection::Preset(FanCurvePreset::Aggressive));
 
         let out = reduce(
             &state,
@@ -2550,7 +2532,11 @@ mod tests {
     }
 
     #[test]
-    fn test_sync_gpu_clock_range_overwrites_state_without_side_effects() {
+    fn test_sync_gpu_clock_range_overwrites_state_as_unmanaged_without_side_effects() {
+        // The rollback-only path: a failed set_range whose own best-effort
+        // reset_to_auto() cleanup also failed, leaving hardware pinned to
+        // a range matching no curated tier. Surfaced honestly as
+        // `Unmanaged`, never mis-attributed to a `Preset`.
         use hpd_capabilities::gpu_clock::{GpuClockRange, GpuClockSelection};
         let state = setup_state();
         let real = GpuClockRange {
@@ -2566,7 +2552,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             out.new_state.active_gpu_clock,
-            Some(GpuClockSelection::Custom(real))
+            Some(GpuClockSelection::Unmanaged(real))
         );
         assert!(
             out.effects.is_empty(),
@@ -2604,7 +2590,7 @@ mod tests {
         assert_eq!(out.new_state.active_gpu_clock, Some(aggressive));
         assert!(out
             .effects
-            .contains(&Effect::ApplyGpuClockRange(aggressive)));
+            .contains(&Effect::ApplyGpuClockRange(FanCurvePreset::Aggressive)));
         // ...but the fan curve (manual) is untouched.
         assert_eq!(out.new_state.active_fan_curve, None);
         assert!(!out
@@ -2613,33 +2599,10 @@ mod tests {
             .any(|e| matches!(e, Effect::ApplyFanCurve(_))));
     }
 
-    #[test]
-    fn test_lock_ignores_gpu_clock_writes_on_ac() {
-        // Covered generically in test_lock_ignores_power_and_cooling_writes_on_ac,
-        // this test asserts it precisely for a state that has GPU clock
-        // management already active, so the lock's no-op path is exercised
-        // against a non-trivial baseline too.
-        use hpd_capabilities::gpu_clock::GpuClockSelection;
-        let mut state = locked_on_ac_state();
-        state.active_gpu_clock = Some(GpuClockSelection::Preset(FanCurvePreset::Aggressive));
-        let out = reduce(
-            &state,
-            Transition::SetGpuClockRange {
-                min_mhz: 600,
-                max_mhz: 900,
-            },
-            &setup_limits(),
-            &setup_config(),
-        )
-        .unwrap();
-        assert_eq!(out.new_state, state);
-        assert!(out.effects.is_empty());
-    }
-
     // ---------- CRITICAL: GPU clock opt-in guard ----------
     //
     // GPU clock's real default is a PERMANENT `None` for anyone who never
-    // opts in via EnableGpuAutoFollow/SetGpuClockRange — unlike the fan
+    // opts in via EnableGpuAutoFollow — unlike the fan
     // curve, whose steady-state is never `None`. Every site that
     // unconditionally re-pins/reapplies the fan curve MUST guard the
     // matching GPU-clock effect on `active_gpu_clock.is_some()`, or a
@@ -2686,7 +2649,7 @@ mod tests {
         assert!(!out.new_state.gpu_follows_tdp, "pinned, not following");
         assert!(out
             .effects
-            .contains(&Effect::ApplyGpuClockRange(aggressive)));
+            .contains(&Effect::ApplyGpuClockRange(FanCurvePreset::Aggressive)));
         // DC snapshot must capture the pre-plug GPU-clock state verbatim.
         assert_eq!(
             out.new_state
@@ -2707,11 +2670,8 @@ mod tests {
 
     #[test]
     fn test_ac_unplug_restores_gpu_clock_from_snapshot() {
-        use hpd_capabilities::gpu_clock::{GpuClockRange, GpuClockSelection};
-        let gpu_selection = GpuClockSelection::Custom(GpuClockRange {
-            min_mhz: 600,
-            max_mhz: 1_000,
-        });
+        use hpd_capabilities::gpu_clock::GpuClockSelection;
+        let gpu_selection = GpuClockSelection::Preset(FanCurvePreset::Balanced);
         let saved = DcSnapshot {
             power_target: PowerEnvelopeTarget {
                 spl: PowerMilliwatts(10_000),
@@ -2739,7 +2699,48 @@ mod tests {
         assert!(!out.new_state.gpu_follows_tdp);
         assert!(out
             .effects
-            .contains(&Effect::ApplyGpuClockRange(gpu_selection)));
+            .contains(&Effect::ApplyGpuClockRange(FanCurvePreset::Balanced)));
+    }
+
+    #[test]
+    fn test_ac_unplug_resets_gpu_clock_when_snapshot_is_unmanaged() {
+        // The rare rollback-cleanup-also-failed leftover: restoring it
+        // verbatim would resurrect a range that was never a real user
+        // choice. restore_dc_state must hand it back to firmware auto
+        // instead.
+        use hpd_capabilities::gpu_clock::{GpuClockRange, GpuClockSelection};
+        let saved = DcSnapshot {
+            power_target: PowerEnvelopeTarget {
+                spl: PowerMilliwatts(10_000),
+                sppt: PowerMilliwatts(12_000),
+                fppt: Some(PowerMilliwatts(14_000)),
+            },
+            active_profile: ProfileName::PowerSaver,
+            active_fan_curve: None,
+            fan_follows_tdp: false,
+            active_gpu_clock: Some(GpuClockSelection::Unmanaged(GpuClockRange {
+                min_mhz: 600,
+                max_mhz: 1_000,
+            })),
+            gpu_follows_tdp: false,
+        };
+        let mut state = locked_on_ac_state();
+        state.last_dc_state = Some(saved);
+
+        let out = reduce(
+            &state,
+            Transition::AcPowerChanged(false),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+
+        assert_eq!(out.new_state.active_gpu_clock, None);
+        assert!(out.effects.contains(&Effect::ResetGpuClocks));
+        assert!(!out
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::ApplyGpuClockRange(_))));
     }
 
     #[test]
@@ -2760,13 +2761,10 @@ mod tests {
 
     #[test]
     fn test_system_resumed_reset_then_reapplies_gpu_clock_when_managed() {
-        use hpd_capabilities::gpu_clock::{GpuClockRange, GpuClockSelection};
-        let selection = GpuClockSelection::Custom(GpuClockRange {
-            min_mhz: 600,
-            max_mhz: 1_500,
-        });
+        use hpd_capabilities::gpu_clock::GpuClockSelection;
+        let tier = FanCurvePreset::Aggressive;
         let mut state = setup_state();
-        state.active_gpu_clock = Some(selection);
+        state.active_gpu_clock = Some(GpuClockSelection::Preset(tier));
 
         let out = reduce(
             &state,
@@ -2783,7 +2781,7 @@ mod tests {
         let apply_idx = out
             .effects
             .iter()
-            .position(|e| matches!(e, Effect::ApplyGpuClockRange(s) if *s == selection));
+            .position(|e| matches!(e, Effect::ApplyGpuClockRange(t) if *t == tier));
         assert!(
             reset_idx.is_some() && apply_idx.is_some(),
             "expected both ResetGpuClocks and ApplyGpuClockRange, got {:?}",
@@ -2793,6 +2791,38 @@ mod tests {
             apply_idx.unwrap() > reset_idx.unwrap(),
             "must reset before reapplying (crash-safety: known-clean baseline)"
         );
+        assert_eq!(
+            out.new_state.active_gpu_clock,
+            Some(GpuClockSelection::Preset(tier))
+        );
+    }
+
+    #[test]
+    fn test_system_resumed_resets_and_clears_gpu_clock_when_unmanaged() {
+        // No known-good tier to reapply for the rare rollback-cleanup-
+        // also-failed leftover — resume must reset to firmware auto and
+        // clear the stale flag rather than trying to reapply garbage.
+        use hpd_capabilities::gpu_clock::{GpuClockRange, GpuClockSelection};
+        let mut state = setup_state();
+        state.active_gpu_clock = Some(GpuClockSelection::Unmanaged(GpuClockRange {
+            min_mhz: 600,
+            max_mhz: 1_500,
+        }));
+
+        let out = reduce(
+            &state,
+            Transition::SystemResumed,
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+
+        assert!(out.effects.contains(&Effect::ResetGpuClocks));
+        assert!(!out
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::ApplyGpuClockRange(_))));
+        assert_eq!(out.new_state.active_gpu_clock, None);
     }
 
     #[test]
