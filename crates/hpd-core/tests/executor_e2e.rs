@@ -35,6 +35,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch};
 use tokio::time::timeout;
 
+use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
 use hpd_capabilities::power::{PowerEnvelopeLimits, PowerEnvelopeTarget};
 use hpd_capabilities::profile::{GpuClockFractions, ProfileName, ProfileThresholds, RuntimeConfig};
 use hpd_capabilities::testing::{MockBackend, RecordedCall};
@@ -220,8 +221,15 @@ async fn test_executor_restore_defaults_dispatches_composed_effects() {
     assert_eq!(final_state.power_target.spl, PowerMilliwatts(21_000));
     assert_eq!(final_state.active_profile, ProfileName::Performance);
     assert_eq!(final_state.charge_end_threshold, 80);
-    assert_eq!(final_state.active_fan_curve, None);
-    assert!(!final_state.fan_follows_tdp);
+    // Cooling target is hpd-managed auto (fan_follows_tdp), not
+    // firmware-auto — the 21000mw SPL (fraction 0.5 of limits()'s range)
+    // infers the Balanced tier. See reducer.rs's RestoreDefaults tests for
+    // the exhaustive pure-function coverage of this.
+    assert_eq!(
+        final_state.active_fan_curve,
+        Some(FanCurveSelection::Preset(FanCurvePreset::Balanced))
+    );
+    assert!(final_state.fan_follows_tdp);
 
     wait_until(
         || {

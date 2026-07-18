@@ -393,12 +393,21 @@ pub fn reduce(
             // action, threading state through recursive reduce() calls
             // exactly like SetPreset -> SetSpl above, just chained.
             //
-            // ORDER MATTERS: SetProfile must run before ResetFanCurve.
+            // ORDER MATTERS: SetProfile must run before EnableFanAuto.
             // SetProfile's reassert_curve_after_profile() re-applies
-            // whatever curve is active after writing platform_profile (the
-            // EC can drop a custom curve on a profile write) — running it
-            // after ResetFanCurve would silently re-arm a curve
-            // ResetFanCurve just cleared.
+            // whatever curve was active *before* this whole sequence
+            // started (writing platform_profile can make the EC drop it)
+            // — running it after EnableFanAuto would silently clobber the
+            // freshly-inferred curve with that stale one.
+            //
+            // Cooling target is hpd-managed auto (`fan_follows_tdp = true`
+            // + the curve inferred from the just-set Balanced TDP), not
+            // firmware-auto (`ResetFanCurve`). Changed 2026-07-18: MANUAL.md's
+            // own "recommended setup" is `cool auto` + `preset balanced`,
+            // and a fresh install already boots into hpd-managed auto
+            // (`DaemonConfig::default_fan_curve`) — RestoreDefaults used to
+            // hand the fans back to firmware instead, a second, different
+            // "default" that contradicted the documented recommendation.
             let mut cur = state.clone();
 
             let step = reduce(
@@ -428,7 +437,7 @@ pub fn reduce(
             cur = step.new_state;
             effects.extend(step.effects);
 
-            let step = reduce(&cur, Transition::ResetFanCurve, device_limits, config)?;
+            let step = reduce(&cur, Transition::EnableFanAuto, device_limits, config)?;
             cur = step.new_state;
             effects.extend(step.effects);
 
@@ -652,17 +661,40 @@ fn is_locked_write(transition: &Transition) -> bool {
 /// (7W) — at a low SPL (e.g. the Eco preset), scaling by `sppt_factor` alone
 /// can undershoot that hardware floor even though it still satisfies
 /// `SPPT >= SPL`, and the write is rejected by the firmware with `EINVAL`.
+///
+/// **At `spl_max` the boost rails go straight to their own hardware
+/// ceiling instead of through the multiplier.** Found on-device
+/// (2026-07-18): `sppt_factor`/`fppt_factor` are tuned for the sustained
+/// middle of the SPL range, and at the very top of the range they can
+/// leave real headroom on the table — e.g. on the ROG Xbox Ally X,
+/// `Preset::Max` (35W SPL) only reached 40.25W SPPT / 43.75W FPPT via
+/// the 1.15/1.25 factors, short of the device's real 43W / 53W firmware
+/// ceiling. A user who explicitly asked for the maximum preset (or hit
+/// the AC-lock's forced-max envelope) should get the actual maximum,
+/// boost rails included — below `spl_max` the multiplier is still the
+/// right model (that gap between sustained and boost is the point of
+/// having separate rails at all).
 fn derive_boosted_envelope(
     spl: PowerMilliwatts,
     device_limits: &PowerEnvelopeLimits,
     config: &RuntimeConfig,
 ) -> PowerEnvelopeTarget {
-    let sppt_raw =
-        PowerMilliwatts(((spl.0 as f32 * config.sppt_factor) as u32).min(device_limits.sppt_max.0));
+    let at_ceiling = spl >= device_limits.spl_max;
+
+    let sppt_raw = if at_ceiling {
+        device_limits.sppt_max
+    } else {
+        PowerMilliwatts(((spl.0 as f32 * config.sppt_factor) as u32).min(device_limits.sppt_max.0))
+    };
     let sppt = PowerMilliwatts(sppt_raw.0.max(spl.0).max(device_limits.sppt_min.0));
-    let fppt_raw =
-        PowerMilliwatts(((spl.0 as f32 * config.fppt_factor) as u32).min(device_limits.fppt_max.0));
+
+    let fppt_raw = if at_ceiling {
+        device_limits.fppt_max
+    } else {
+        PowerMilliwatts(((spl.0 as f32 * config.fppt_factor) as u32).min(device_limits.fppt_max.0))
+    };
     let fppt = PowerMilliwatts(fppt_raw.0.max(sppt.0).max(device_limits.fppt_min.0));
+
     PowerEnvelopeTarget {
         spl,
         sppt,
@@ -1349,6 +1381,34 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(35_000));
+    }
+
+    #[test]
+    fn test_set_spl_at_max_reaches_true_boost_rail_ceiling() {
+        // Regression found on-device (2026-07-18): the 1.15/1.25
+        // sppt_factor/fppt_factor multipliers are tuned for the sustained
+        // middle of the SPL range, not the top of it — at `spl_max` they
+        // undershot the real hardware boost ceiling. setup_limits() has
+        // sppt_max=43000, fppt_max=55000; the old multiplier-only maths
+        // would have produced sppt=40250 (35000*1.15, still under 43000
+        // so never clamped) and fppt=43750 (35000*1.25, still under
+        // 55000) — short of the true ceiling on both rails. `Preset::Max`
+        // and the AC-lock's forced-max envelope both route through this
+        // same function, so both must land exactly at the rail max.
+        let state = setup_state();
+        let out = reduce(
+            &state,
+            Transition::SetSpl(35),
+            &setup_limits(),
+            &setup_config(), // sppt_factor=1.15, fppt_factor=1.25
+        )
+        .unwrap();
+        assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(35_000));
+        assert_eq!(out.new_state.power_target.sppt, PowerMilliwatts(43_000));
+        assert_eq!(
+            out.new_state.power_target.fppt,
+            Some(PowerMilliwatts(55_000))
+        );
     }
 
     #[test]
@@ -2362,8 +2422,14 @@ mod tests {
         assert_eq!(out.new_state.power_target.spl, PowerMilliwatts(21_000));
         assert_eq!(out.new_state.active_profile, ProfileName::Performance);
         assert_eq!(out.new_state.charge_end_threshold, DEFAULT_CHARGE_THRESHOLD);
-        assert_eq!(out.new_state.active_fan_curve, None);
-        assert!(!out.new_state.fan_follows_tdp);
+        // Cooling target is hpd-managed auto, not firmware-auto: the just-set
+        // Balanced TDP (21000mw, fraction 0.5 of the SPL range) infers the
+        // Balanced fan-curve tier.
+        assert_eq!(
+            out.new_state.active_fan_curve,
+            Some(FanCurveSelection::Preset(FanCurvePreset::Balanced))
+        );
+        assert!(out.new_state.fan_follows_tdp);
         assert_eq!(out.new_state.active_gpu_clock, None);
         assert!(!out.new_state.gpu_follows_tdp);
 
@@ -2373,7 +2439,11 @@ mod tests {
         assert!(out
             .effects
             .contains(&Effect::ApplyChargeThreshold(DEFAULT_CHARGE_THRESHOLD)));
-        assert!(out.effects.contains(&Effect::ResetFanCurve));
+        assert!(out
+            .effects
+            .contains(&Effect::ApplyFanCurve(FanCurveSelection::Preset(
+                FanCurvePreset::Balanced
+            ))));
         assert!(out.effects.contains(&Effect::ResetGpuClocks));
         assert_eq!(
             out.effects
@@ -2394,6 +2464,8 @@ mod tests {
 
     #[test]
     fn test_restore_defaults_is_a_full_no_op_when_already_at_defaults() {
+        use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
+
         // Seed a state already at the 21W balanced midpoint via the same
         // SetSpl path SetPreset(Balanced) itself uses, so the envelope's
         // derived SPPT/FPPT match exactly (rather than hand-computing
@@ -2409,8 +2481,10 @@ mod tests {
         let mut state = seeded.new_state;
         state.active_profile = ProfileName::Performance;
         state.charge_end_threshold = DEFAULT_CHARGE_THRESHOLD;
-        state.active_fan_curve = None;
-        state.fan_follows_tdp = false;
+        // "At defaults" cooling is hpd-managed auto at the Balanced tier
+        // (matching the 21W SPL above), not firmware-auto.
+        state.active_fan_curve = Some(FanCurveSelection::Preset(FanCurvePreset::Balanced));
+        state.fan_follows_tdp = true;
         state.active_gpu_clock = None;
         state.gpu_follows_tdp = false;
 

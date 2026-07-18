@@ -284,7 +284,7 @@ day they shipped.
 | `SetGpuClockRange { min_mhz, max_mhz }` | `hpdctl gpu set`, D-Bus `set_gpu_clock_range` (daemon ≥ 2.12.0) |
 | `EnableGpuAutoFollow`            | `hpdctl gpu auto`, D-Bus `enable_gpu_auto_follow` (daemon ≥ 2.12.0) |
 | `ResetGpuClocks`                 | `hpdctl gpu reset`, D-Bus `reset_gpu_clocks` (daemon ≥ 2.12.0) |
-| `RestoreDefaults`                | `hpdctl restore-defaults`, D-Bus `restore_defaults` (daemon ≥ 2.14.0) — composes `SetPreset(Balanced)` → `SetProfile(Performance)` → `ChargeThresholdChanged(80)` → `ResetFanCurve` → conditionally `ResetGpuClocks` (only if already opted in) via recursive `reduce()` calls inside one atomic transaction; a full no-op if already at every default |
+| `RestoreDefaults`                | `hpdctl restore-defaults`, D-Bus `restore_defaults` (daemon ≥ 2.14.0) — composes `SetPreset(Balanced)` → `SetProfile(Performance)` → `ChargeThresholdChanged(80)` → `EnableFanAuto` (hpd-managed auto, not firmware-auto — changed ≥ 2.14.2, see CHANGELOG) → conditionally `ResetGpuClocks` (only if already opted in) via recursive `reduce()` calls inside one atomic transaction; a full no-op if already at every default |
 | `SetAcMaxPerformance(bool)`      | `hpdctl ac-lock on/off`, D-Bus `set_ac_max_performance` |
 | `ChargeThresholdChanged(u8)`     | `hpdctl charge set`, D-Bus `set_charge_threshold` |
 | `AcPowerChanged(bool)`           | `hpd-netlink` udev event                          |
