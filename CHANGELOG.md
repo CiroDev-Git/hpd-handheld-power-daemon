@@ -32,6 +32,16 @@ not part of the published repository.
   `docs/dev/GAMING-ROADMAP-es.md` §2/§5 for the full history of both
   reverted phases.
 
+### Removed
+
+- **`docs/decky-plugin/POLKIT-SETUP-PROMPT.md`.** A one-time
+  "copy-paste to your coding agent" implementation brief for the
+  Decky plugin's polkit setup-detection + auto-repair flow
+  (`GetDiagnostics`/`hpdctl fix-polkit`). That feature has been fully
+  implemented and shipped in the plugin for a while now, so the prompt
+  had no ongoing purpose and mostly duplicated the summary already in
+  `docs/decky-plugin/V2-INTEGRATION.md` §11 (link there removed too).
+
 ## [2.14.0] — 2026-07-13
 
 ### Added
