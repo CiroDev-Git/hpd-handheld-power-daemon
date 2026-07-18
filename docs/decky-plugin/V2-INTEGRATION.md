@@ -133,8 +133,7 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
     action. The banner's action button should run **`hpdctl fix-polkit`**
     (it self-elevates via `pkexec`, installs the policy, reloads polkit —
     no daemon restart). It's a live check, so re-poll `GetDiagnostics()`
-    afterward to clear the banner. **Full implementation brief:**
-    [`POLKIT-SETUP-PROMPT.md`](POLKIT-SETUP-PROMPT.md).
+    afterward to clear the banner.
 
 > **Note:** Power mode (#5) was promoted from this "optional/advanced"
 > tier to a first-class control. The Power-mode hint below is now folded
