@@ -11,6 +11,27 @@ not part of the published repository.
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **`hpdctl status`'s `Clocks` line now also shows CPU utilisation**
+  (`CPU <freq> (<N>% busy) · GPU <freq> (<N>% busy)`), reading the
+  `cpu_busy_pct` key `GetTelemetry` has exposed since v2.11.0. That key
+  was added specifically for the Decky plugin's bottleneck-diagnosis
+  feature (`docs/dev/GAMING-ROADMAP-es.md` §5) — the plugin has since
+  reverted that feature (added more complexity than it earned back on
+  real-device use) and stopped reading the key entirely, leaving it
+  wired end-to-end in the daemon with no consumer. Rather than delete a
+  real, tested telemetry accessor (`AsusTelemetryBackend`'s only
+  stateful/time-delta field), it's repurposed as plain CPU-utilisation
+  telemetry, mirroring `gpu_busy_pct`, which was already displayed here
+  — no daemon-side behaviour change, `cpu_busy_pct` was already
+  computed on every `get_telemetry()` call. The plugin now shows the
+  same field as a generic "Live" readout instead. See
+  `docs/dev/GAMING-ROADMAP-es.md` §2/§5 for the full history of both
+  reverted phases.
+
 ## [2.14.0] — 2026-07-13
 
 ### Added

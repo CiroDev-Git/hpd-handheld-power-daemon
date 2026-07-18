@@ -799,6 +799,7 @@ async fn print_dashboard(proxy: &PowerDaemonProxy<'_>) -> zbus::Result<()> {
     // load, VRAM, battery health. Skipped entirely when the backend
     // exposes none of it (older daemon, or a board without amdgpu).
     let cpu_freq = telemetry_u32(&telemetry, "cpu_freq_mhz");
+    let cpu_busy = telemetry_u32(&telemetry, "cpu_busy_pct");
     let gpu_freq = telemetry_u32(&telemetry, "gpu_freq_mhz");
     let gpu_busy = telemetry_u32(&telemetry, "gpu_busy_pct");
     let vram_used = telemetry_u32(&telemetry, "vram_used_mb");
@@ -806,6 +807,7 @@ async fn print_dashboard(proxy: &PowerDaemonProxy<'_>) -> zbus::Result<()> {
     let batt_health = telemetry_u32(&telemetry, "battery_health_pct");
     let batt_cycles = telemetry_u32(&telemetry, "battery_cycles");
     if cpu_freq.is_some()
+        || cpu_busy.is_some()
         || gpu_freq.is_some()
         || gpu_busy.is_some()
         || vram_used.is_some()
@@ -813,8 +815,9 @@ async fn print_dashboard(proxy: &PowerDaemonProxy<'_>) -> zbus::Result<()> {
     {
         println!("  ── System ──");
         println!(
-            "     Clocks:           CPU {} · GPU {} ({})",
+            "     Clocks:           CPU {} ({}) · GPU {} ({})",
             fmt_opt_telemetry(cpu_freq, " MHz"),
+            fmt_opt_telemetry(cpu_busy, "% busy"),
             fmt_opt_telemetry(gpu_freq, " MHz"),
             fmt_opt_telemetry(gpu_busy, "% busy")
         );

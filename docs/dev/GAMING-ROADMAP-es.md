@@ -294,6 +294,19 @@ regla 2 de §0b):
 
 ## 2. Fase 2 — Perfiles por juego
 
+> **⚠️ Implementada y luego revertida (2026-07-17).** Se construyó
+> completa en el plugin (`hpd-decky-plugin` PR #21, v2.12.0) y pasó por
+> varias rondas de rediseño on-device (lista de perfiles a página
+> completa, editor por juego, etc. — ver el `CHANGELOG.md` del
+> plugin). El uso real en dispositivo encontró que la feature añadía
+> más complejidad de la que compensaba, así que se quitó por
+> completo — no quedó nada plugin-side, ni deprecado ni detrás de un
+> flag. Como esta fase siempre fue **enteramente plugin-side, cero
+> cambios de daemon** (ver "Técnicamente" abajo), la reversión tampoco
+> tocó el daemon. La sección se deja como referencia de diseño, no
+> como trabajo pendiente — no reconstruir sin revisar por qué se
+> descartó.
+
 ### En cristiano 🗣️
 
 **Qué hace.** Cada juego recuerda su configuración (*Hades a 10 W en
@@ -675,6 +688,24 @@ sequenceDiagram
 ---
 
 ## 5. Fase 5 — Diagnóstico de cuellos de botella
+
+> **⚠️ Implementada y luego revertida (2026-07-17), junto con la Fase 2
+> arriba.** Se construyó completa en el plugin (`hpd-decky-plugin` PR
+> #22, v2.13.0): tarjeta "Rendimiento", histéresis, acción sugerida por
+> veredicto. El mismo criterio que tumbó la Fase 2 — uso real en
+> dispositivo, más complejidad de la que compensaba — se aplicó aquí.
+> A diferencia de la Fase 2, esta fase sí tocó el daemon: **el campo
+> `cpu_busy_pct` de `GetTelemetry` (daemon v2.11.0, PR #34) se añadió
+> específicamente para este heurístico.** Al revertir la Fase 5 en el
+> plugin, ese campo se quedó sin consumidor — en vez de borrarlo (es
+> trabajo de daemon real, con sus propios tests), se decidió
+> **reutilizarlo como telemetría genérica de CPU**, igual que
+> `gpu_busy_pct`: ahora `hpdctl status` lo muestra en la línea
+> `Clocks` junto al de GPU, y el plugin lo vuelve a mostrar en su
+> panel "Live" (sin ningún heurístico de diagnóstico encima). La
+> sección se deja como referencia de diseño, no como trabajo
+> pendiente — no reconstruir la tarjeta/heurístico sin revisar por qué
+> se descartó.
 
 ### En cristiano 🗣️
 
