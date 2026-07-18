@@ -22,7 +22,7 @@
 | Run `hpdctl` against the simulated daemon            | ✅ (session bus)      |
 | Exercise the full Transition → Effect pipeline        | ✅                    |
 | GPU clock range reads (`gpu limits`, `gpu get`, `gpu reset`) | ✅ (since v2.13.0 — simulator seeds `OD_RANGE`) |
-| GPU clock range writes (`gpu auto`, `gpu set`)         | ❌ (see §8 — `MockSysfs` can't model the driver's commit-and-read-back) |
+| GPU clock range writes (`gpu auto`)                    | ❌ (see §8 — `MockSysfs` can't model the driver's commit-and-read-back) |
 | Polkit prompts                                       | ❌ (bypassed)         |
 | Real udev AC plug events                             | ❌ (`tokio-udev` is Linux-only; macOS gets a no-op stub) |
 | Real suspend/resume integration                      | ❌ (no logind on macOS) |
@@ -237,19 +237,20 @@ The simulator covers most of the daemon's logic but cannot model:
   never fails, so the rollback path is exercised only by the
   dedicated unit tests in `hpd-core::executor::tests`.
 - Polkit denial / auth-admin-keep timing. Bypassed entirely on macOS.
-- **GPU clock *writes* (`gpu auto` / `gpu set`), unlike GPU clock
-  *reads*.** Since `[2.13.0]`, the simulator seeds a real ROG Xbox Ally X
-  `OD_RANGE` capture, so `gpu limits` / `gpu get` / `gpu reset` work
-  against `HPD_SIMULATOR=1` — but `gpu auto` and `gpu set` still fail
-  there. Quoting the `CHANGELOG.md` `[2.13.0]` entry on why: "`gpu
-  auto`/`gpu set` still fail there: `pp_od_clk_voltage` is a command
-  file on real hardware (the *driver* updates its own `OD_SCLK`/
-  `OD_RANGE` report after a `s`/`c` write), but `MockSysfs` is a flat
-  store, so the mandatory commit-and-read-back fails — modeling that
-  stateful parse is future work (`hpd-backend-asus`'s own unit tests
-  work around it locally with a `simulate_committed` test helper)." To
-  exercise a real GPU-clock write, you need real Linux hardware with an
-  amdgpu OverDrive interface.
+- **GPU clock *writes* (`gpu auto`), unlike GPU clock *reads*.** Since
+  `[2.13.0]`, the simulator seeds a real ROG Xbox Ally X `OD_RANGE`
+  capture, so `gpu limits` / `gpu get` / `gpu reset` work against
+  `HPD_SIMULATOR=1` — but `gpu auto` still fails there. Quoting the
+  `CHANGELOG.md` `[2.13.0]` entry on why (written when the CLI still
+  also had `gpu set`, since removed in 3.0.0 — the underlying
+  limitation is identical for `gpu auto`): "`pp_od_clk_voltage` is a
+  command file on real hardware (the *driver* updates its own
+  `OD_SCLK`/`OD_RANGE` report after a `s`/`c` write), but `MockSysfs`
+  is a flat store, so the mandatory commit-and-read-back fails —
+  modeling that stateful parse is future work (`hpd-backend-asus`'s
+  own unit tests work around it locally with a `simulate_committed`
+  test helper)." To exercise a real GPU-clock write, you need real
+  Linux hardware with an amdgpu OverDrive interface.
 
 When filing a bug found via the simulator, please indicate "found
 under macOS simulator mode" so the maintainer knows which paths

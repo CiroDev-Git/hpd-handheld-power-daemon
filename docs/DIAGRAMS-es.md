@@ -313,7 +313,7 @@ sequenceDiagram
     UI-->>U: "✓ Aggressive" (manual)
 ```
 
-### 3.4 Caso de uso — setear un rango de clock de GPU (avanzado, opt-in)
+### 3.4 Caso de uso — optar por el auto-follow de clock de GPU (avanzado)
 
 ```mermaid
 sequenceDiagram
@@ -322,14 +322,14 @@ sequenceDiagram
     participant D as Daemon
     participant HW as /sys (amdgpu)
 
-    Note over D: El clock de GPU no fue tocado hasta ahora — nunca corrió gpu auto/set
-    U->>UI: abre Avanzado → Clock de GPU, setea 1200-2400 MHz
-    UI->>D: SetGpuClockRange(1200, 2400)
-    D->>D: valida contra GetGpuClockConstraints() (OD_RANGE en vivo)
-    D->>HW: escribe pp_od_clk_voltage (pasa a DPM manual, commitea el rango)
-    D-->>UI: PropertiesChanged(GpuClockRange="custom", GpuFollowsTdp=false)
-    UI-->>U: "✓ 1200-2400 MHz" (manual)
-    Note over D,UI: este llamado es lo que activa la función — hpd nunca<br/>toca el clock de GPU por su cuenta antes de esto
+    Note over D: El clock de GPU no fue tocado hasta ahora — nunca corrió gpu auto
+    U->>UI: abre Avanzado → Clock de GPU, toca "Auto (seguir TDP)"
+    UI->>D: EnableGpuAutoFollow()
+    D->>D: infiere un nivel a partir del TDP actual (el mismo corte<br/>silent/balanced/aggressive ya usado para la curva del ventilador),<br/>lo resuelve contra el OD_RANGE en vivo (GetGpuClockConstraints())
+    D->>HW: escribe pp_od_clk_voltage (pasa a DPM manual, commitea el rango resuelto)
+    D-->>UI: PropertiesChanged(GpuClockRange="balanced", GpuFollowsTdp=true)
+    UI-->>U: "Auto (sigue al TDP)"
+    Note over D,UI: este llamado es lo que activa la función — hpd nunca<br/>toca el clock de GPU por su cuenta antes de esto.<br/>No existe método para fijar un rango MHz arbitrario<br/>(SetGpuClockRange existió en la línea 2.x, eliminado en la 3.0.0)
 ```
 
 ### 3.5 Caso de uso — enchufar el cargador
@@ -463,7 +463,6 @@ Cómo se llama lo mismo en cada lado (todo termina en el daemon):
 | Curva custom (avanzado) | `cool set-custom <8 pares>` | `SetFanCurve(a(yy), a(yy))` | Editor de curva | `set-profile` |
 | Telemetría extendida | `status` / `monitor` | `GetTelemetry()` | Sección de telemetría extendida | — |
 | **Clock de GPU (avanzado, opt-in)** | `gpu auto` | `EnableGpuAutoFollow()` | Avanzado → Clock de GPU → Auto | `set-profile` |
-| Clock de GPU — rango manual | `gpu set <min> <max>` | `SetGpuClockRange(u, u)` | Avanzado → editor de clock de GPU | `set-profile` |
 | Clock de GPU — reset | `gpu reset` | `ResetGpuClocks()` | Avanzado → Clock de GPU → Reset | `set-profile` |
 | Clock de GPU — lectura | `gpu get` | `GetGpuClockRange()` / `GpuClockRange` (prop) | Control de clock de GPU (reactivo) | — |
 | Clock de GPU — límites | `gpu limits` | `GetGpuClockConstraints()` | Control de clock de GPU (límites) | — |

@@ -91,14 +91,15 @@ pub struct ProfileState {
     /// Active GPU clock-range selection. `None` means firmware auto (the
     /// daemon never touches `power_dpm_force_performance_level`/
     /// `pp_od_clk_voltage`) — the **permanent default** for anyone who
-    /// never opts in via `EnableGpuAutoFollow`/`SetGpuClockRange`, unlike
-    /// `active_fan_curve` (whose real steady-state is never `None`). Every
-    /// site that unconditionally re-pins/reapplies the fan curve today
+    /// never opts in via `EnableGpuAutoFollow`, unlike `active_fan_curve`
+    /// (whose real steady-state is never `None`). Every site that
+    /// unconditionally re-pins/reapplies the fan curve today
     /// (`force_ac_max_performance`, the AC-plug-restore branch,
     /// `SystemResumed`'s reapply) must guard the matching GPU-clock effect
     /// on `active_gpu_clock.is_some()` — mirroring those sites
     /// unconditionally would silently auto-opt every user in the first
-    /// time they plug in AC.
+    /// time they plug in AC. `Some(Unmanaged(_))` is a rollback-only state
+    /// no transition sets directly — see [`GpuClockSelection`]'s docs.
     #[serde(default)]
     pub active_gpu_clock: Option<GpuClockSelection>,
 
@@ -106,7 +107,7 @@ pub struct ProfileState {
     /// clock ceiling (mirrors `fan_follows_tdp`, but defaults to `false` —
     /// see `active_gpu_clock`'s docs on why the default differs from the
     /// fan curve). Flipped on by `EnableGpuAutoFollow`, off by
-    /// `SetGpuClockRange` (manual) or `ResetGpuClocks`.
+    /// `ResetGpuClocks`.
     #[serde(default)]
     pub gpu_follows_tdp: bool,
 

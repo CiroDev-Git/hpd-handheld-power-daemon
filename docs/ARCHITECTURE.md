@@ -201,12 +201,17 @@ levers: on-device research on the ROG Xbox Ally X found the amdgpu
 OverDrive interface exposes exactly one real knob at this generation —
 the SCLK frequency range (`pp_od_clk_voltage`'s `OD_SCLK`) — with no
 separate VRAM clock, no voltage curve, and no GPU power cap distinct from
-the SPL/SPPT/FPPT budget the daemon already manages. The new D-Bus
-surface mirrors the fan curve one-for-one: `set_gpu_clock_range(min_mhz,
-max_mhz)` is the manual override, `enable_gpu_auto_follow` /
-`reset_gpu_clocks` mirror `set_fan_auto` / `reset_fan_curve`, and
-`get_gpu_clock_constraints()` / `get_gpu_clock_range()` mirror the fan
-curve's constraints/active-curve reads. All of it reuses the existing
+the SPL/SPPT/FPPT budget the daemon already manages. The D-Bus surface is
+narrower than the fan curve's: `enable_gpu_auto_follow` / `reset_gpu_clocks`
+mirror `set_fan_auto` / `reset_fan_curve`, and `get_gpu_clock_constraints()`
+/ `get_gpu_clock_range()` mirror the fan curve's constraints/active-curve
+reads — but there is **no** manual-override method taking an arbitrary
+`(min_mhz, max_mhz)`. One existed through daemon 2.x (`set_gpu_clock_range`
+/ `hpdctl gpu set`) and was removed in 3.0.0: real-world use found it was
+the one control in the whole stack a user could set to a value that
+silently capped performance, with no way for the daemon to distinguish "a
+deliberate efficiency choice" from "a value nobody meant to leave that
+low." `enable_gpu_auto_follow` reuses the existing
 `dev.cirodev.hpd.set-profile` polkit action — no new action ID needed.
 
 Two things about this feature are deliberately asymmetric with the fan
@@ -222,13 +227,13 @@ curve, and both are load-bearing:
   boot.** The fan curve's steady state is never "off" — the daemon
   always manages *some* curve. GPU clock is the opposite: the daemon
   must never touch `power_dpm_force_performance_level` /
-  `pp_od_clk_voltage` until the user calls `enable_gpu_auto_follow` or
-  `set_gpu_clock_range` at least once. Every site that unconditionally
-  re-pins the fan curve (`force_ac_max_performance`, the AC-plug-restore
-  branch, `SystemResumed`'s full reapply) guards its matching GPU-clock
-  effect on `active_gpu_clock.is_some()` — otherwise plugging in AC on a
-  fresh install would silently auto-opt every user into managed GPU
-  clocks the moment they first charge the device.
+  `pp_od_clk_voltage` until the user calls `enable_gpu_auto_follow` at
+  least once. Every site that unconditionally re-pins the fan curve
+  (`force_ac_max_performance`, the AC-plug-restore branch,
+  `SystemResumed`'s full reapply) guards its matching GPU-clock effect on
+  `active_gpu_clock.is_some()` — otherwise plugging in AC on a fresh
+  install would silently auto-opt every user into managed GPU clocks the
+  moment they first charge the device.
 
 A GPU-clock write is also a genuinely riskier hardware operation than a
 fan-curve write: it's two sequential steps (switch DPM to `manual`, then
@@ -237,9 +242,9 @@ in. That's why `SystemResumed`, when a GPU clock is actively managed,
 does `ResetGpuClocks` *then* `ApplyGpuClockRange` rather than a bare
 re-apply — resuming into a known-clean firmware-auto baseline before
 reapplying, instead of risking a resume that inherits a half-written
-state. It's also why `Effect::ApplyGpuClockRange` carries the *abstract*
-`GpuClockSelection` (`Custom(range)` or `Preset(tier)`) rather than a
-pre-resolved `GpuClockRange`: resolving a `Preset(tier)` needs both
+state. `Effect::ApplyGpuClockRange` carries a plain `FanCurvePreset`
+tier (never a pre-resolved `GpuClockRange`, and — since 3.0.0 — never an
+arbitrary caller-supplied one either): resolving a tier needs both
 `RuntimeConfig::gpu_clock_fractions` (which the pure reducer holds but
 must never use to do I/O) and a live `OD_RANGE` read (which the reducer
 must never perform, and which the L1 backend must never resolve itself
@@ -249,6 +254,15 @@ inputs, so it alone calls `gpu_clock_range_for_tier` immediately before
 change re-infers a ceiling from the same `FanCurvePreset` tier already
 computed for the fan curve — `fan_follows_tdp` and `gpu_follows_tdp` are
 independent flags; either, both, or neither can be on at once.
+
+`ProfileState::active_gpu_clock`'s type, `GpuClockSelection`, keeps a
+second variant beyond `Preset(tier)` — `Unmanaged(GpuClockRange)` — but
+it is **rollback-only, never settable by any transition**: the rare case
+where `set_range` fails *and* its own best-effort `reset_to_auto()`
+cleanup also fails, leaving hardware pinned to a range matching no
+curated tier. `SyncGpuClockRange` is the only producer; the D-Bus
+`gpu_clock_range` property reports it as `unknown`, distinct from every
+real preset name and from `auto`.
 
 ### Rollback contract
 
@@ -262,7 +276,11 @@ If any `Apply*` / `Reset*` effect fails:
    kernel actually has. `SyncFanCurve`/`SyncGpuClockRange` read back
    through `FanCurveControl::active_selection` /
    `GpuClockRangeControl::active_range`, which map the live EC/OD_RANGE
-   state back to a preset, `custom`, or firmware `auto`/`None`.
+   state back to a preset, firmware `auto`/`None`, or — fan curve only —
+   `custom` (a hand-drawn curve). `SyncGpuClockRange`'s equivalent
+   abnormal case (a failed write whose own cleanup also failed) maps to
+   `GpuClockSelection::Unmanaged`, never a settable `custom` state — see
+   the GPU clock range section above.
 
 Lote 38 made this uniform across the original three apply effects (only
 `Apply{PowerEnvelope}` rolled back in pre-1.0 versions); the fan-curve
@@ -281,7 +299,6 @@ day they shipped.
 | `SetFanCurve { cpu, gpu }`       | `hpdctl cool set-custom`, D-Bus `set_fan_curve` (daemon ≥ 2.9.0) |
 | `ResetFanCurve`                  | `hpdctl cool reset`, D-Bus `reset_fan_curve`      |
 | `EnableFanAuto`                  | `hpdctl cool auto`, D-Bus `set_fan_auto`          |
-| `SetGpuClockRange { min_mhz, max_mhz }` | `hpdctl gpu set`, D-Bus `set_gpu_clock_range` (daemon ≥ 2.12.0) |
 | `EnableGpuAutoFollow`            | `hpdctl gpu auto`, D-Bus `enable_gpu_auto_follow` (daemon ≥ 2.12.0) |
 | `ResetGpuClocks`                 | `hpdctl gpu reset`, D-Bus `reset_gpu_clocks` (daemon ≥ 2.12.0) |
 | `RestoreDefaults`                | `hpdctl restore-defaults`, D-Bus `restore_defaults` (daemon ≥ 2.14.0) — composes `SetPreset(Balanced)` → `SetProfile(Performance)` → `ChargeThresholdChanged(80)` → `EnableFanAuto` (hpd-managed auto, not firmware-auto — changed ≥ 2.14.2, see CHANGELOG) → conditionally `ResetGpuClocks` (only if already opted in) via recursive `reduce()` calls inside one atomic transaction; a full no-op if already at every default |
@@ -856,7 +873,8 @@ override defaults; `install.sh` never overwrites an existing
   boot** — unlike `active_fan_curve`, whose real steady state is never
   `None`. The daemon must never touch `power_dpm_force_performance_level`
   / `pp_od_clk_voltage` until the user opts in at least once via
-  `enable_gpu_auto_follow` or `set_gpu_clock_range`.
+  `enable_gpu_auto_follow` — the only opt-in; there is no manual-range
+  method to opt in with instead (see the GPU clock range section above).
 - **`SystemResumed` resets GPU clocks before reapplying them**, unlike
   the fan curve's plain re-apply. A GPU-clock write is a two-step
   hardware operation with a real unsafe intermediate state a crash

@@ -51,7 +51,6 @@ use std::process;
         hpdctl cool auto              Let the daemon pick cooling from TDP\n  \
         hpdctl cool get               Show current cooling level + mode\n  \
         hpdctl gpu auto               Let the daemon pick the GPU clock ceiling from TDP\n  \
-        hpdctl gpu set 700 1500       Pin an explicit GPU clock range (MHz)\n  \
         hpdctl gpu get                Show current GPU clock mode + range\n  \
         hpdctl doctor                 Check that hpd is the sole power manager\n  \
         hpdctl doctor --fix           Neutralize competing daemons + install polkit\n\
@@ -178,13 +177,15 @@ enum Commands {
     /// GPU clock range (advanced) — caps the GPU's frequency ceiling
     ///
     /// Optional, opt-in lever alongside TDP/cooling (daemon ≥ 2.12.0): the
-    /// daemon never touches the GPU clock until `gpu auto` or `gpu set` is
-    /// called at least once. `gpu auto` matches the ceiling to your TDP
-    /// preset automatically, exactly like auto-cooling; `gpu set` pins an
-    /// explicit MHz range and disengages auto-follow; `gpu reset` hands it
-    /// back to firmware. Hidden/unsupported on hardware with no
-    /// programmable GPU clock range — `gpu limits` reports an empty result
-    /// in that case.
+    /// daemon never touches the GPU clock until `gpu auto` is called at
+    /// least once. `gpu auto` matches the ceiling to your TDP preset
+    /// automatically, exactly like auto-cooling; `gpu reset` hands it
+    /// back to firmware. There is no way to pin an arbitrary MHz range —
+    /// real-world use found that was the one control in the whole stack
+    /// a user could set to a value that silently capped performance with
+    /// no way for the daemon to warn about it. Hidden/unsupported on
+    /// hardware with no programmable GPU clock range — `gpu limits`
+    /// reports an empty result in that case.
     Gpu {
         #[clap(subcommand)]
         action: GpuAction,
@@ -306,13 +307,6 @@ enum CoolAction {
 enum GpuAction {
     /// Let the daemon infer the GPU clock ceiling from the current TDP
     Auto,
-    /// Set an explicit MHz range (advanced) and disengage auto-follow
-    Set {
-        #[arg(help = "Minimum clock in MHz")]
-        min_mhz: u32,
-        #[arg(help = "Maximum clock in MHz")]
-        max_mhz: u32,
-    },
     /// Hand the GPU clock back to firmware automatic control
     Reset,
     /// Show the current GPU clock mode and committed range
@@ -578,13 +572,6 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
                     eprintln!("❌ Error enabling GPU clock auto-follow: {}", e);
                 } else {
                     println!("🔄 GPU clock auto-follow enabled (follows TDP).");
-                }
-            }
-            GpuAction::Set { min_mhz, max_mhz } => {
-                if let Err(e) = proxy.set_gpu_clock_range(min_mhz, max_mhz).await {
-                    eprintln!("❌ Error setting GPU clock range: {}", e);
-                } else {
-                    println!("🖥️ GPU clock range set to {}-{} MHz.", min_mhz, max_mhz);
                 }
             }
             GpuAction::Reset => {

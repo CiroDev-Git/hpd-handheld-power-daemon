@@ -99,44 +99,51 @@ already do.
 
 **Why you'd use it:** TDP already limits total chip power, and cooling
 already limits temperature — GPU clock range is a third, more surgical
-tool for the cases those two don't cover well: pinning a lower ceiling to
-save battery or cut coil noise in a game that doesn't need the top clock,
-or raising it deliberately for a demanding title.
+tool for the case those two don't cover well: an efficiency ceiling that
+scales with how much TDP you've actually given the chip, so a low-TDP
+session doesn't waste headroom letting the GPU chase clocks it can't
+sustain anyway.
 
 ```
 hpdctl gpu auto             # follow TDP (mirrors `cool auto`)
-hpdctl gpu set <min> <max>  # explicit MHz range (advanced), disengages auto-follow
 hpdctl gpu reset            # hand the GPU clock back to firmware, fully un-manages it
 hpdctl gpu get              # show the current mode + committed range
 hpdctl gpu limits           # show this device's supported MHz range (read-only)
 ```
 
-**Auto vs manual, the same shape as cooling:**
+**Auto or off — there is no manual pin:**
 - **`gpu auto`**: hpd infers a clock ceiling from your current TDP, using
   the same silent/balanced/aggressive tier already computed for the fan
   curve — a low TDP infers a lower ceiling, a high TDP infers a ceiling
-  near the device's full range.
-- **`gpu set <min> <max>`**: pin an explicit MHz range yourself and
-  disengage auto-follow. Validated against this device's live supported
-  range (`hpdctl gpu limits`); an out-of-range or invalid pair is
-  rejected with a specific error.
+  near the device's full range. This re-derives on every TDP change, so
+  it's never a stale value left over from an earlier session.
 - **`gpu reset`**: hand the clock back to firmware automatic control —
   and, unlike `cool reset` (which returns the *fan curve* to one
   firmware-managed mode among several the daemon still tracks), this
   returns GPU clock all the way to "hpd isn't managing this at all,"
   the same state a fresh install starts in.
 
+There used to be a third command, `gpu set <min> <max>`, pinning an
+explicit MHz range that ignored TDP entirely. It was removed in 3.0.0:
+on-device use found it was the one control in the whole daemon a user
+could set once and forget, silently capping GPU performance below what
+their TDP/cooling would otherwise allow with no way for hpd to warn
+about it — unlike a low TDP or a Silent fan curve, a low pinned MHz
+range has no legitimate everyday use case that `gpu auto` doesn't
+already cover. If you're looking for `gpu set` after upgrading, this is
+why it's gone; there is no replacement flag.
+
 > **Optional and opt-in, forever — not just at first boot.** hpd never
 > touches the GPU clock at all — reads it, writes it, nothing — until you
-> run `gpu auto` or `gpu set` yourself, at least once. This is different
-> from cooling: cooling's real steady state is never "off" (the daemon
-> is always driving *some* fan curve), but GPU clock's steady state
-> genuinely is "untouched" by default. Nothing else in hpd ever turns
-> this on for you — not `restore-defaults`, not plugging in AC, not a
-> fresh install or upgrade. Once you *have* opted in, `restore-defaults`
-> and unplugging AC hand the GPU clock back to firmware auto along with
-> everything else, exactly like they do for cooling — they just never
-> flip the very first switch for you.
+> run `gpu auto` yourself, at least once. This is different from cooling:
+> cooling's real steady state is never "off" (the daemon is always
+> driving *some* fan curve), but GPU clock's steady state genuinely is
+> "untouched" by default. Nothing else in hpd ever turns this on for you
+> — not `restore-defaults`, not plugging in AC, not a fresh install or
+> upgrade. Once you *have* opted in, `restore-defaults` and unplugging AC
+> hand the GPU clock back to firmware auto along with everything else,
+> exactly like they do for cooling — they just never flip the very first
+> switch for you.
 
 **What's normal:** `hpdctl gpu get` reports "firmware auto (not managed)"
 by default on every fresh install, and again any time after `gpu reset` —
@@ -164,7 +171,6 @@ whatever handheld you're running hpd on.
 | `hpdctl power set <mode>` / `power get` | Power mode (advanced): `performance` / `balanced` / `eco` |
 | `hpdctl charge set <%>` / `charge get` | Battery charge cap |
 | `hpdctl gpu auto` | GPU clock range follows the TDP (advanced, opt-in) |
-| `hpdctl gpu set <min> <max>` | Set an explicit GPU clock range in MHz (advanced) |
 | `hpdctl gpu reset` | Hand the GPU clock back to firmware, fully un-managed |
 | `hpdctl gpu get` | Show the current GPU clock mode + committed range |
 | `hpdctl gpu limits` | Show this device's supported GPU clock range |
@@ -407,12 +413,11 @@ that: one cooling control, not three.
 | `SetAcMaxPerformance(b)` | Toggle the "lock to max on AC" preference (daemon ≥ 2.7.0). |
 | `ac_locked` (prop) | Live: power/cooling controls are locked because AC is plugged in and the lock preference is on (daemon ≥ 2.7.0). |
 | `ac_max_performance` (prop) | The toggleable "lock to max on AC" preference itself (daemon ≥ 2.7.0), vs. `ac_locked` (the live state). |
-| `SetGpuClockRange(u, u)` | GPU clock range control (daemon ≥ 2.12.0): explicit `(min_mhz, max_mhz)`, latches manual GPU-clock mode. |
-| `EnableGpuAutoFollow()` | Re-enable GPU-clock auto-follow of TDP (daemon ≥ 2.12.0) — the opt-in the whole feature is gated behind. |
+| `EnableGpuAutoFollow()` | Re-enable GPU-clock auto-follow of TDP (daemon ≥ 2.12.0) — the opt-in the whole feature is gated behind. There is no method to pin an arbitrary range; `SetGpuClockRange` existed through daemon 2.x and was removed in 3.0.0. |
 | `ResetGpuClocks()` | Hand the GPU clock back to firmware auto (daemon ≥ 2.12.0). |
 | `GetGpuClockConstraints() → a{sv}` | This device's live supported GPU clock range (`range_min_mhz`/`range_max_mhz`, daemon ≥ 2.12.0). Empty map if not programmable. |
 | `GetGpuClockRange() → (u, u)` | The GPU clock range actually committed to hardware (daemon ≥ 2.12.0); `(0, 0)` = not applicable (firmware auto / no programmable range). |
-| `gpu_clock_range` (prop) | Active GPU-clock selection: `silent`/`balanced`/`aggressive`/`custom`/`auto` (daemon ≥ 2.12.0), mirrors `fan_curve`. |
+| `gpu_clock_range` (prop) | Active GPU-clock selection: `silent`/`balanced`/`aggressive`/`auto` (daemon ≥ 2.12.0), mirrors `fan_curve`. `unknown` is the rare rollback case, never a settable state. |
 | `gpu_follows_tdp` (prop) | `true` = GPU clock follows TDP, `false` = manual or unmanaged (daemon ≥ 2.12.0), mirrors `auto_cooling`. |
 
 **Suggested UI (post-decouple):**
@@ -434,11 +439,11 @@ that: one cooling control, not three.
   older daemons. The `AC0`-node fix makes the value correct on the Xbox
   Ally X.
 - An **optional, advanced GPU clock range** control (`gpu_clock_range` /
-  `SetGpuClockRange` / `EnableGpuAutoFollow` / `ResetGpuClocks`, daemon
-  ≥ 2.12.0) — hidden entirely when `GetGpuClockConstraints()` returns an
-  empty map (no programmable range on this device, or an older daemon).
-  Never default it on; the daemon itself never auto-opts a user in
-  (see the GPU clock section above).
+  `EnableGpuAutoFollow` / `ResetGpuClocks`, daemon ≥ 2.12.0) — hidden
+  entirely when `GetGpuClockConstraints()` returns an empty map (no
+  programmable range on this device, or an older daemon). Auto/Reset
+  only, no manual-range control; never default it on, the daemon itself
+  never auto-opts a user in (see the GPU clock section above).
 
 For the thermal rationale and the data behind all this, see
 [`fan-curves.md`](fan-curves.md).

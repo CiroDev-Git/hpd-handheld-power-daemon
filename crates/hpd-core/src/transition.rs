@@ -43,17 +43,6 @@ pub enum Transition {
         /// Curve for the GPU fan.
         gpu: FanCurve,
     },
-    /// Manual override: program an explicit GPU clock range and disable
-    /// `gpu_follows_tdp`. The range is assumed already validated against
-    /// the device's `GpuClockConstraints` by the D-Bus layer; the L1
-    /// backend validates again independently before writing (see
-    /// `hpd-backend-asus`'s `GpuClockRangeControl::set_range`).
-    SetGpuClockRange {
-        /// Lowest frequency (MHz) the DPM may select.
-        min_mhz: u32,
-        /// Highest frequency (MHz) the DPM may select.
-        max_mhz: u32,
-    },
     /// Re-bind GPU-clock inference to the TDP envelope (mirrors
     /// `EnableFanAuto`). Immediately infers+applies a range for the
     /// current SPL.

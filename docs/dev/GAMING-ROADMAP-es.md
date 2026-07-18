@@ -896,6 +896,15 @@ Dudas legítimas del feedback: ¿qué gana vs simplemente ajustar TDP?,
 > implementado, solo la evidencia cuantitativa de que el min-clock
 > "ayuda a los tirones" en la práctica.
 
+> ⚠️ **`set_gpu_clock_range` (el pin manual de rango) revertido en
+> v3.0.0 (2026-07-19).** Auditoría de consistencia post-implementación
+> encontró que era el único control de todo el daemon/plugin que un
+> usuario podía dejar puesto y olvidar, capando en silencio el
+> rendimiento de GPU sin forma de que el daemon avisara. `enable_gpu_auto_follow`
+> / `reset_gpu_clocks` / `get_gpu_clock_constraints` / `get_gpu_clock_range`
+> se mantienen intactos — solo el pin manual arbitrario desapareció.
+> Ver `CHANGELOG.md` `[3.0.0]`.
+
 > **Decisión 2026-07-11**: aprobado — se revisa e implementa junto con
 > la capability de GPU (AUDITORIA §6.2 / roadmap item 18), **sin**
 > esperar al experimento de admisión ligado a la fuente de FPS descrito

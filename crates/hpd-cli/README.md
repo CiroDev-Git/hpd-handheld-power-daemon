@@ -39,12 +39,11 @@ The CLI surface is stable under SemVer from `1.0.0` forward.
 | `hpdctl power set <mode>`     | Power mode / EPP: `performance`/`balanced`/`eco`. Default `performance`. |
 | `hpdctl power get`            | Show current power mode.                    |
 | `hpdctl ac-lock [on\|off]`    | Lock max performance on AC (on by default). No arg = show state. |
-| `hpdctl gpu auto`             | Let the daemon infer the GPU clock ceiling from TDP. Daemon ≥ 2.12.0; `hpdctl gpu` shipped in 2.13.0. |
-| `hpdctl gpu set <min_mhz> <max_mhz>` | Pin an explicit GPU clock range (MHz), disengages auto-follow. Daemon ≥ 2.12.0; `hpdctl gpu` shipped in 2.13.0. |
+| `hpdctl gpu auto`             | Let the daemon infer the GPU clock ceiling from TDP. Daemon ≥ 2.12.0; `hpdctl gpu` shipped in 2.13.0. There is no `gpu set` — an explicit-range pin existed through daemon 2.x and was removed in 3.0.0 (see `CHANGELOG.md`). |
 | `hpdctl gpu reset`            | Hand the GPU clock back to firmware auto. Daemon ≥ 2.12.0; `hpdctl gpu` shipped in 2.13.0. |
 | `hpdctl gpu get`              | Show current GPU clock mode and committed range. Daemon ≥ 2.12.0; `hpdctl gpu` shipped in 2.13.0. |
 | `hpdctl gpu limits`           | Show this device's supported GPU clock range (live `OD_RANGE`). Daemon ≥ 2.12.0; `hpdctl gpu` shipped in 2.13.0. |
-| `hpdctl restore-defaults`     | Restore recommended defaults in one shot: TDP → Balanced, Power mode → Performance, Charge cap → 80%, Cooling → firmware auto, GPU clock → firmware auto (only if already opted in). Daemon ≥ 2.14.0. |
+| `hpdctl restore-defaults`     | Restore recommended defaults in one shot: TDP → Balanced, Power mode → Performance, Charge cap → 80%, Cooling → auto (follows TDP), GPU clock → firmware auto (only if already opted in). Daemon ≥ 2.14.0. |
 | `hpdctl doctor`               | Report whether polkit is installed and whether a competing power daemon is fighting hpd over TDP/profile/charge. Read-only. |
 | `hpdctl doctor --fix`         | Neutralize competing daemons (mask) and install the polkit policy in one elevated step — a superset of `fix-polkit`. |
 | `hpdctl fix-polkit`           | Install the polkit policy + rules and reload polkit (self-elevates via pkexec/sudo). |

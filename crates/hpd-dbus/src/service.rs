@@ -19,7 +19,7 @@ use hpd_capabilities::backend::HwBackend;
 use hpd_capabilities::fan_curve::{
     FanCurve, FanCurvePoint, FanCurvePreset, FanCurveSelection, FAN_CURVE_POINTS,
 };
-use hpd_capabilities::gpu_clock::{GpuClockRange, GpuClockSelection};
+use hpd_capabilities::gpu_clock::GpuClockSelection;
 use hpd_capabilities::power::PowerEnvelopeLimits;
 use hpd_capabilities::profile::ProfileName;
 use hpd_core::state::ProfileState;
@@ -701,50 +701,6 @@ impl PowerDaemonInterface {
         }
     }
 
-    /// Manual override: program an explicit GPU clock frequency range
-    /// (`min_mhz`, `max_mhz`) and disable `gpu_follows_tdp` — the GPU
-    /// counterpart of `set_fan_curve`'s hand-drawn curve.
-    ///
-    /// Validated **twice**: here, against this device's LIVE
-    /// `get_gpu_clock_constraints` (the kernel-reported OD_RANGE — Class A
-    /// data, not a per-model calibration), and again independently by the
-    /// L1 backend right before it writes to the hardware.
-    ///
-    /// `polkit` action: `dev.cirodev.hpd.set-profile` (same bucket as the
-    /// other cooling/performance levers).
-    async fn set_gpu_clock_range(
-        &self,
-        min_mhz: u32,
-        max_mhz: u32,
-        #[zbus(connection)] conn: &zbus::Connection,
-        #[zbus(header)] header: zbus::message::Header<'_>,
-    ) -> zbus::fdo::Result<()> {
-        debug!(
-            "D-Bus received request to set GPU clock range: {}-{}MHz",
-            min_mhz, max_mhz
-        );
-        self.reject_if_locked()?;
-
-        let Some(gpu_cap) = self.backend.gpu_clock() else {
-            return Err(zbus::fdo::Error::Failed(
-                "this device has no programmable GPU clock range".into(),
-            ));
-        };
-        let range = GpuClockRange { min_mhz, max_mhz };
-        let constraints = gpu_cap.constraints().map_err(|e| {
-            zbus::fdo::Error::Failed(format!("could not read GPU clock constraints: {e}"))
-        })?;
-        range
-            .validate_against(&constraints)
-            .map_err(|e| zbus::fdo::Error::InvalidArgs(e.to_string()))?;
-
-        if !polkit::check(conn, &header, PolkitAction::SetProfile).await {
-            return Err(auth_denied());
-        }
-        self.send(Transition::SetGpuClockRange { min_mhz, max_mhz })
-            .await
-    }
-
     /// Re-enable GPU-clock auto-follow: the daemon resumes inferring a GPU
     /// clock ceiling from the active TDP envelope (mirrors `set_fan_auto`
     /// for the fan curve). Immediately infers and applies a range for the
@@ -795,8 +751,8 @@ impl PowerDaemonInterface {
     /// long-battery-life default, not 100%, which disables the cap),
     /// Cooling -> hpd-managed auto (the curve follows the just-restored
     /// TDP — changed from firmware auto in 2.14.2, see CHANGELOG), and
-    /// GPU clock -> firmware auto (only if already opted into a custom
-    /// range — never auto-opts a user in).
+    /// GPU clock -> firmware auto (only if already opted into
+    /// auto-follow — never auto-opts a user in).
     ///
     /// `polkit` actions: `dev.cirodev.hpd.set-tdp` AND
     /// `dev.cirodev.hpd.set-charge` AND `dev.cirodev.hpd.set-profile` —
@@ -822,10 +778,10 @@ impl PowerDaemonInterface {
     /// This device's GPU clock range bounds — the kernel-reported LIVE
     /// `OD_RANGE` (Class A data: a generic kernel interface, not a
     /// per-model calibration, so it needs no recalibration on other
-    /// hardware), so a client (the plugin's range editor) can validate a
-    /// custom range precisely for the running device instead of guessing.
-    /// Empty map when the device has no programmable GPU clock range at
-    /// all, or the live read failed.
+    /// hardware). Informational: lets a client show what range
+    /// `enable_gpu_auto_follow`'s curated tiers resolve within for this
+    /// specific device. Empty map when the device has no programmable
+    /// GPU clock range at all, or the live read failed.
     ///
     /// Keys: `range_min_mhz` / `range_max_mhz` (`u`).
     async fn get_gpu_clock_constraints(&self) -> HashMap<String, OwnedValue> {
@@ -861,23 +817,25 @@ impl PowerDaemonInterface {
     }
 
     /// Active GPU-clock selection: a preset name (`silent`, `balanced`,
-    /// `aggressive`), `custom` for an explicit range, or `auto` when the
-    /// firmware is in charge (the daemon never touches GPU clocks until
-    /// `enable_gpu_auto_follow` / `set_gpu_clock_range` is called at least
-    /// once). Mirrors the `fan_curve` property.
+    /// `aggressive`), or `auto` when the firmware is in charge (the daemon
+    /// never touches GPU clocks until `enable_gpu_auto_follow` is called
+    /// at least once). Mirrors the `fan_curve` property. `unknown` is the
+    /// rare rollback case — see `GpuClockSelection::Unmanaged`'s docs —
+    /// where a failed write's own best-effort cleanup also failed,
+    /// leaving hardware pinned to a range that matches no curated tier.
     #[zbus(property)]
     async fn gpu_clock_range(&self) -> String {
         match self.state_rx.borrow().active_gpu_clock {
             None => "auto".to_string(),
             Some(GpuClockSelection::Preset(p)) => p.as_str().to_string(),
-            Some(GpuClockSelection::Custom(_)) => "custom".to_string(),
+            Some(GpuClockSelection::Unmanaged(_)) => "unknown".to_string(),
         }
     }
 
     /// Whether the daemon is currently inferring the GPU clock ceiling
     /// from the TDP envelope (mirrors `auto_cooling` for the fan curve).
-    /// `false` is the permanent default until `enable_gpu_auto_follow` /
-    /// `set_gpu_clock_range` is called at least once.
+    /// `false` is the permanent default until `enable_gpu_auto_follow`
+    /// is called at least once.
     #[zbus(property)]
     async fn gpu_follows_tdp(&self) -> bool {
         self.state_rx.borrow().gpu_follows_tdp
@@ -1337,7 +1295,7 @@ mod tests {
     #[tokio::test]
     async fn gpu_clock_range_property_reflects_active_selection() {
         use hpd_capabilities::fan_curve::FanCurvePreset;
-        use hpd_capabilities::gpu_clock::{GpuClockRange, GpuClockSelection};
+        use hpd_capabilities::gpu_clock::GpuClockSelection;
 
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
         let mut state = sample_state();
@@ -1367,7 +1325,10 @@ mod tests {
         assert_eq!(iface.gpu_clock_range().await, "aggressive");
         assert!(iface.gpu_follows_tdp().await);
 
-        state.active_gpu_clock = Some(GpuClockSelection::Custom(GpuClockRange {
+        // Unmanaged: the rare rollback-cleanup-also-failed leftover,
+        // never a state a caller can request directly.
+        use hpd_capabilities::gpu_clock::GpuClockRange;
+        state.active_gpu_clock = Some(GpuClockSelection::Unmanaged(GpuClockRange {
             min_mhz: 600,
             max_mhz: 1_000,
         }));
@@ -1379,7 +1340,7 @@ mod tests {
             Arc::new(TelemetryFixture),
             Arc::new(std::sync::atomic::AtomicBool::new(false)),
         );
-        assert_eq!(iface.gpu_clock_range().await, "custom");
+        assert_eq!(iface.gpu_clock_range().await, "unknown");
     }
 
     /// A curve with the wrong number of points must be rejected as

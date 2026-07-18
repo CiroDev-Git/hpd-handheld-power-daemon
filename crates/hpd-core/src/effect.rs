@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use hpd_capabilities::fan_curve::FanCurveSelection;
-use hpd_capabilities::gpu_clock::GpuClockSelection;
+use hpd_capabilities::fan_curve::{FanCurvePreset, FanCurveSelection};
 use hpd_capabilities::power::PowerEnvelopeTarget;
 use hpd_capabilities::profile::ProfileName;
 
@@ -25,14 +24,15 @@ pub enum Effect {
     /// Hand fan control back to the firmware's automatic curve.
     ResetFanCurve,
     /// Program a GPU clock range into the hardware via the L1 backend.
-    /// Carries the abstract selection (never a resolved MHz value)
-    /// because resolving `Preset(tier)` needs BOTH `RuntimeConfig`'s
-    /// clock fractions (available to the pure reducer) AND the live
-    /// `GpuClockConstraints` (a hardware read the reducer must never
-    /// perform) — so the Executor is what resolves it to a concrete
-    /// `GpuClockRange` immediately before calling
-    /// `GpuClockRangeControl::set_range`.
-    ApplyGpuClockRange(GpuClockSelection),
+    /// Carries the curated tier (never a resolved MHz value, and never an
+    /// arbitrary caller-supplied range — there is no such thing anymore,
+    /// see `GpuClockSelection`'s docs) because resolving it to a concrete
+    /// range needs BOTH `RuntimeConfig`'s clock fractions (available to
+    /// the pure reducer) AND the live `GpuClockConstraints` (a hardware
+    /// read the reducer must never perform) — so the Executor is what
+    /// resolves it to a concrete `GpuClockRange` immediately before
+    /// calling `GpuClockRangeControl::set_range`.
+    ApplyGpuClockRange(FanCurvePreset),
     /// Hand the GPU clock back to firmware auto.
     ResetGpuClocks,
     /// Flush the current `ProfileState` to disk via the persister.

@@ -90,23 +90,33 @@ impl GpuClockRange {
     }
 }
 
-/// What the user asked the daemon to apply: either the same tier the
-/// auto-inferred fan curve uses (`hpd-core`'s reducer/executor resolve
-/// this to a concrete [`GpuClockRange`] via `RuntimeConfig`'s clock
-/// fractions before it ever reaches [`GpuClockRangeControl::set_range`] —
-/// see that trait's docs on why it never speaks in `GpuClockSelection`
-/// itself) or an explicit custom range. Persisted in `ProfileState` so the
-/// active selection survives restarts. Wrapped in `Option` there — `None`
-/// means firmware auto, the default/steady-state for anyone who never
-/// opts in (see [`GpuClockRangeControl::active_range`]).
+/// What's actually active for the GPU clock ceiling. Persisted in
+/// `ProfileState` so the active selection survives restarts. Wrapped in
+/// `Option` there — `None` means firmware auto, the default/steady-state
+/// for anyone who never opts in (see [`GpuClockRangeControl::active_range`]).
+///
+/// There is deliberately no user-selectable "arbitrary range" variant —
+/// the only way to opt in is [`Preset`](Self::Preset), inferred from TDP
+/// (an explicit-range D-Bus method existed through daemon 2.x and was
+/// removed: real-world use found it was the one control in the whole
+/// stack a user could set to a value that silently capped performance
+/// with no explanation, and the daemon has no way to warn about a value
+/// it never validates against intent, only against hardware bounds).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GpuClockSelection {
     /// The same tier the auto-inferred fan curve uses for the current
     /// SPL — reused rather than a new enum so one inference call drives
     /// both the fan curve and the GPU clock ceiling.
     Preset(FanCurvePreset),
-    /// An explicit range supplied by the caller.
-    Custom(GpuClockRange),
+    /// **Rollback-only, never user-settable.** The concrete range the
+    /// backend's `active_range()` read back after `set_range` failed
+    /// *and* its own best-effort `reset_to_auto()` cleanup also failed —
+    /// the one genuinely abnormal case where the hardware is left in
+    /// `manual` mode pinned to a range that doesn't correspond to any
+    /// curated tier. Surfaced honestly rather than mis-reported as a
+    /// tier or silently dropped to `None`/auto. See
+    /// `hpd-core::reducer::Transition::SyncGpuClockRange`.
+    Unmanaged(GpuClockRange),
 }
 
 /// Write access to the GPU's DPM clock range (amdgpu `pp_od_clk_voltage`

@@ -27,7 +27,6 @@ enqueued.
 | `reset_fan_curve()`                   | method   | `dev.cirodev.hpd.set-profile`               | —      |
 | `set_ac_max_performance(b)`           | method   | `dev.cirodev.hpd.set-profile`               | 2.7.0  |
 | `set_fan_curve(cpu: a(yy), gpu: a(yy))` | method | `dev.cirodev.hpd.set-profile`             | 2.9.0  |
-| `set_gpu_clock_range(min_mhz: u32, max_mhz: u32)` | method | `dev.cirodev.hpd.set-profile`   | 2.12.0 |
 | `enable_gpu_auto_follow()`            | method   | `dev.cirodev.hpd.set-profile`               | 2.12.0 |
 | `reset_gpu_clocks()`                  | method   | `dev.cirodev.hpd.set-profile`               | 2.12.0 |
 | `restore_defaults()`                  | method   | `set-tdp` **and** `set-charge` **and** `set-profile` (all three) | 2.14.0 |
@@ -53,9 +52,9 @@ enqueued.
 While `ac_locked` is `true` (on AC with the lock preference on), every
 power/cooling setter (`set_spl`, `set_preset`, `set_profile`,
 `set_cooling_level`, `set_fan_auto`, `reset_fan_curve`, `set_fan_curve`,
-`set_gpu_clock_range`, `enable_gpu_auto_follow`, `reset_gpu_clocks`,
-`restore_defaults`) rejects with a "locked on AC" error;
-`set_charge_threshold` and `set_ac_max_performance` are exempt.
+`enable_gpu_auto_follow`, `reset_gpu_clocks`, `restore_defaults`)
+rejects with a "locked on AC" error; `set_charge_threshold` and
+`set_ac_max_performance` are exempt.
 
 Property changes emit `PropertiesChanged` signals — the daemon's
 `spawn_properties_changed_emitter` watches the executor's
