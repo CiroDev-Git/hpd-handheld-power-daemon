@@ -39,6 +39,9 @@ not part of the published repository.
   Balanced TDP infers (typically `balanced`), with `AutoCooling = true`.
   No D-Bus/CLI/config surface change — `RestoreDefaults`'s signature
   (`()`) is unchanged, only which existing transitions it composes.
+  Follow-up (same cycle): `hpdctl restore-defaults`'s help text and
+  success message, plus the D-Bus method's doc comment, still said
+  "Cooling → firmware auto" — updated to match the new behaviour.
 
 ## [2.14.1] — 2026-07-18
 
