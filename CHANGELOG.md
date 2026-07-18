@@ -11,6 +11,35 @@ not part of the published repository.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **`Preset::Max` (and the AC-lock's forced-max envelope) now reach the
+  true hardware boost-rail ceiling.** `derive_boosted_envelope`'s
+  `sppt_factor`/`fppt_factor` multipliers (1.15/1.25 by default) are
+  tuned for the sustained middle of the SPL range; at `spl_max` they
+  could leave real headroom on the table — found on-device: the ROG
+  Xbox Ally X's 35W SPL cap only reached 40.25W SPPT / 43.75W FPPT via
+  the multipliers, short of the device's real 43W / 53W firmware
+  ceiling. At `spl == spl_max` the boost rails now go straight to
+  `device_limits.sppt_max`/`fppt_max` instead of through the
+  multiplier; below `spl_max` the multiplier-derived value is
+  unchanged. No D-Bus/CLI/config surface change — `hpd-core`'s pure
+  reducer maths only.
+- **`RestoreDefaults` (`hpdctl restore-defaults`) now restores Cooling
+  to hpd-managed auto, not firmware auto.** It previously ran
+  `ResetFanCurve` (hands the fan curve back to firmware, `AutoCooling
+  = false`), which contradicted both the documented "just works"
+  recommendation (`cool auto` + `preset balanced`, see `MANUAL.md`)
+  and a fresh install's own boot default (`DaemonConfig::default_fan_curve
+  = Some(Balanced)`, `fan_follows_tdp = true`) — two different
+  "defaults" that disagreed with each other. Now runs `EnableFanAuto`
+  instead, so the resulting curve is whatever tier the just-restored
+  Balanced TDP infers (typically `balanced`), with `AutoCooling = true`.
+  No D-Bus/CLI/config surface change — `RestoreDefaults`'s signature
+  (`()`) is unchanged, only which existing transitions it composes.
+
 ## [2.14.1] — 2026-07-18
 
 ### Changed
