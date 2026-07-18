@@ -11,9 +11,9 @@ not part of the published repository.
 
 ---
 
-## [Unreleased]
+## [3.0.0] — 2026-07-18
 
-### Breaking — operators / packagers
+### ⚠ Breaking — D-Bus + CLI clients
 
 - **Removed the GPU clock manual-range D-Bus method and CLI subcommand:
   `SetGpuClockRange(u min_mhz, u max_mhz)` and `hpdctl gpu set <min>
