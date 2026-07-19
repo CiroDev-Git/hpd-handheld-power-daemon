@@ -11,6 +11,36 @@ not part of the published repository.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`GetTelemetry`'s `boost_ceiling_mw` key**: the highest power the
+  daemon has currently configured the hardware to allow (FPPT if the
+  platform exposes a separate fast-boost rail, else SPPT) — always known
+  from daemon state, never a hardware read, so it has no failure mode of
+  its own. Paired with `soc_power_mw`, it answers "is the configured
+  power limit actually being honoured by this hardware?" — a question
+  found on-device (2026-07-18, ROG Xbox Ally X) to have no honest answer
+  in the existing telemetry surface, requiring an SSH session to
+  diagnose by hand.
+- **`hpdctl status` warns when measured power sustains past the
+  configured ceiling** by more than a 10% margin (absorbing normal
+  sensor jitter): `⚠️ Power limit not enforced: <N>W measured vs <M>W
+  max configured`. A fact about the reading, not a verdict on the
+  cause — see `docs/dev/POWER-ENFORCEMENT-GAPS.md` for the confirmed
+  RC73XA case this was built from, and its investigation checklist for
+  ruling out every daemon/OS-side cause before firmware is the
+  suspect.
+- **`docs/dev/POWER-ENFORCEMENT-GAPS.md`**: tracks devices where hpd's
+  write round-trips correctly from sysfs but the firmware/EC doesn't
+  actually hold hardware to it — a narrower, distinct thing from hpd's
+  own correctness (architectural rule 1 covers the latter, not the
+  former). First (and so far only) entry: the ROG Xbox Ally X (RC73XA)
+  does not enforce STAPM/PPT at its lowest SPL tier (7W) — GPU clock
+  range control on the same device *is* honoured correctly, ruling out
+  a broader WMI-layer failure.
+
 ## [3.0.0] — 2026-07-18
 
 ### ⚠ Breaking — D-Bus + CLI clients

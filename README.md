@@ -245,6 +245,13 @@ Ally X at a fixed SPL: `power-saver` drew ~13 W, `performance` ~29–40 W.
 [`docs/MANUAL-es.md`](docs/MANUAL-es.md) (Spanish) — every feature, every
 combination, and a "what's normal vs. what to worry about" guide.
 
+If measured power stays well above the TDP you set even though `hpdctl
+status` confirms hpd wrote the right value, see
+[`docs/dev/POWER-ENFORCEMENT-GAPS.md`](docs/dev/POWER-ENFORCEMENT-GAPS.md) —
+some devices' firmware doesn't hold itself to a value hpd correctly wrote,
+and `hpdctl status`/`GetTelemetry`'s `boost_ceiling_mw` key exist to make
+that gap visible rather than silently confusing.
+
 See [`docs/fan-curves.md`](docs/fan-curves.md) for the thermal rationale
 and [`docs/dev/GAMING-ROADMAP-es.md`](docs/dev/GAMING-ROADMAP-es.md)
 ("Fase 3 — Curvas de ventilador personalizadas") for the on-device

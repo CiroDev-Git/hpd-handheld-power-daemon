@@ -551,15 +551,27 @@ impl PowerDaemonInterface {
     ///
     /// Keys (all independently optional): `cpu_temp_c` / `gpu_temp_c`
     /// (`i`, °C), `cpu_fan_rpm` / `gpu_fan_rpm` (`u`, RPM), `soc_power_mw`
-    /// (`u`, mW), `battery_power_mw` (`u`, mW — only while discharging),
-    /// `battery_percent` (`u`, 0-100), `battery_status` (`s`, raw kernel
-    /// string), `battery_health_pct` (`u`), `battery_cycles` (`u`),
-    /// `cpu_freq_mhz` / `gpu_freq_mhz` (`u`), `gpu_busy_pct` (`u`,
-    /// 0-100), `cpu_busy_pct` (`u`, 0-100 — averaged over the interval
-    /// since the previous call, absent on the first call after daemon
-    /// start), `vram_used_mb` / `vram_total_mb` (`u`),
+    /// (`u`, mW), `boost_ceiling_mw` (`u`, mW — the highest power the
+    /// daemon has *configured* the hardware to allow right now: FPPT if
+    /// the platform exposes a separate fast-boost rail, else SPPT; always
+    /// known from daemon state, never a hardware read, so it has no
+    /// failure mode of its own), `battery_power_mw` (`u`, mW — only while
+    /// discharging), `battery_percent` (`u`, 0-100), `battery_status`
+    /// (`s`, raw kernel string), `battery_health_pct` (`u`),
+    /// `battery_cycles` (`u`), `cpu_freq_mhz` / `gpu_freq_mhz` (`u`),
+    /// `gpu_busy_pct` (`u`, 0-100), `cpu_busy_pct` (`u`, 0-100 — averaged
+    /// over the interval since the previous call, absent on the first
+    /// call after daemon start), `vram_used_mb` / `vram_total_mb` (`u`),
     /// `gpu_throttle_status` (`t`, raw bitmask — no current backend
     /// populates this).
+    ///
+    /// `soc_power_mw` vs `boost_ceiling_mw` is the pair a caller compares
+    /// to answer "is the configured power limit actually being honoured
+    /// by this hardware?" — see `hpdctl status`'s own use of the same
+    /// two keys for the canonical example. Neither value alone answers
+    /// that question: `soc_power_mw` swings naturally with workload, and
+    /// `boost_ceiling_mw` is a target, not a promise the daemon can make
+    /// the firmware keep (see `docs/dev/POWER-ENFORCEMENT-GAPS.md`).
     async fn get_telemetry(&self) -> HashMap<String, OwnedValue> {
         let mut map = HashMap::new();
 
@@ -587,6 +599,11 @@ impl PowerDaemonInterface {
                 "soc_power_mw",
                 thermal.get_soc_power().ok().flatten().map(|p| p.0),
             );
+        }
+        {
+            let state = self.state_rx.borrow();
+            let ceiling = state.power_target.fppt.unwrap_or(state.power_target.sppt);
+            insert_dbus_value(&mut map, "boost_ceiling_mw", Some(ceiling.0));
         }
         if let Some(fan) = self.backend.fan() {
             insert_dbus_value(
@@ -1212,6 +1229,9 @@ mod tests {
         );
         assert_eq!(telemetry_u32(&telemetry, "cpu_fan_rpm"), Some(4200));
         assert_eq!(telemetry_u32(&telemetry, "soc_power_mw"), Some(18300));
+        // sample_state()'s power_target has fppt = Some(20000) — the fast
+        // rail wins over sppt (17000) when both are present.
+        assert_eq!(telemetry_u32(&telemetry, "boost_ceiling_mw"), Some(20000));
         assert_eq!(telemetry_u32(&telemetry, "battery_power_mw"), Some(15000));
         assert_eq!(telemetry_u32(&telemetry, "battery_percent"), Some(64));
         assert_eq!(
@@ -1240,6 +1260,28 @@ mod tests {
                  not present with a placeholder"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn get_telemetry_boost_ceiling_falls_back_to_sppt_without_a_fast_rail() {
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let mut state = sample_state();
+        state.power_target.fppt = None;
+        let (_state_tx, state_rx) = tokio::sync::watch::channel(state);
+        let backend: Arc<dyn HwBackend> = Arc::new(TelemetryFixture);
+        let iface = PowerDaemonInterface::new(
+            tx,
+            state_rx,
+            sample_limits(),
+            backend,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
+
+        let telemetry = iface.get_telemetry().await;
+
+        // sample_state()'s sppt is 17000 — with no fppt rail, that's the
+        // real ceiling, not a missing/zero value.
+        assert_eq!(telemetry_u32(&telemetry, "boost_ceiling_mw"), Some(17000));
     }
 
     fn telemetry_u8(map: &HashMap<String, OwnedValue>, key: &str) -> Option<u8> {
