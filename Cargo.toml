@@ -27,7 +27,7 @@ members = [
 # `<key>.workspace = true` so version / license / MSRV / repo links
 # stay in one place. Bumping a release becomes a single edit here.
 [workspace.package]
-version      = "3.0.0"
+version      = "3.1.0"
 edition      = "2021"
 license      = "GPL-3.0-or-later"
 authors      = ["Cristian Ciro <cristian_ciro@outlook.es>"]
