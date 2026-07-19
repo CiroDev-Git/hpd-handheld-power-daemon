@@ -714,6 +714,29 @@ fn telemetry_str<'a>(
     map.get(key).and_then(|v| <&str>::try_from(v).ok())
 }
 
+/// Builds the `hpdctl status` warning line when measured SoC power
+/// (`soc_power_mw`, from `GetThermalStatus`) sustains above the
+/// currently-configured boost ceiling (`boost_ceiling_mw`, from
+/// `GetTelemetry`) by more than a 10% margin. The margin absorbs normal
+/// sensor jitter around the ceiling; a real firmware/EC enforcement gap
+/// (see `docs/dev/POWER-ENFORCEMENT-GAPS.md`) overshoots by far more
+/// than that. Returns `None` whenever either reading is unavailable
+/// (older daemon, or hardware that doesn't expose `soc_power_mw`) —
+/// never guesses.
+fn power_enforcement_warning(measured_mw: Option<u32>, ceiling_mw: Option<u32>) -> Option<String> {
+    let (measured_mw, ceiling_mw) = (measured_mw?, ceiling_mw?);
+    if measured_mw <= ceiling_mw + ceiling_mw / 10 {
+        return None;
+    }
+    Some(format!(
+        "  ⚠️ Power limit not enforced: {}W measured vs {}W max configured — \
+         this device's firmware/EC is not honouring the limit hpd set \
+         (see docs/dev/POWER-ENFORCEMENT-GAPS.md)",
+        measured_mw / 1000,
+        ceiling_mw / 1000,
+    ))
+}
+
 async fn print_dashboard(proxy: &PowerDaemonProxy<'_>) -> zbus::Result<()> {
     let spl_watts = proxy.current_spl().await?;
     let charge_limit = proxy.charge_end_threshold().await?;
@@ -752,10 +775,24 @@ async fn print_dashboard(proxy: &PowerDaemonProxy<'_>) -> zbus::Result<()> {
         format!("{}W now · {}W TDP cap", soc_power_mw / 1000, spl_watts)
     };
 
+    // Power-enforcement discrepancy: does the hardware actually respect
+    // the highest rail the daemon has configured right now (FPPT, or
+    // SPPT where the platform has no separate fast-boost rail)? This is
+    // a fact about the reading, not a verdict on the cause — same
+    // "measured vs. configured" pairing `get_telemetry`'s own doc
+    // comment describes.
+    let enforcement_line = power_enforcement_warning(
+        (soc_power_mw != i32::MIN).then_some(soc_power_mw as u32),
+        telemetry_u32(&telemetry, "boost_ceiling_mw"),
+    );
+
     println!("=======================================");
     println!("  🎮 Handheld Power Daemon Status 🎮  ");
     println!("=======================================");
     println!("   ⚡ Power:            {}", power_line);
+    if let Some(line) = &enforcement_line {
+        println!("{line}");
+    }
     println!(
         "  🧊 Cooling:          {} ({})",
         cooling_level, cooling_mode
@@ -909,5 +946,41 @@ mod tests {
         assert!(parse_curve_points(&points).is_err());
         let points = vec!["45:-1".to_string()];
         assert!(parse_curve_points(&points).is_err());
+    }
+
+    #[test]
+    fn power_enforcement_warning_fires_past_the_margin() {
+        // 25W measured vs a 19W ceiling (this session's real on-device
+        // reading) — 32% over, well past the 10% jitter margin.
+        let warning = power_enforcement_warning(Some(25_000), Some(19_000));
+        assert!(warning.is_some());
+        let text = warning.unwrap();
+        assert!(text.contains("25W measured"), "{text}");
+        assert!(text.contains("19W max configured"), "{text}");
+    }
+
+    #[test]
+    fn power_enforcement_warning_silent_within_the_margin() {
+        // 20.5W vs 19W ceiling — 8% over, inside the 10% jitter margin.
+        assert_eq!(power_enforcement_warning(Some(20_500), Some(19_000)), None);
+    }
+
+    #[test]
+    fn power_enforcement_warning_silent_exactly_at_the_margin_boundary() {
+        // 20.9W vs 19W ceiling — exactly ceiling + 10%, not "greater than".
+        assert_eq!(power_enforcement_warning(Some(20_900), Some(19_000)), None);
+    }
+
+    #[test]
+    fn power_enforcement_warning_silent_at_or_under_the_ceiling() {
+        assert_eq!(power_enforcement_warning(Some(19_000), Some(19_000)), None);
+        assert_eq!(power_enforcement_warning(Some(10_000), Some(19_000)), None);
+    }
+
+    #[test]
+    fn power_enforcement_warning_silent_when_either_reading_is_missing() {
+        assert_eq!(power_enforcement_warning(None, Some(19_000)), None);
+        assert_eq!(power_enforcement_warning(Some(25_000), None), None);
+        assert_eq!(power_enforcement_warning(None, None), None);
     }
 }
