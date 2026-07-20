@@ -11,7 +11,7 @@ not part of the published repository.
 
 ---
 
-## [Unreleased]
+## [3.2.0] — 2026-07-20
 
 ### Added
 
