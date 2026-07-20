@@ -249,6 +249,32 @@ eficiencia — el 99 % lo deja como está.
 | **Potencia full pero silencioso** | `tdp set <alto>` + `cool set silent` | Los watts aplican completos; los fans quedan suaves, así que el chip corre más caliente. Ahora es una opción válida. |
 | **Equilibrado de todos los días** | `cool auto` (el default) | El daemon elige la curva según tu TDP. |
 
+### A dónde van los vatios en realidad (medido)
+
+Números de una campaña de benchmarks controlada en una ROG Xbox Ally X
+(cargas sostenidas, en batería, con defaults — otros equipos variarán en
+los absolutos pero la forma se mantiene):
+
+- **La GPU deja de ganar a ~21 W.** Por encima, los vatios extra solo
+  alimentan la CPU — un juego limitado por GPU gana ~1% de 21 W → 35 W.
+- **El punto dulce para jugar es 13-16 W**: ~82-91% del rendimiento
+  máximo de GPU con una fracción de la potencia (y del calor y ruido).
+- **El preset medio (~21 W) es un default excelente**: ~83% de todo
+  (CPU, GPU y ancho de banda de memoria, todos medidos), con la memoria
+  ya saturada en ese punto.
+- **El máximo es un tier de ráfaga, no un ajuste de diario**: los
+  últimos 7 W (28 → 35) compran ~5% de CPU y ~1% de GPU a cambio de
+  ~21% más potencia y ~86 °C sostenidos en la CPU.
+- **Tu TDP no cuesta nada en reposo** (~7-8 W de consumo total del
+  sistema sin importar el límite) — no hace falta bajarlo para leer o
+  ver video; bájalo para escenarios de *carga* donde quieras estirar la
+  batería.
+- **El *modo* de energía no es gratis**: al mismo TDP, `power set
+  power-saver` midió ~12% más lento que `performance`. Es una palanca de
+  batería, no un ajuste sin costo.
+- **Enchufado vs. batería: rendimiento idéntico** al mismo TDP — la
+  batería no limita este equipo ni por debajo del 20% de carga.
+
 ### Checklist de "config perfecta"
 
 1. **Batería:** corré `hpdctl charge set 80` una vez — lo más importante
