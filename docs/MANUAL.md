@@ -245,6 +245,31 @@ alone.
 | **Full power but quiet** | `tdp set <high>` + `cool set silent` | The watts land in full; fans stay soft, so the chip runs warmer. Now a valid choice. |
 | **Everyday balanced** | `cool auto` (the default) | The daemon picks the fan curve from your TDP. |
 
+### Where the watts actually go (measured)
+
+Numbers from a controlled benchmark campaign on a ROG Xbox Ally X
+(sustained loads, battery, defaults — other devices will differ in
+absolutes but the shape holds):
+
+- **The GPU stops gaining at ~21 W.** Above that, extra watts feed the
+  CPU only — a GPU-bound game gains ~1% from 21 W → 35 W.
+- **The gaming sweet spot is 13-16 W**: ~82-91% of the maximum GPU
+  performance at a fraction of the power (and heat, and noise).
+- **The middle preset (~21 W) is an excellent default**: ~83% of
+  everything (CPU, GPU, memory bandwidth all measured), with memory
+  bandwidth fully saturated by that point.
+- **The maximum is a burst tier, not an everyday setting**: the last
+  7 W (28 → 35) buy ~5% CPU and ~1% GPU while adding ~21% power and
+  pushing sustained CPU temperature to ~86 °C.
+- **Your TDP setting costs nothing at idle** (~7-8 W whole-system draw
+  regardless of the cap) — no need to lower it for reading or video;
+  lower it for *load* scenarios where you want the battery to last.
+- **The power *mode* is not free**: at an identical TDP, `power set
+  power-saver` measured ~12% slower than `performance`. It is a battery
+  lever, not a free setting.
+- **Plugged in vs. battery: identical performance** at the same TDP —
+  the battery does not limit this device even below 20% charge.
+
 ### The "perfect config" checklist
 
 1. **Battery:** run `hpdctl charge set 80` once — the single biggest thing
