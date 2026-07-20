@@ -113,11 +113,17 @@ pub fn reduce(
             // Manual power lever (ACPI platform_profile / EPP), decoupled
             // from cooling: it does NOT touch the fan curve selection or
             // the auto-cooling flag. We still re-assert the active fan
-            // curve afterwards because writing platform_profile can make
-            // the EC drop the custom curve back to firmware auto.
+            // curve AND the power envelope afterwards, because writing
+            // platform_profile makes the EC drop both: the custom curve
+            // back to firmware auto, and the SPL/SPPT/FPPT limits back to
+            // the profile's own defaults (see
+            // `reassert_envelope_after_profile`'s doc for the on-device
+            // repro — the envelope drop is silent, sysfs still reads back
+            // the stale values).
             if new_state.active_profile != new_profile {
                 new_state.active_profile = new_profile.clone();
                 effects.push(Effect::ApplyPlatformProfile(new_profile));
+                reassert_envelope_after_profile(&new_state, &mut effects);
                 reassert_curve_after_profile(&mut new_state, &mut effects);
                 effects.push(Effect::PersistState);
             }
@@ -333,9 +339,13 @@ pub fn reduce(
 
             info!("Re-applying full power/cooling state to hardware (boot/resume)");
             let mut resumed_state = state.clone();
+            // ORDER: profile FIRST, envelope after — a profile write makes
+            // the EC drop the envelope (see `reassert_envelope_after_profile`),
+            // so the reverse order would silently undo the re-assert on
+            // every boot/resume where the firmware profile differed.
             let mut effects = vec![
-                Effect::ApplyPowerEnvelope(state.power_target.clone()),
                 Effect::ApplyPlatformProfile(state.active_profile.clone()),
+                Effect::ApplyPowerEnvelope(state.power_target.clone()),
                 Effect::ApplyChargeThreshold(state.charge_end_threshold),
             ];
             // Re-apply the managed fan curve: the EC can drop or reset
@@ -622,6 +632,28 @@ fn reassert_curve_after_profile(new_state: &mut ProfileState, effects: &mut Vec<
     }
 }
 
+/// Re-assert the active power envelope after a `platform_profile` write.
+///
+/// Found on-device (2026-07-19, ROG Xbox Ally X / RC73XA, controlled
+/// repro during a perf campaign): writing the ACPI platform profile makes
+/// the EC silently drop the previously-written SPL/SPPT/FPPT limits. The
+/// sysfs attributes still read back the old values — the driver's view is
+/// stale — but the chip runs at the new profile's own defaults (25-34 W
+/// measured against a 13 W target, sustained for full 4-minute runs).
+/// A fresh envelope write re-establishes enforcement, so this is exactly
+/// the same EC behaviour class as the fan-curve drop that
+/// [`reassert_curve_after_profile`] exists for, and gets the same cure:
+/// the envelope must be re-written after **any** profile write, and every
+/// effect list that carries both must order the profile write FIRST.
+/// (See `docs/dev/POWER-ENFORCEMENT-GAPS.md` for the full investigation.)
+///
+/// Unlike the fan curve (whose unmanaged state is `None` = firmware
+/// auto, nothing to re-assert), `power_target` always holds a real
+/// envelope, so this re-asserts unconditionally.
+fn reassert_envelope_after_profile(new_state: &ProfileState, effects: &mut Vec<Effect>) {
+    effects.push(Effect::ApplyPowerEnvelope(new_state.power_target.clone()));
+}
+
 /// Whether a transition is a user-initiated power/cooling write that the
 /// "AC = maximum performance" lock suppresses. The battery charge threshold
 /// change, the AC / suspend / boot events, the internal `Sync*` rollbacks
@@ -709,10 +741,12 @@ fn derive_boosted_envelope(
 /// ceiling (with SPPT/FPPT derived via the boost factors), power mode
 /// `Performance`, cooling curve `Aggressive`, and auto-cooling off (the
 /// curve is pinned explicitly). Returns the new state plus the ordered
-/// `Apply*` effects — power, then profile, then the fan curve **last**
-/// (writing `platform_profile` can make the EC drop the custom curve, so it
-/// must be re-written afterwards). Does **not** emit `PersistState`: callers
-/// add it (and any charge re-apply) so the effect list stays composable.
+/// `Apply*` effects — **profile first**, then power, then the fan curve
+/// (writing `platform_profile` makes the EC drop both the previously
+/// written envelope and the custom curve — see
+/// [`reassert_envelope_after_profile`] — so both must land after it).
+/// Does **not** emit `PersistState`: callers add it (and any charge
+/// re-apply) so the effect list stays composable.
 fn force_ac_max_performance(
     base: &ProfileState,
     device_limits: &PowerEnvelopeLimits,
@@ -729,8 +763,8 @@ fn force_ac_max_performance(
     new_state.fan_follows_tdp = false;
 
     let mut effects = vec![
-        Effect::ApplyPowerEnvelope(target),
         Effect::ApplyPlatformProfile(profile),
+        Effect::ApplyPowerEnvelope(target),
         Effect::ApplyFanCurve(curve),
     ];
 
@@ -760,21 +794,35 @@ fn restore_dc_state(current: &ProfileState, snapshot: &DcSnapshot) -> ReducerOut
     let mut effects = Vec::new();
     new_state.last_dc_state = None;
 
-    if new_state.power_target != snapshot.power_target {
-        new_state.power_target = snapshot.power_target.clone();
-        effects.push(Effect::ApplyPowerEnvelope(snapshot.power_target.clone()));
-    }
-    if new_state.active_profile != snapshot.active_profile {
+    // Profile FIRST: writing platform_profile makes the EC drop the
+    // envelope and the custom curve (see `reassert_envelope_after_profile`),
+    // so when the profile is written, the envelope/curve must be
+    // (re-)written after it EVEN IF they match the snapshot already —
+    // "already equal in our state" does not mean "still enforced in the
+    // EC" once the profile write lands.
+    let profile_changed = new_state.active_profile != snapshot.active_profile;
+    if profile_changed {
         new_state.active_profile = snapshot.active_profile.clone();
         effects.push(Effect::ApplyPlatformProfile(
             snapshot.active_profile.clone(),
         ));
+    }
+    if profile_changed || new_state.power_target != snapshot.power_target {
+        new_state.power_target = snapshot.power_target.clone();
+        effects.push(Effect::ApplyPowerEnvelope(snapshot.power_target.clone()));
     }
     if new_state.active_fan_curve != snapshot.active_fan_curve {
         new_state.active_fan_curve = snapshot.active_fan_curve;
         match snapshot.active_fan_curve {
             Some(selection) => effects.push(Effect::ApplyFanCurve(selection)),
             None => effects.push(Effect::ResetFanCurve),
+        }
+    } else if profile_changed {
+        // Curve already matches the snapshot, but the profile write above
+        // may have made the EC drop it — re-assert managed curves only
+        // (`None` = firmware auto, nothing to re-assert).
+        if let Some(selection) = snapshot.active_fan_curve {
+            effects.push(Effect::ApplyFanCurve(selection));
         }
     }
     new_state.fan_follows_tdp = snapshot.fan_follows_tdp;
@@ -1076,6 +1124,29 @@ mod tests {
                 FanCurvePreset::Aggressive
             ))));
         assert!(out.effects.contains(&Effect::PersistState));
+        // Ordering: profile first — the forced-max envelope and pinned
+        // curve must land AFTER the profile write, or the EC drops them
+        // (RC73XA finding, 2026-07-19).
+        let prof = out
+            .effects
+            .iter()
+            .position(|e| matches!(e, Effect::ApplyPlatformProfile(_)))
+            .unwrap();
+        let env = out
+            .effects
+            .iter()
+            .position(|e| matches!(e, Effect::ApplyPowerEnvelope(_)))
+            .unwrap();
+        let curve = out
+            .effects
+            .iter()
+            .position(|e| matches!(e, Effect::ApplyFanCurve(_)))
+            .unwrap();
+        assert!(
+            env > prof,
+            "forced-max envelope must come AFTER the profile"
+        );
+        assert!(curve > prof, "pinned curve must come AFTER the profile");
     }
 
     #[test]
@@ -1150,6 +1221,69 @@ mod tests {
         assert_eq!(out.new_state.active_fan_curve, saved.active_fan_curve);
         assert!(!out.new_state.fan_follows_tdp);
         assert!(out.effects.contains(&Effect::PersistState));
+        // Ordering: profile first, envelope after — the profile write
+        // drops the EC's envelope enforcement (RC73XA finding).
+        let prof = out
+            .effects
+            .iter()
+            .position(|e| matches!(e, Effect::ApplyPlatformProfile(_)))
+            .unwrap();
+        let env = out
+            .effects
+            .iter()
+            .position(|e| matches!(e, Effect::ApplyPowerEnvelope(_)))
+            .unwrap();
+        assert!(env > prof, "envelope must be restored AFTER the profile");
+    }
+
+    #[test]
+    fn test_ac_unplug_profile_only_diff_still_reasserts_envelope_and_curve() {
+        // Regression (RC73XA, 2026-07-19): "already equal in our state"
+        // does not mean "still enforced in the EC" once a profile write
+        // lands. A snapshot differing ONLY in profile must still re-write
+        // the envelope and re-assert the managed curve after the profile
+        // effect — skipping them (the old differs-only logic) left the
+        // chip running the new profile's own default limits.
+        let sel = FanCurveSelection::Preset(FanCurvePreset::Silent);
+        let mut state = setup_state();
+        state.active_fan_curve = Some(sel);
+        let saved = DcSnapshot {
+            power_target: state.power_target.clone(), // SAME envelope
+            active_profile: ProfileName::PowerSaver,  // ONLY the profile differs
+            active_fan_curve: Some(sel),              // SAME curve
+            fan_follows_tdp: state.fan_follows_tdp,
+            active_gpu_clock: None,
+            gpu_follows_tdp: false,
+        };
+        state.is_ac_connected = true;
+        state.active_profile = ProfileName::Performance;
+        state.last_dc_state = Some(saved.clone());
+
+        let out = reduce(
+            &state,
+            Transition::AcPowerChanged(false),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+
+        let prof = out
+            .effects
+            .iter()
+            .position(|e| matches!(e, Effect::ApplyPlatformProfile(_)))
+            .expect("profile must be written");
+        let env = out
+            .effects
+            .iter()
+            .position(|e| matches!(e, Effect::ApplyPowerEnvelope(_)))
+            .expect("envelope must be re-asserted even though it matches the snapshot");
+        assert!(env > prof, "envelope re-assert must come AFTER the profile");
+        let curve = out
+            .effects
+            .iter()
+            .position(|e| matches!(e, Effect::ApplyFanCurve(_)))
+            .expect("managed curve must be re-asserted even though it matches the snapshot");
+        assert!(curve > prof, "curve re-assert must come AFTER the profile");
     }
 
     #[test]
@@ -1266,6 +1400,18 @@ mod tests {
         assert!(
             curve > prof,
             "fan curve must be re-applied after the platform profile"
+        );
+        // Envelope after profile too — the profile write drops the EC's
+        // envelope enforcement (RC73XA finding, 2026-07-19), so the
+        // reverse order would silently undo the resume re-assert.
+        let envelope = out
+            .effects
+            .iter()
+            .position(|e| matches!(e, Effect::ApplyPowerEnvelope(_)))
+            .unwrap();
+        assert!(
+            envelope > prof,
+            "power envelope must be re-applied after the platform profile"
         );
     }
 
@@ -1923,6 +2069,66 @@ mod tests {
         assert!(
             curve_idx > profile_idx,
             "curve must be re-applied AFTER the profile"
+        );
+    }
+
+    #[test]
+    fn test_profile_change_reasserts_power_envelope() {
+        // Regression for the on-device finding (2026-07-19, RC73XA):
+        // writing platform_profile makes the EC silently drop the
+        // previously-written SPL/SPPT/FPPT limits — sysfs still reads
+        // back the stale values while the chip runs at the profile's own
+        // defaults (25-34 W measured against a 13 W target). The reducer
+        // must therefore re-assert the CURRENT envelope after every
+        // actual profile write, ordered after the profile effect.
+        let state = setup_state();
+        let out = reduce(
+            &state,
+            Transition::SetProfile(ProfileName::Performance),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert!(
+            out.effects
+                .contains(&Effect::ApplyPowerEnvelope(state.power_target.clone())),
+            "SetProfile must re-assert the active power envelope"
+        );
+        let profile_idx = out
+            .effects
+            .iter()
+            .position(|e| matches!(e, Effect::ApplyPlatformProfile(_)))
+            .unwrap();
+        let envelope_idx = out
+            .effects
+            .iter()
+            .position(|e| matches!(e, Effect::ApplyPowerEnvelope(_)))
+            .unwrap();
+        assert!(
+            envelope_idx > profile_idx,
+            "envelope must be re-applied AFTER the profile write (the \
+             profile write is what drops it in the EC)"
+        );
+    }
+
+    #[test]
+    fn test_profile_noop_does_not_rewrite_envelope() {
+        // The EC drop only happens on an actual profile write, and the
+        // reducer dedupes no-op SetProfile calls — so a same-value call
+        // must emit NO effects at all (an unconditional envelope rewrite
+        // here would be harmless but noisy).
+        let state = setup_state(); // active_profile = Balanced
+        let out = reduce(
+            &state,
+            Transition::SetProfile(ProfileName::Balanced),
+            &setup_limits(),
+            &setup_config(),
+        )
+        .unwrap();
+        assert!(
+            out.effects.is_empty(),
+            "no-op SetProfile must emit nothing, got {:?}",
+            out.effects
         );
     }
 

@@ -24,59 +24,57 @@ OS-side cause first (see "Investigation checklist" below) — most reports of
 
 ## Confirmed gaps
 
-### ROG Xbox Ally X (RC73XA) — STAPM/PPT not enforced at the SPL floor
+### ROG Xbox Ally X (RC73XA) — a `platform_profile` write silently drops the PPT limits — **ROOT CAUSE FOUND, daemon-mitigated**
 
-- **Symptom**: with `SPL = 7W` (this device's `spl_min`, the lowest tier),
-  `SPPT`/`FPPT` correctly floored at their own hardware minimums (13W/19W —
-  see `hpd-core::reducer::derive_boosted_envelope`'s existing doc comment on
-  that floor), measured `soc_power_mw` (read from the `amdgpu` hwmon's
-  `power1_input`, the same source `ryzenadj`/CoreCtrl/MangoHud all trust)
-  sustained at 25-30W during real gameplay — 32-58% over even the highest
-  configured rail (FPPT), for minutes at a time, not a momentary boost
-  spike.
-- **Confirmed NOT the cause** (checked on-device before concluding this is a
-  firmware gap):
-  - hpd wrote the right values: `ppt_pl1_spl` / `ppt_pl2_sppt` /
-    `ppt_pl3_fppt` under `/sys/class/firmware-attributes/asus-armoury/attributes/`
-    read back exactly `7` / `13` / `19`, matching `hpdctl status`'s own
-    `CurrentSpl`.
-  - No competing power daemon (`hpdctl status`'s health block: "hpd owns the
-    power knobs").
-  - GPU clock ceiling *was* being honoured correctly — observed 1821 MHz /
-    94% busy, within the ~1865 MHz ceiling `gpu_clock_range_for_tier`
-    computes for the `Silent` preset at this device's live `OD_RANGE`
-    (600-2900 MHz). This is a **separate** WMI control path from
-    STAPM/PPT, and it worked — only the power-limit path didn't.
-  - No relevant package updated on the affected device before the symptom
-    first appeared: no kernel, no `linux-firmware`, no `fwupd`-driven BIOS
-    flash. hpd itself was on 2.14.0 → 2.14.1 → 3.0.0 the same day, and
-    neither jump touches the SPL/SPPT/FPPT write path or the low-end floor
-    logic (`2.14.1` was CLI/doc-only; `3.0.0`'s one power-adjacent fix only
-    changes behaviour at `spl_max`, the opposite end of the range). Most
-    likely explanation: this is the first time a user pushed this device to
-    its literal minimum SPL under real load — an always-present gap, not a
-    regression.
-  - BIOS was already the latest available (`RC73XA.317`, 2026-04-30) at the
-    time of the report. An earlier BIOS (316) did fix a distinct,
-    ASUS-acknowledged "SPL settings issue of Manual mode" — that fix
-    predates and is included in 317, so it is not this gap.
-- **Likely cause (not proven, no further lever to pull)**: either the
-  RC73XA's EC/SMU firmware doesn't actually enforce the WMI-set PPT
-  registers at this device's literal floor tier, or the very new
-  `asus-armoury` Linux kernel driver has a gap Windows + Armoury Crate SE
-  don't exercise the same way (ASUS validates BIOS releases against
-  Windows; this device ships Windows-first). hpd has no way to distinguish
-  between those two from userspace, and no more-forceful write path exists
-  to try — the WMI attribute is the only interface `AsusPowerBackend`
-  (or ASUS's own tools) can use.
-- **What hpd does about it**: nothing more than tell the truth. There is no
-  daemon-side retry, no alternate write path, and no plan to add one — this
-  is outside architectural rule 1's scope (hpd is not lying about what it
-  set; the hardware is not doing what it was told). The mitigation is
-  purely observational: `GetTelemetry`'s `boost_ceiling_mw` key (added
-  alongside this doc) plus `hpdctl status`'s matching warning line surface
-  the gap the moment it's measurable, instead of requiring an SSH
-  debugging session to notice it, as this report did.
+**Status: solved.** The original report (2026-07-18: TDP set to 7W, measured
+25-30W sustained during real gameplay) looked like a mysterious,
+intermittent, lowest-tier-only enforcement failure. A controlled perf
+campaign on the same device (2026-07-19) found the real trigger, made it
+deterministic, and the daemon now mitigates it. The full curing commit adds
+`reassert_envelope_after_profile` in `hpd-core::reducer` — see its doc
+comment for the code-side summary.
+
+- **Root cause**: writing the ACPI `platform_profile` (an actual value
+  change, not a same-value rewrite — the reducer dedupes those) makes the
+  EC **silently drop the previously-written SPL/SPPT/FPPT limits**. The
+  sysfs attributes still read back the old values (the driver's view is
+  stale), but the chip runs at the new profile's own defaults. Nothing
+  about the tier matters — the original "only at 7W" framing was
+  coincidental (a low TDP just makes the gap *visible*, because the
+  profile defaults are far above it).
+- **Deterministic repro** (campaign runs B05-B09, 15W/13W tiers,
+  `stress-ng` + `glmark2` load):
+  - B05: profile already `performance`, no write → enforced correctly.
+  - B06: `performance → balanced` → 21-25W sustained vs 19W FPPT for the
+    whole 4-min run; CPU score *rose* to 16.9k vs 14.6k at the same
+    nominal TDP — the score itself proves the extra watts were real.
+  - B07: `balanced → eco` → clobber masked (eco's own EPP bias keeps the
+    draw below the ceiling anyway).
+  - B08: `eco → performance`, TDP 13W → **21-34W sustained for 4 full
+    minutes**; GPU scored ~8.7k, identical to an unconstrained 28-35W run.
+  - B09: no profile change, fresh `tdp set` → enforced correctly again —
+    a fresh envelope write **re-establishes enforcement**.
+- **Daemon-side mitigation** (this repo, same pattern as the existing
+  fan-curve re-assert for the EC's curve-drop-on-profile-write quirk):
+  1. `SetProfile` re-asserts the active power envelope (and the managed
+     fan curve, as before) immediately after the profile effect.
+  2. Every composed effect list that carries both writes orders the
+     profile **first**: boot/resume re-assert, the AC-lock's forced-max
+     (`force_ac_max_performance`), and the unplug restore
+     (`restore_dc_state`) — the last of which also re-asserts
+     envelope/curve when **only** the profile differed from the snapshot
+     ("equal in our state" ≠ "still enforced in the EC").
+- **Still true / still worth reporting upstream**: the EC behaviour itself
+  is a firmware quirk (the drop is silent; sysfs reads back stale values),
+  and the same class of report exists on other ASUS models (ProArt P16,
+  seerge/g-helper#4996). hpd now works around it, but the kernel
+  `asus-armoury` driver (and Windows tooling) presumably have the same
+  exposure — an upstream report with the deterministic repro above is
+  worth filing.
+- **Watchdog**: `GetTelemetry`'s `boost_ceiling_mw` key plus
+  `hpdctl status`'s warning line (both added while investigating this)
+  remain the passive tripwire — they are how the campaign caught the
+  trigger in the act, and they stay valuable for any *future* gap.
 
 ## Investigation checklist (before adding a device here)
 

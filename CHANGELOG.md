@@ -11,6 +11,30 @@ not part of the published repository.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **A `platform_profile` write no longer silently disables the TDP
+  limit.** Root cause of the "TDP set to 7W but the chip draws 25-30W"
+  report that `boost_ceiling_mw` (3.1.0) was built to catch: on the ROG
+  Xbox Ally X (RC73XA), an actual platform-profile change makes the EC
+  silently drop the previously-written SPL/SPPT/FPPT limits — sysfs
+  still reads back the stale values while the chip runs at the profile's
+  own defaults (21-34 W measured against a 13 W target in the controlled
+  repro, sustained for full 4-minute runs). Exactly the same EC quirk
+  class as the known curve-drop-on-profile-write, and it gets the same
+  cure: `SetProfile` now re-asserts the active power envelope right
+  after the profile write, and every composed effect list that carries
+  both (boot/resume re-assert, the AC-lock's forced-max, the unplug
+  restore) now orders the profile write **first** so the envelope lands
+  after it. The unplug restore additionally re-asserts the envelope and
+  managed curve when *only* the profile differed from the snapshot —
+  "equal in our state" does not mean "still enforced in the EC" once a
+  profile write lands. Found and made deterministic during an on-device
+  perf campaign; see `docs/dev/POWER-ENFORCEMENT-GAPS.md` for the full
+  investigation (runs B05-B09).
+
 ## [3.1.0] — 2026-07-18
 
 ### Added
