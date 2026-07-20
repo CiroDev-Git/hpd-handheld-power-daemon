@@ -65,6 +65,16 @@ pub fn reduce(
 
             let target_watts = match preset {
                 TdpPreset::Eco => min_w,
+                // Efficiency: a fraction of the device's own range above
+                // spl_min (config.efficiency_frac, default 0.30) — the
+                // battery-efficient gaming sweet spot, derived per-device
+                // rather than hard-coded (see TdpPreset docs). `.round()`
+                // to the nearest whole watt; saturating_sub guards a
+                // pathological max < min.
+                TdpPreset::Efficiency => {
+                    let range = max_w.saturating_sub(min_w) as f32;
+                    min_w.saturating_add((range * config.efficiency_frac).round() as u32)
+                }
                 // saturating_add: defensive against pathological device_limits.
                 TdpPreset::Balanced => min_w.saturating_add(max_w) / 2,
                 TdpPreset::Max => max_w,
@@ -1052,6 +1062,51 @@ mod tests {
 
     fn setup_config() -> RuntimeConfig {
         RuntimeConfig::DEFAULT
+    }
+
+    // ---------- SetPreset → SPL mapping ----------
+
+    /// The resulting SPL for a preset, extracted from the effects a
+    /// `SetPreset` reduces to. Presets recurse into `SetSpl`, so the
+    /// committed envelope's `spl` is what the preset chose.
+    fn preset_spl_watts(preset: TdpPreset, cfg: &RuntimeConfig) -> u32 {
+        let out = reduce(
+            &setup_state(),
+            Transition::SetPreset(preset),
+            &setup_limits(),
+            cfg,
+        )
+        .unwrap();
+        out.new_state.power_target.spl.as_watts()
+    }
+
+    #[test]
+    fn test_preset_spl_mapping_including_efficiency() {
+        // Limits are [7, 35]W (setup_limits). Efficiency default 0.30:
+        // 7 + round(28 * 0.30) = 7 + 8 = 15W — in the measured 13-16W
+        // sweet spot, strictly between Eco (7) and Balanced (21).
+        let cfg = setup_config();
+        assert_eq!(preset_spl_watts(TdpPreset::Eco, &cfg), 7);
+        assert_eq!(preset_spl_watts(TdpPreset::Efficiency, &cfg), 15);
+        assert_eq!(preset_spl_watts(TdpPreset::Balanced, &cfg), 21);
+        assert_eq!(preset_spl_watts(TdpPreset::Max, &cfg), 35);
+        // Ladder is strictly increasing.
+        assert!(
+            preset_spl_watts(TdpPreset::Eco, &cfg) < preset_spl_watts(TdpPreset::Efficiency, &cfg)
+                && preset_spl_watts(TdpPreset::Efficiency, &cfg)
+                    < preset_spl_watts(TdpPreset::Balanced, &cfg)
+        );
+    }
+
+    #[test]
+    fn test_efficiency_preset_honours_config_fraction() {
+        // A different device/operator fraction moves the efficiency target
+        // without touching the enum — the whole point of config-derivation.
+        let cfg = RuntimeConfig {
+            efficiency_frac: 0.50, // deliberately = Balanced's midpoint
+            ..RuntimeConfig::DEFAULT
+        };
+        assert_eq!(preset_spl_watts(TdpPreset::Efficiency, &cfg), 21);
     }
 
     // ---------- AcPowerChanged ----------

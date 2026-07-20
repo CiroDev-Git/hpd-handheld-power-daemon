@@ -266,6 +266,7 @@ high_frac = 0.80
                 sppt_factor: 1.10,
                 fppt_factor: 1.30,
                 gpu_clock_fractions: GpuClockFractions::DEFAULT,
+                efficiency_frac: 0.30,
             },
         };
         assert_eq!(cfg.to_runtime(), cfg.runtime);

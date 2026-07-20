@@ -42,7 +42,7 @@ calor; menos = más fresco y más batería.
 
 ```
 hpdctl tdp set 18      # permití hasta 18 W
-hpdctl preset eco|balanced|max   # atajos: min / medio / máximo
+hpdctl preset efficiency         # punto dulce: mejor batería jugando
 ```
 
 ### 🧊 Enfriamiento (nivel + modo)
@@ -164,7 +164,7 @@ corras hpd.
 | `hpdctl monitor` | El mismo tablero, refrescado cada segundo |
 | `hpdctl limits` | Los watts min/max del hardware |
 | `hpdctl tdp set <W>` / `tdp get` | Setear / ver el límite de potencia |
-| `hpdctl preset eco\|balanced\|max` | Atajo de potencia (min / medio / máx) |
+| `hpdctl preset eco\|efficiency\|balanced\|max` | Atajo de potencia (min / punto-dulce / medio / máx) |
 | `hpdctl cool set <nivel>` | Setear nivel (`silent`/`balanced`/`aggressive`) |
 | `hpdctl cool auto` | El cooling sigue al TDP |
 | `hpdctl cool reset` | Ventilador al firmware |
@@ -232,10 +232,12 @@ eficiencia — el 99 % lo deja como está.
 
 ### `tdp set` vs `preset` — cuándo usar cada uno
 
-- **`preset eco|balanced|max`** — rápido. Elige los watts **min / medio /
-  máx** del rango de tu hardware. Usalo cuando solo querés "bajo / medio /
-  alto" sin pensar en watts. En cooling auto, caen justo en silent /
-  balanced / aggressive.
+- **`preset eco|efficiency|balanced|max`** — rápido. Elige un wattaje del
+  rango de tu hardware sin pensar en watts: **eco** = mínimo,
+  **efficiency** = el punto dulce eficiente para jugar (el tercio bajo del
+  rango — casi todo el rendimiento de GPU con una fracción de la potencia
+  y la batería), **balanced** = medio, **max** = máximo. En cooling auto,
+  cada uno cae en la curva de ventilador que le toca.
 - **`tdp set <watts>`** — preciso. Poné un wattaje exacto cuando tenés un
   presupuesto en mente (ej. `tdp set 12` para apuntar a más batería).
 
@@ -244,6 +246,7 @@ eficiencia — el 99 % lo deja como está.
 | Objetivo | Setup | Resultado |
 |---|---|---|
 | **Que funcione solo (recomendado)** | `cool auto` + `preset balanced` (o dejar los defaults) | La curva del ventilador siempre acompaña tu potencia; no hay que vigilar nada. |
+| **Mejor batería jugando** | `preset efficiency` (dejá `cool auto`) | El punto dulce — conserva casi todo el rendimiento de GPU estirando la batería. Ideal para jugar en handheld desenchufado. |
 | **Máximo rendimiento** (dock / enchufado) | `preset max` (o `tdp set <alto>`) + `cool set aggressive` | Potencia full, fans al máximo — lo más fresco a tope. Ruidoso. |
 | **Silencioso y mucha batería** (lectura, video, emulación liviana) | `preset eco` + `cool set silent` | Poca potencia (fresco y mucha batería) con fans casi mudos. |
 | **Potencia full pero silencioso** | `tdp set <alto>` + `cool set silent` | Los watts aplican completos; los fans quedan suaves, así que el chip corre más caliente. Ahora es una opción válida. |
