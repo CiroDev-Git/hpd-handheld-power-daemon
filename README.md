@@ -20,7 +20,7 @@ Everything sits behind a single D-Bus interface
 (`dev.cirodev.hpd.PowerDaemon1`) on the system bus, and a thin CLI
 (`hpdctl`) drives it.
 
-> **Status:** `v2.14.0` — the public surface (D-Bus interface, `hpdctl`
+> **Status:** `v3.2.0` — the public surface (D-Bus interface, `hpdctl`
 > CLI, on-disk state at `/var/lib/hpd/state.toml`, polkit action IDs)
 > is stable and follows [SemVer](https://semver.org/). Future
 > breaking changes require a major bump. See [`CHANGELOG.md`](CHANGELOG.md)
@@ -161,7 +161,7 @@ hpdctl limits                  # hardware SPL/SPPT/FPPT range
 # Power envelope
 hpdctl tdp set 18              # smart mode: SPL=18W, SPPT/FPPT derived
 hpdctl tdp get
-hpdctl preset eco|balanced|max # presets relative to hardware range
+hpdctl preset eco|efficiency|balanced|max # presets relative to hardware range
 
 # Cooling — fans only (noise vs temperature; independent of power)
 hpdctl cool set silent|balanced|aggressive
@@ -179,9 +179,11 @@ hpdctl power get
 # GPU clock range — optional, opt-in frequency ceiling (daemon >= 2.12.0)
 hpdctl gpu limits              # this device's supported range (live OD_RANGE)
 hpdctl gpu auto                # match the ceiling to the current TDP preset
-hpdctl gpu set 700 1500        # pin an explicit MHz range (disengages auto)
 hpdctl gpu reset               # hand the GPU clock back to firmware auto
 hpdctl gpu get                 # current mode + committed range
+# No `gpu set`: the manual arbitrary-range setter existed through the 2.x
+# line and was removed in 3.0.0 (it was the one control in the whole
+# stack a user could set once and silently cap performance with).
 
 # Battery
 hpdctl charge set 80           # 20..=100, persisted across reboots

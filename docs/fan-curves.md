@@ -219,9 +219,13 @@ Exactly 8 `temp_c:pwm` pairs (`pwm` 0–255), coolest to hottest, applied to
 *both* fans in one call (the underlying `SetFanCurve(cpu, gpu)` D-Bus
 method actually takes independent CPU/GPU curves — `hpdctl cool
 set-custom` just sends the same 8 points to both, which is what the CLI's
-single point list is for; a direct D-Bus caller, like the Decky plugin's
-future editor, can differentiate the two fans). Like `cool set`, it
-latches manual cooling.
+single point list is for; a direct D-Bus caller could differentiate the
+two fans). Like `cool set`, it latches manual cooling. (The Decky plugin
+briefly shipped a full-page editor over this exact method — removed in
+plugin 2.21.0 after real-world measurement found the curve *shape*
+doesn't move performance; see `docs/dev/PERF-BASELINE-RC73XA.md` and the
+plugin repo's `DESIGN.md` §12.9. `hpdctl cool set-custom` above is the
+capability's only current caller.)
 
 **Why a safety floor, and how a device communicates its own bounds.**
 Handing a user a raw 8-point curve editor is dangerous without limits: a
