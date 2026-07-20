@@ -182,7 +182,7 @@ impl PowerDaemonInterface {
         self.send(Transition::SetSpl(watts)).await
     }
 
-    /// Apply a named TDP preset (`eco`, `balanced`, `max`).
+    /// Apply a named TDP preset (`eco`, `efficiency`, `balanced`, `max`).
     ///
     /// `polkit` action: `dev.cirodev.hpd.set-tdp`.
     async fn set_preset(

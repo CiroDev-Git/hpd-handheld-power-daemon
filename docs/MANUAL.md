@@ -43,7 +43,7 @@ heat; fewer = cooler and longer battery.
 
 ```
 hpdctl tdp set 18      # allow up to 18 W
-hpdctl preset eco|balanced|max   # shortcuts: min / middle / max watts
+hpdctl preset efficiency         # sweet spot: best battery while gaming
 ```
 
 ### 🧊 Cooling (level + mode)
@@ -161,7 +161,7 @@ whatever handheld you're running hpd on.
 | `hpdctl monitor` | Same dashboard, refreshed every second |
 | `hpdctl limits` | The hardware's min/max watts |
 | `hpdctl tdp set <W>` / `tdp get` | Set / read the power limit |
-| `hpdctl preset eco\|balanced\|max` | Power shortcut (min / mid / max watts) |
+| `hpdctl preset eco\|efficiency\|balanced\|max` | Power shortcut (min / sweet-spot / mid / max watts) |
 | `hpdctl cool set <level>` | Set cooling level (`silent`/`balanced`/`aggressive`) |
 | `hpdctl cool auto` | Cooling follows the TDP |
 | `hpdctl cool reset` | Fans back to firmware control |
@@ -228,10 +228,12 @@ alone.
 
 ### `tdp set` vs `preset` — when to use which
 
-- **`preset eco|balanced|max`** — quick. Picks the **min / middle / max**
-  watts of your hardware range. Use it when you just want "low / medium /
-  high" without thinking in watts. In auto cooling these land exactly on
-  silent / balanced / aggressive.
+- **`preset eco|efficiency|balanced|max`** — quick. Picks a target
+  wattage from your hardware range without thinking in watts:
+  **eco** = minimum, **efficiency** = the battery-efficient gaming sweet
+  spot (lower third of the range — most of the GPU performance at a
+  fraction of the power and battery), **balanced** = midpoint,
+  **max** = maximum. In auto cooling each lands on the matching fan curve.
 - **`tdp set <watts>`** — precise. Set an exact wattage when you have a
   specific budget in mind (e.g. `tdp set 12` for a long-battery target).
 
@@ -240,6 +242,7 @@ alone.
 | Goal | Setup | Result |
 |---|---|---|
 | **Just works (recommended)** | `cool auto` + `preset balanced` (or leave the defaults) | The fan curve always matches your power; nothing to babysit. |
+| **Best battery while gaming** | `preset efficiency` (leave `cool auto`) | The sweet spot — keeps most of the GPU performance while stretching battery. Ideal for handheld play unplugged. |
 | **Max performance** (docked / plugged in) | `preset max` (or `tdp set <high>`) + `cool set aggressive` | Full power, fans maxed — the coolest the chip can be at full tilt. Loud. |
 | **Quiet & long battery** (reading, video, light emulation) | `preset eco` + `cool set silent` | Low power (so cool and long battery) with near-silent fans. |
 | **Full power but quiet** | `tdp set <high>` + `cool set silent` | The watts land in full; fans stay soft, so the chip runs warmer. Now a valid choice. |

@@ -11,6 +11,27 @@ not part of the published repository.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`TdpPreset::Efficiency` — a fourth preset (`hpdctl preset
+  efficiency`) targeting the battery-efficient gaming sweet spot**
+  between `eco` and `balanced`. From the 2026-07 perf campaign
+  (`docs/dev/PERF-BASELINE-RC73XA.md`): the iGPU stops gaining well
+  before `spl_max`, so a wattage in the lower third of the SPL range
+  keeps most of the GPU performance at a fraction of the power and
+  battery. Lands at `spl_min + efficiency_frac × (spl_max − spl_min)`,
+  a **new operator-tunable `RuntimeConfig::efficiency_frac`** (default
+  `0.30` → 15 W on the RC73XA's 7-35 W range). Derived per-device from
+  the SPL range, never a hard-coded wattage, so the same preset ports
+  across hardware and can be refined per-device via config or a future
+  calibration. Additive to the closed preset enum — an older client
+  simply never sends `efficiency`; a daemon that has it accepts the new
+  name (`SetPreset` / `hpdctl preset`). With auto-cooling and
+  GPU-auto-follow on, cooling and GPU clock follow the resulting TDP
+  automatically (no extra levers to coordinate).
+
 ## [3.1.1] — 2026-07-20
 
 ### Fixed

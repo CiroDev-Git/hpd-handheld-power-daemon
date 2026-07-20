@@ -221,6 +221,12 @@ pub struct RuntimeConfig {
     /// GPU clock ceiling fractions consumed when `gpu_follows_tdp` is on
     /// (see [`GpuClockFractions`]).
     pub gpu_clock_fractions: GpuClockFractions,
+    /// Where `TdpPreset::Efficiency` lands as a fraction of the device's
+    /// `[spl_min, spl_max]` range (0.0 = eco, 1.0 = max). Default 0.30 —
+    /// the lower-third battery-efficient gaming sweet spot measured on the
+    /// RC73XA (see [`TdpPreset`]). Operator-tunable, and the value a future
+    /// per-device calibration would write.
+    pub efficiency_frac: f32,
 }
 
 impl RuntimeConfig {
@@ -232,6 +238,7 @@ impl RuntimeConfig {
         sppt_factor: 1.15,
         fppt_factor: 1.25,
         gpu_clock_fractions: GpuClockFractions::DEFAULT,
+        efficiency_frac: 0.30,
     };
 
     /// Repair operator-supplied values from `config.toml` that would
@@ -260,6 +267,13 @@ impl RuntimeConfig {
                 Self::DEFAULT.fppt_factor
             },
             gpu_clock_fractions: self.gpu_clock_fractions.sanitized(),
+            // Clamp to the range's interior. A non-finite value falls back
+            // to the default; 0.0/1.0 are allowed but merely alias Eco/Max.
+            efficiency_frac: if self.efficiency_frac.is_finite() {
+                self.efficiency_frac.clamp(0.0, 1.0)
+            } else {
+                Self::DEFAULT.efficiency_frac
+            },
         }
     }
 }
@@ -278,11 +292,22 @@ impl Default for RuntimeConfig {
 /// auto-cooling is on, a TDP preset also moves the **fan curve** (never
 /// the platform profile, which stays pinned to its configured default):
 ///
-/// | `TdpPreset` | Resulting SPL              | Inferred fan curve (auto-cooling) |
-/// |-------------|----------------------------|-----------------------------------|
-/// | `Eco`       | `spl_min`                  | `Silent`                          |
-/// | `Balanced`  | midpoint of min/max        | `Balanced`                        |
-/// | `Max`       | `spl_max`                  | `Aggressive`                      |
+/// | `TdpPreset`  | Resulting SPL                        | Inferred fan curve (auto-cooling) |
+/// |--------------|--------------------------------------|-----------------------------------|
+/// | `Eco`        | `spl_min`                            | `Silent`                          |
+/// | `Efficiency` | `spl_min + efficiency_frac × range`  | (follows the resulting SPL)       |
+/// | `Balanced`   | midpoint of min/max                  | `Balanced`                        |
+/// | `Max`        | `spl_max`                            | `Aggressive`                      |
+///
+/// `Efficiency` is the battery-efficient gaming target between `Eco` and
+/// `Balanced` — the perf-per-watt sweet spot found on-device (2026-07
+/// campaign; the iGPU stops gaining well before `spl_max`, so a wattage
+/// in the lower third of the range keeps most of the GPU performance at a
+/// fraction of the power). It is a **fraction of this device's own SPL
+/// range** (`RuntimeConfig::efficiency_frac`, default 0.30), never a
+/// hard-coded wattage — the measured sweet spot is device-specific, so
+/// the same fraction ports across hardware and can be refined per-device
+/// via config (or a future calibration) without touching this enum.
 ///
 /// Note the deliberate **non-overlap with `ProfileName`** in naming
 /// (e.g. there is no `TdpPreset::Performance`) to avoid the previous
@@ -292,6 +317,9 @@ impl Default for RuntimeConfig {
 pub enum TdpPreset {
     /// Minimum supported SPL on this hardware.
     Eco,
+    /// `spl_min + efficiency_frac × (spl_max − spl_min)` — the
+    /// battery-efficient gaming sweet spot (see the type-level table).
+    Efficiency,
     /// Midpoint SPL between `spl_min` and `spl_max`.
     Balanced,
     /// Maximum supported SPL on this hardware.
@@ -302,6 +330,7 @@ impl fmt::Display for TdpPreset {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TdpPreset::Eco => f.write_str("eco"),
+            TdpPreset::Efficiency => f.write_str("efficiency"),
             TdpPreset::Balanced => f.write_str("balanced"),
             TdpPreset::Max => f.write_str("max"),
         }
@@ -311,18 +340,20 @@ impl fmt::Display for TdpPreset {
 impl FromStr for TdpPreset {
     type Err = String;
 
-    /// Accepts only `eco`, `balanced`, `max` (case-insensitive). The
-    /// pre-0.2 names `silent`, `performance`, `turbo` are intentionally
-    /// rejected — the same string used to map to different semantics
-    /// across `TdpPreset` and `ProfileName`, and accepting aliases would
-    /// reintroduce the confusion this enum was renamed to remove.
+    /// Accepts only `eco`, `efficiency`, `balanced`, `max`
+    /// (case-insensitive). The pre-0.2 names `silent`, `performance`,
+    /// `turbo` are intentionally rejected — the same string used to map to
+    /// different semantics across `TdpPreset` and `ProfileName`, and
+    /// accepting aliases would reintroduce the confusion this enum was
+    /// renamed to remove.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "eco" => Ok(TdpPreset::Eco),
+            "efficiency" => Ok(TdpPreset::Efficiency),
             "balanced" => Ok(TdpPreset::Balanced),
             "max" => Ok(TdpPreset::Max),
             other => Err(format!(
-                "unknown TDP preset '{}': use one of eco, balanced, max",
+                "unknown TDP preset '{}': use one of eco, efficiency, balanced, max",
                 other
             )),
         }
@@ -405,13 +436,19 @@ mod tests {
     #[test]
     fn tdp_preset_display_is_lowercase() {
         assert_eq!(TdpPreset::Eco.to_string(), "eco");
+        assert_eq!(TdpPreset::Efficiency.to_string(), "efficiency");
         assert_eq!(TdpPreset::Balanced.to_string(), "balanced");
         assert_eq!(TdpPreset::Max.to_string(), "max");
     }
 
     #[test]
     fn tdp_preset_roundtrip_display_to_fromstr() {
-        for p in [TdpPreset::Eco, TdpPreset::Balanced, TdpPreset::Max] {
+        for p in [
+            TdpPreset::Eco,
+            TdpPreset::Efficiency,
+            TdpPreset::Balanced,
+            TdpPreset::Max,
+        ] {
             assert_eq!(p.to_string().parse::<TdpPreset>().unwrap(), p);
         }
     }
@@ -419,6 +456,10 @@ mod tests {
     #[test]
     fn tdp_preset_fromstr_accepts_case_insensitive() {
         assert_eq!("ECO".parse::<TdpPreset>().unwrap(), TdpPreset::Eco);
+        assert_eq!(
+            "Efficiency".parse::<TdpPreset>().unwrap(),
+            TdpPreset::Efficiency
+        );
         assert_eq!(
             "Balanced".parse::<TdpPreset>().unwrap(),
             TdpPreset::Balanced
@@ -433,12 +474,38 @@ mod tests {
         for legacy in ["silent", "performance", "turbo", "Performance", "Turbo"] {
             let err = legacy.parse::<TdpPreset>().unwrap_err();
             assert!(
-                err.contains("eco, balanced, max"),
+                err.contains("eco, efficiency, balanced, max"),
                 "error for '{}' should suggest the new names, got: {}",
                 legacy,
                 err
             );
         }
+    }
+
+    #[test]
+    fn efficiency_frac_default_is_in_the_lower_third() {
+        // Guards the documented default: efficiency lands below the
+        // midpoint (0.5) and above eco (0.0).
+        let f = RuntimeConfig::DEFAULT.efficiency_frac;
+        assert!(
+            f > 0.0 && f < 0.5,
+            "efficiency_frac default {f} not in (0,0.5)"
+        );
+    }
+
+    #[test]
+    fn efficiency_frac_sanitized_clamps_and_repairs() {
+        let mk = |v: f32| RuntimeConfig {
+            efficiency_frac: v,
+            ..RuntimeConfig::DEFAULT
+        };
+        assert_eq!(mk(1.5).sanitized().efficiency_frac, 1.0);
+        assert_eq!(mk(-0.2).sanitized().efficiency_frac, 0.0);
+        assert_eq!(
+            mk(f32::NAN).sanitized().efficiency_frac,
+            RuntimeConfig::DEFAULT.efficiency_frac
+        );
+        assert_eq!(mk(0.42).sanitized().efficiency_frac, 0.42);
     }
 
     // ---------- sanitized() — Audit §2.3 (2026-07) ----------
@@ -494,6 +561,7 @@ mod tests {
             sppt_factor: 1.20,
             fppt_factor: 1.40,
             gpu_clock_fractions: GpuClockFractions::DEFAULT,
+            efficiency_frac: 0.42,
         };
         assert_eq!(cfg.clone().sanitized(), cfg);
     }
@@ -509,6 +577,7 @@ mod tests {
             sppt_factor: 0.115,
             fppt_factor: 0.0,
             gpu_clock_fractions: GpuClockFractions::DEFAULT,
+            efficiency_frac: RuntimeConfig::DEFAULT.efficiency_frac,
         };
         let sanitized = cfg.sanitized();
         assert_eq!(sanitized.sppt_factor, RuntimeConfig::DEFAULT.sppt_factor);
@@ -522,6 +591,7 @@ mod tests {
             sppt_factor: f32::NAN,
             fppt_factor: f32::INFINITY,
             gpu_clock_fractions: GpuClockFractions::DEFAULT,
+            efficiency_frac: RuntimeConfig::DEFAULT.efficiency_frac,
         };
         let sanitized = cfg.sanitized();
         assert_eq!(sanitized.sppt_factor, RuntimeConfig::DEFAULT.sppt_factor);

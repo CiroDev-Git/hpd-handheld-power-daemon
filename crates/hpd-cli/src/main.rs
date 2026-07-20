@@ -44,7 +44,7 @@ use std::process;
         hpdctl monitor                Live dashboard, refreshes every second\n  \
         hpdctl limits                 Show the hardware's TDP min/max\n  \
         hpdctl tdp set 15             Set the power envelope to 15 W\n  \
-        hpdctl preset eco             Apply the lowest-power preset\n  \
+        hpdctl preset efficiency      Battery-efficient gaming sweet spot\n  \
         hpdctl charge set 80          Stop charging the battery at 80%\n  \
         hpdctl cool set aggressive    Cool harder (fans only)\n  \
         hpdctl power set performance  Power mode (EPP): full TDP\n  \
@@ -88,16 +88,20 @@ enum Commands {
         #[command(subcommand)]
         action: ChargeAction,
     },
-    /// Apply a TDP preset: eco, balanced, or max
+    /// Apply a TDP preset: eco, efficiency, balanced, or max
     ///
     /// A preset is a shortcut that picks a target SPL wattage for you:
-    /// `eco` = minimum SPL, `balanced` = midpoint, `max` = maximum SPL.
+    /// `eco` = minimum SPL, `efficiency` = the battery-efficient gaming
+    /// sweet spot (lower third of the range), `balanced` = midpoint,
+    /// `max` = maximum SPL.
     ///
     /// This is NOT the same as the cooling level (see `hpdctl cool`).
     /// With auto-cooling enabled the fan curve follows the preset's TDP
     /// automatically; power is unaffected by cooling.
     Preset {
-        #[arg(help = "Preset name: eco (min SPL), balanced (midpoint), or max (max SPL)")]
+        #[arg(
+            help = "Preset name: eco (min SPL), efficiency (sweet spot), balanced (midpoint), or max (max SPL)"
+        )]
         name: String,
     },
     /// Show the hardware's TDP limits (SPL/SPPT/FPPT)

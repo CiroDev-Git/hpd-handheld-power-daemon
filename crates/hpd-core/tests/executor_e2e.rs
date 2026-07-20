@@ -461,6 +461,7 @@ async fn test_executor_config_reload_swaps_runtime_config() {
         sppt_factor: 2.0,
         fppt_factor: 2.0,
         gpu_clock_fractions: GpuClockFractions::DEFAULT,
+        efficiency_frac: RuntimeConfig::DEFAULT.efficiency_frac,
     };
     tx.send(Transition::ConfigReload(new_runtime))
         .await
