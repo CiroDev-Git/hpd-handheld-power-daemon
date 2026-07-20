@@ -447,7 +447,7 @@ What the same thing is called on each side (it all ends at the daemon):
 | Action | `hpdctl` | D-Bus | Plugin (UI) | polkit |
 |---|---|---|---|---|
 | **Power** | `tdp set <W>` | `SetSpl(u)` | TDP slider | `set-tdp` |
-| Power preset | `preset eco/balanced/max` | `SetPreset(s)` | Eco/Balanced/Max buttons | `set-tdp` |
+| Power preset | `preset eco/efficiency/balanced/max` | `SetPreset(s)` | Eco/Balanced/Max buttons + separate "Efficiency" action | `set-tdp` |
 | **Cooling (fans)** | `cool set <level>` | `SetCoolingLevel(s)` | Cooling selector | `set-profile` |
 | Auto cooling | `cool auto` | `SetFanAuto()` | Auto toggle | `set-profile` |
 | Cooling to firmware | `cool reset` | `ResetFanCurve()` | Reset button | `set-profile` |

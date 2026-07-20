@@ -637,6 +637,35 @@ and exits cleanly rather than letting systemd `SIGKILL` it mid-write.
   `gpu_clock_range_for_tier` immediately before
   `GpuClockRangeControl::set_range`.
 
+- **`Transition::SetProfile` re-asserts the power envelope (and the fan
+  curve) right after writing the platform profile — don't remove this
+  as apparent dead weight.** `reassert_envelope_after_profile()` pushes
+  `Effect::ApplyPowerEnvelope(new_state.power_target.clone())` immediately
+  after `Effect::ApplyPlatformProfile`, even though `power_target` itself
+  didn't change in this transition. Root-caused on-device (2026-07,
+  ROG Xbox Ally X / RC73XA, deterministic repro): writing
+  `platform_profile` makes the EC silently drop the previously-written
+  SPL/SPPT/FPPT limits — sysfs keeps reading back the old (correct-looking)
+  values while the firmware enforces nothing. Same EC quirk class this
+  code already knew about for the fan curve (`reassert_curve_after_profile`,
+  pre-existing); the power envelope needed the identical treatment. Fixed
+  in 3.1.1 and generalised to every effect-producing site that writes
+  `Effect::ApplyPlatformProfile` — `SetProfile`, `SystemResumed`,
+  `force_ac_max_performance`, and `restore_dc_state` (the last one forces
+  the reassert even when the profile *value* matches the DC snapshot,
+  since "equal in our state" isn't "still enforced in the EC"). See
+  `docs/dev/POWER-ENFORCEMENT-GAPS.md` for the full investigation.
+- **`TdpPreset::Efficiency` (3.2.0) is a fraction, not a wattage.** It
+  resolves to `spl_min + efficiency_frac × (spl_max − spl_min)` inside
+  `Transition::SetPreset`'s match arm, same recursion into `SetSpl` every
+  other preset uses. `RuntimeConfig::efficiency_frac` (default `0.30`) is
+  the *only* device-specific number here, and it's operator-tunable
+  config, not a hardcoded watt value — keeps the preset portable across
+  devices with different SPL ranges. Don't hardcode a watt target for
+  this preset anywhere; the whole point is that it's derived per-device.
+  See `docs/dev/PERF-BASELINE-RC73XA.md` for the measured sweet-spot this
+  default was chosen from.
+
 ## Where to look for things
 
 | You want…                                          | Look in                                              |

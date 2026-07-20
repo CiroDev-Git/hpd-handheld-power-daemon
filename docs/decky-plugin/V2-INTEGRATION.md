@@ -31,13 +31,13 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
 | Member | Signature | Does | Polkit |
 |---|---|---|---|
 | `SetSpl` | `(u watts)` | Set the TDP / sustained power limit (whole watts). SPPT/FPPT derived. | `set-tdp` |
-| `SetPreset` | `(s name)` | TDP preset: `eco` / `balanced` / `max` (min/mid/max of the hw range). | `set-tdp` |
+| `SetPreset` | `(s name)` | TDP preset: `eco` / `efficiency` / `balanced` / `max` (`efficiency` added in daemon 3.2.0 — lands at `spl_min + efficiency_frac × range`, an operator-tunable, device-portable fraction, default 0.30; not a fixed wattage). | `set-tdp` |
 | `SetChargeThreshold` | `(y percent)` | Battery charge cap, `20..=100`. | `set-charge` |
 | `SetCoolingLevel` | `(s level)` | **The cooling lever — fans only.** `silent` / `balanced` / `aggressive` → sets the **fan curve** and switches to manual cooling. Does **not** change power (decoupled). | `set-profile` |
 | `SetFanAuto` | `()` | Auto cooling: the **fan curve** follows the TDP. | `set-profile` |
 | `ResetFanCurve` | `()` | Hand the fans back to the firmware's automatic curve. | `set-profile` |
 | `GetThermalStatus` | `() → (iiiii)` | Live `(cpu_temp_c, gpu_temp_c, cpu_rpm, gpu_rpm, soc_power_mw)`. `i32::MIN` = unavailable. **No signal — poll.** Prefer `GetTelemetry` in new code. | — (read) |
-| `GetTelemetry` | `() → a{sv}` | Extensible telemetry (daemon ≥ 2.8.0): everything `GetThermalStatus` has (`cpu_temp_c`, `gpu_temp_c`, `cpu_fan_rpm`, `gpu_fan_rpm`, `soc_power_mw`) plus `boost_ceiling_mw` (unreleased — the highest power currently configured on the hardware: FPPT, or SPPT where there's no separate fast rail; always known from daemon state, never absent), `battery_power_mw` (discharge only), `battery_percent`, `battery_status`, `battery_health_pct`, `battery_cycles`, `cpu_freq_mhz`, `gpu_freq_mhz`, `gpu_busy_pct`, `vram_used_mb`/`vram_total_mb`. A key is **present only if the hardware exposes it** — absence, not a placeholder, means unsupported. **No signal — poll.** `soc_power_mw` vs `boost_ceiling_mw` is the pair that answers "is the configured limit actually enforced?" — see `docs/dev/POWER-ENFORCEMENT-GAPS.md`. | — (read) |
+| `GetTelemetry` | `() → a{sv}` | Extensible telemetry (daemon ≥ 2.8.0): everything `GetThermalStatus` has (`cpu_temp_c`, `gpu_temp_c`, `cpu_fan_rpm`, `gpu_fan_rpm`, `soc_power_mw`) plus `boost_ceiling_mw` (daemon ≥ 3.1.0 — the highest power currently configured on the hardware: FPPT, or SPPT where there's no separate fast rail; always known from daemon state, never absent), `battery_power_mw` (discharge only), `battery_percent`, `battery_status`, `battery_health_pct`, `battery_cycles`, `cpu_freq_mhz`, `gpu_freq_mhz`, `cpu_busy_pct` (daemon ≥ 2.11.0), `gpu_busy_pct`, `vram_used_mb`/`vram_total_mb`. A key is **present only if the hardware exposes it** — absence, not a placeholder, means unsupported. **No signal — poll.** `soc_power_mw` vs `boost_ceiling_mw` is the pair that answers "is the configured limit actually enforced?" — see `docs/dev/POWER-ENFORCEMENT-GAPS.md`. | — (read) |
 | `GetFanCurve` | `() → (a(uu) cpu, a(uu) gpu)` | The 8 `(temp_c, pwm)` points of each fan's active curve (pwm `0..=255`). Empty if firmware-only. **No signal.** | — (read) |
 | `SetFanCurve` | `(a(yy) cpu, a(yy) gpu)` | **Custom curve editor backend** (daemon ≥ 2.9.0). Exactly 8 `(temp_c, pwm)` points per fan; latches manual cooling like `SetCoolingLevel`. Validated against `GetFanCurveConstraints` — a violation returns `InvalidArgs` naming the offending point (e.g. "point 8: 92°C requires pwm ≥ 200"). | `set-profile` |
 | `GetFanCurveConstraints` | `() → a{sv}` | This device's curve limits (daemon ≥ 2.9.0): `points` (`u`, always 8), `temp_min_c`/`temp_max_c` (`y`), `pwm_min`/`pwm_max` (`y`), `safety_floor` (`a(yy)` of `(temp_threshold_c, min_pwm)` — at/above the threshold, pwm must be at least that minimum). Drive the editor's axes and forbidden zone from this, never hardcoded constants. Empty map if the device has no programmable curve. | — (read) |
@@ -111,7 +111,12 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
 
 ### 🟡 Importantes (muy recomendadas)
 
-5. **TDP presets** — `Eco / Balanced / Max` quick buttons → `SetPreset(name)`.
+5. **TDP presets** — `Eco / Balanced / Max` quick buttons → `SetPreset(name)`,
+   plus an `Efficiency` action (daemon ≥ 3.2.0) surfaced as a "let hpd
+   pick" button rather than a numbered preset, since its target wattage
+   is daemon-resolved (`efficiency_frac`), not a fixed value the plugin
+   can label ahead of time. From the 2026-07 perf campaign's measured
+   battery-efficient gaming sweet spot — see `docs/dev/PERF-BASELINE-RC73XA.md`.
 6. **AC/battery indicator** — `IsAcConnected()` (and re-check on the
    `CurrentSpl` change signal, since AC plug ramps TDP).
 7. **Reactive updates** — subscribe to `PropertiesChanged` for the 5
@@ -141,16 +146,21 @@ D-Bus member names are **PascalCase** on the wire (e.g. `SetCoolingLevel`,
 
 ### 🟢 Opcionales / avanzadas
 
-12. **Custom fan-curve editor** (daemon ≥ 2.9.0) — drag the 8 points of a
-    hand-drawn curve, per fan or shared. Seed the graph from
-    `GetFanCurve()` (the currently active curve) or a preset as a
-    starting template. Build the editor's axes and forbidden (unsafe)
-    zone from **`GetFanCurveConstraints()`** — never hardcode
-    `temp_min_c`/`temp_max_c`/`safety_floor`, so a future device with a
-    different zone just works. Clamp drags to the safe zone client-side
-    for a good UX, but the daemon is the source of truth: `SetFanCurve`
-    still validates and returns `InvalidArgs` naming the offending point
-    on anything that slips through.
+12. ~~**Custom fan-curve editor** (daemon ≥ 2.9.0) — drag the 8 points of
+    a hand-drawn curve, per fan or shared.~~ **Built, then reversed —
+    do not re-recommend this to the plugin.** The Decky plugin built
+    exactly this (a full-page editor seeded from `GetFanCurve()`,
+    constraints/safety-floor from `GetFanCurveConstraints()`, writes via
+    `SetFanCurve`) through plugin 2.20.0. A 2026-07 on-device perf
+    campaign then measured that the fan-curve *shape* has **no**
+    detectable effect on performance — silent/balanced/aggressive scored
+    identically at equal TDP — so the plugin removed the editor entirely
+    in 2.21.0 (see the plugin repo's `DESIGN.md` §12.9 and this repo's
+    `docs/dev/PERF-BASELINE-RC73XA.md`). The daemon methods
+    (`GetFanCurveConstraints`/`SetFanCurve`) are unaffected and still
+    correct — they're just no longer aimed at from the plugin. Keep
+    them for `hpdctl cool set-custom`; don't resurrect the plugin editor
+    without re-litigating why it was pulled.
 13. **Power-mode hint (folded into #5)** — when `ActiveProfile` is
     `balanced`/`power-saver`, the Power mode control shows an informative
     note that real power is held below the TDP, with the current TDP
@@ -273,13 +283,13 @@ The plugin should not assume every reading exists:
 │ Cooling   [Silent][Balanced][Aggr]  │  ← SetCoolingLevel / FanCurve
 │           Auto  ( ●)                 │  ← SetFanAuto / AutoCooling
 │ TDP       ▓▓▓▓▓▓░░░  18 W            │  ← SetSpl / CurrentSpl / GetHardwareLimits
-│           [Eco][Balanced][Max]       │  ← SetPreset
+│           [Eco][Efficiency][Balanced][Max] │  ← SetPreset
 │ ── live ──                           │
 │ Power     16 W / 18 W   🔋 Battery   │  ← GetThermalStatus + IsAcConnected
 │ Temp      CPU 68° · GPU 58°          │
 │ Fans      CPU 5300 · GPU 5300 rpm    │
 │ Battery   cap 80 %                   │  ← SetChargeThreshold / ChargeEndThreshold
-│ [▸ Fan curve graph]  [Reset to fw]   │  ← GetFanCurve / ResetFanCurve
+│ [Reset to firmware]                  │  ← ResetFanCurve (no in-plugin curve graph — removed 2.21.0)
 └──────────────────────────────────────┘
 ```
 
