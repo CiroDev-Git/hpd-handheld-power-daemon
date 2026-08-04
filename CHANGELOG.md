@@ -11,6 +11,59 @@ not part of the published repository.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`upower` is now reported as an advisory daemon.** Since 1.90 upower
+  writes `charge_control_end_threshold` via `EnableChargeThreshold()` —
+  the same file hpd's `ChargeControl` owns, and what the battery-limit
+  toggle in KDE/GNOME power settings actually drives. It is deliberately
+  **advisory, never masked**: unlike a real rival it never acts on its
+  own (no AC-edge or boot reassertion), and the whole desktop battery
+  stack — including the critical-battery shutdown action — depends on
+  it, so masking would cost far more than the divergence it prevents.
+  Verified live on a clean CachyOS Handheld image (ROG Xbox Ally X,
+  2026-08), where upower runs with an 80% limit staged but not applied.
+- **`powerstation` is now detected as a hard rival** (bus
+  `org.shadowblip.PowerStation`, unit `powerstation.service`) and masked
+  by `hpdctl doctor --fix`. It is the TDP backend the SimpleDeckyTDP and
+  PowerControl Decky plugins drive; those plugins own no unit or bus
+  name of their own, so `powerstation` is the only handle hpd has on
+  that whole family of tooling.
+- **`hpdctl doctor --dry-run`** prints exactly which units `--fix` would
+  mask, how `hhd` is handled conditionally, and which daemons are
+  deliberately left alone (with the reason for each) — then exits
+  without changing anything. Masking system services is not something a
+  user should have to run blind; until now the only feedback was the
+  post-hoc `• neutralized X` lines. Needs neither root nor a running
+  daemon.
+
+### Changed
+
+- **The hardware power limits are re-read on every boot/resume**
+  (`Transition::SystemResumed`) instead of only once at daemon startup.
+  The cached range feeds the reducer's invariant checks and
+  `derive_boosted_envelope`, so a stale ceiling decides what `max`
+  resolves to and which user writes get clamped — a BIOS update or a
+  driver fix that corrects the advertised rails used to require a daemon
+  restart to take effect. Best-effort: a failed read keeps the cached
+  limits rather than inventing a range.
+- **Both user manuals gained a "who owns the power knobs?" section**
+  (`docs/MANUAL.md`, `docs/MANUAL-es.md`). `doctor` and masking were
+  documented only in developer-facing files and code comments — nowhere
+  a user would look. The new section covers what `--fix` masks, what it
+  never masks and why, the `upower`-vs-`hpdctl charge` gotcha, and the
+  tools nothing can detect (in-process TDP writers like Decky plugins or
+  a hand-run `ryzenadj`).
+
+### Fixed
+
+- **Stale documentation references.** `CLAUDE.md` still advertised
+  `2.14.0` as the current release (the workspace is `3.2.0`), and both
+  `hpdctl restore-defaults`' help text and `hpd-cli/README.md`'s
+  privileged-command list still named `gpu set`, removed in 3.0.0.
+
 ## [3.2.0] — 2026-07-20
 
 ### Added

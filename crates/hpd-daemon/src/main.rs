@@ -220,8 +220,8 @@ async fn run_real_main() -> Result<(), Box<dyn std::error::Error>> {
                                                                                  // GPU clock range (OverDrive) — matches the real ROG Xbox Ally X
                                                                                  // capture (`OD_RANGE: SCLK 600Mhz-2900Mhz`). Lets `hpdctl gpu
                                                                                  // limits`/`get`/`reset` work against the simulator instead of
-                                                                                 // failing with "Sysfs path not found". `gpu auto`/`gpu set`
-                                                                                 // still fail here: `pp_od_clk_voltage` is a command file on
+                                                                                 // failing with "Sysfs path not found". `gpu auto`
+                                                                                 // still fails here: `pp_od_clk_voltage` is a command file on
                                                                                  // real hardware (writing `s 0 <min>`/`s 1 <max>`/`c` makes the
                                                                                  // *driver* update its own OD_SCLK/OD_RANGE report on the next
                                                                                  // read), but `MockSysfs` is a flat store — the commit write

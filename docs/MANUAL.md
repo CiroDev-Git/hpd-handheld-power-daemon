@@ -307,6 +307,73 @@ absolutes but the shape holds):
   pinned a fan level.
 - **Temps / Fans** are live readings, straight from the hardware.
 
+## Who owns the power knobs?
+
+hpd expects to be the **only** thing writing your TDP, fan curve, charge
+limit and power mode. Several other daemons write those same files, and
+when two of them do, the last one to write wins — so your settings appear
+to "not stick", or silently revert a few seconds later.
+
+`hpdctl status` ends with a **System health** block that answers this, and
+`hpdctl doctor` prints the same thing on its own. If anything is wrong:
+
+```bash
+hpdctl doctor --fix        # one elevated step, fixes it all
+```
+
+Want to see what that would change *before* running it?
+
+```bash
+hpdctl doctor --dry-run    # prints the plan, changes nothing
+```
+
+### What `--fix` neutralizes
+
+These own the same knobs hpd does, so they cannot co-run with it. `--fix`
+disables and masks them:
+
+| Daemon | What it was fighting hpd over |
+|---|---|
+| `power-profiles-daemon` | power mode / EPP |
+| `steamos-manager` | TDP, charge limit and fans, behind Steam Game Mode |
+| `tuned` / `tuned-ppd` | power mode / EPP |
+| `tlp` | charge limit, power mode and governor, on every plug/unplug |
+| `powerstation` | TDP — the backend behind the SimpleDeckyTDP and PowerControl plugins |
+| `hhd` | a full handheld daemon (TDP + profile) — **only** masked if InputPlumber is handling your gamepad, since hhd also drives controller input |
+
+Masking is reversible: `sudo systemctl unmask <unit>`.
+
+Losing your profile selector in KDE is *not* a side effect of this — hpd
+answers the same interface power-profiles-daemon did, so the Plasma
+battery applet, `powerprofilesctl` and `game-performance` all keep working.
+
+### What `--fix` deliberately leaves alone
+
+These are reported but never masked, because masking them would cost you
+more than the overlap does:
+
+- **`asusd`** — also owns keyboard RGB / Aura. It *does* write the power
+  mode and fan curve on ASUS hardware, so it genuinely overlaps; you have
+  to decide which one you want. (On the ROG Ally family the joystick RGB
+  comes from the kernel driver instead, so `asusd` buys that hardware
+  nothing — just don't install it.)
+- **`upower`** — the desktop's battery service, including the
+  critical-battery shutdown that saves your work when the pack runs flat.
+  ⚠️ It can also set the charge limit: **that's what the battery-limit
+  toggle in KDE/GNOME power settings drives.** Set your charge limit with
+  `hpdctl charge set`, not from the desktop settings panel — otherwise the
+  two disagree until hpd re-asserts its own value on the next reboot.
+- **`gamemoded`** (Feral GameMode) — only nudges the CPU governor while a
+  game runs. Harmless.
+- **`auto-cpufreq`** — governor / EPP only.
+
+### What nothing can detect
+
+A tool that writes TDP from *inside* another process — a Decky plugin, or
+a hand-run `ryzenadj` — has no service and no bus name, so neither hpd nor
+`doctor` can see it. If your settings misbehave and `doctor` says
+everything is clean, that's the place to look.
+
 ## Drawing the fan curve
 
 `hpdctl cool curve` shows the actual temperature→speed curve the chip is

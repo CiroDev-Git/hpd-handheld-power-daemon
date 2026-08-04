@@ -46,11 +46,12 @@ The CLI surface is stable under SemVer from `1.0.0` forward.
 | `hpdctl restore-defaults`     | Restore recommended defaults in one shot: TDP → Balanced, Power mode → Performance, Charge cap → 80%, Cooling → auto (follows TDP), GPU clock → firmware auto (only if already opted in). Daemon ≥ 2.14.0. |
 | `hpdctl doctor`               | Report whether polkit is installed and whether a competing power daemon is fighting hpd over TDP/profile/charge. Read-only. |
 | `hpdctl doctor --fix`         | Neutralize competing daemons (mask) and install the polkit policy in one elevated step — a superset of `fix-polkit`. |
+| `hpdctl doctor --dry-run`     | Print exactly which units `--fix` would mask, and which daemons it deliberately leaves alone, without changing anything. Needs neither root nor a running daemon. |
 | `hpdctl fix-polkit`           | Install the polkit policy + rules and reload polkit (self-elevates via pkexec/sudo). |
 
 Privileged subcommands (`tdp set`, `charge set`, `preset`, `cool set`,
 `cool auto`, `cool reset`, `cool set-custom`, `power set`, `ac-lock`,
-`gpu auto`, `gpu set`, `gpu reset`, `restore-defaults`, `doctor --fix`,
+`gpu auto`, `gpu reset`, `restore-defaults`, `doctor --fix`,
 `fix-polkit`) are authorized by polkit. Members of the `wheel` group (the
 device owner) run them without any prompt — including over SSH — via
 `package/polkit/49-hpd.rules`. Any other user gets a polkit prompt

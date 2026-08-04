@@ -42,6 +42,11 @@ use crate::fix;
 /// a standalone power daemon popular on Arch/CachyOS that writes the same
 /// charge/profile/governor surfaces on every AC edge.
 ///
+/// `powerstation.service` is ShadowBlip's TDP/GPU service — the backend
+/// the SimpleDeckyTDP and PowerControl Decky plugins drive. The plugins
+/// themselves run inside the plugin loader and own no unit or bus name, so
+/// masking `powerstation` is the only handle there is on that family.
+///
 /// `hhd@.service` (Handheld Daemon) is deliberately **not** in this list —
 /// unlike every other entry here, unmasking it back is not just "reinstall
 /// the package": on the Xbox Ally X it also owns gamepad remapping, so an
@@ -53,6 +58,7 @@ const RIVAL_UNITS: &[&str] = &[
     "tuned.service",
     "tuned-ppd.service",
     "tlp.service",
+    "powerstation.service",
 ];
 
 /// The Handheld Daemon's TDP/platform-profile-owning unit. Bazzite's Ally
@@ -67,6 +73,67 @@ const HHD_UNIT: &str = "hhd@.service";
 /// making it safe to neutralize hhd for TDP ownership without losing
 /// controller buttons/gyro/rumble.
 const INPUTPLUMBER_UNIT: &str = "inputplumber.service";
+
+/// Advisory daemons `doctor --fix` deliberately leaves alone, each with
+/// the one-line reason shown in the `--dry-run` plan.
+///
+/// Mirrors `hpd_dbus::conflicts::{ADVISORY_POWER_DAEMONS, ADVISORY_UNITS}`
+/// for the same reason [`RIVAL_UNITS`] mirrors the rival lists (no runtime
+/// dependency on `hpd-dbus`); kept honest by the
+/// `every_advisory_daemon_is_listed_as_never_masked` test below.
+const NEVER_MASKED: &[(&str, &str)] = &[
+    (
+        "gamemoded",
+        "only raises the CPU governor around a game — no overlap with hpd's surfaces",
+    ),
+    (
+        "asusd",
+        "also owns keyboard RGB / Aura; masking it would break the lighting",
+    ),
+    (
+        "upower",
+        "the whole desktop battery stack, including the critical-battery shutdown action",
+    ),
+    (
+        "auto-cpufreq",
+        "governor / EPP only — none of hpd's core surfaces",
+    ),
+];
+
+/// Print exactly what `doctor --fix` would change, without changing
+/// anything. Answers "what is this about to do to my system?" — masking
+/// system services is not something a user should have to run blind, and
+/// the post-hoc `• neutralized X` lines only tell them afterwards.
+///
+/// Deliberately static and daemon-free (like `--fix` itself): it reports
+/// the *plan*, not the current state. `hpdctl doctor` with no flags is
+/// what reports which of these are actually live right now.
+pub fn print_fix_plan() -> i32 {
+    println!("🩺 hpd doctor --fix — plan (dry run, nothing will be changed)");
+    println!();
+    println!("Would mask these system units, if present and not already masked:");
+    for unit in RIVAL_UNITS {
+        println!("  • {unit}");
+    }
+    println!();
+    println!("Would mask this user unit, as your user (not root):");
+    println!("  • steamos-manager.service  (systemctl --user)");
+    println!();
+    println!("Conditional:");
+    println!("  • {HHD_UNIT} — masked ONLY if {INPUTPLUMBER_UNIT} is active,");
+    println!("    because hhd also drives gamepad input on some handhelds.");
+    println!();
+    println!("Would also install the polkit policy + rules (same as `hpdctl fix-polkit`).");
+    println!();
+    println!("Would NEVER touch these, even when they are running:");
+    for (name, why) in NEVER_MASKED {
+        println!("  • {name} — {why}");
+    }
+    println!();
+    println!("Masking is reversible:  sudo systemctl unmask <unit>");
+    println!("Run for real:           hpdctl doctor --fix");
+    0
+}
 
 /// Entry point for `hpdctl doctor --fix`.
 ///
@@ -422,6 +489,39 @@ mod tests {
                  doctor::RIVAL_UNITS has no mask target for it (expected '{expected_unit}'). \
                  Update RIVAL_UNITS in hpd-cli/src/doctor.rs to keep `doctor --fix` in sync with \
                  what hpd_dbus::conflicts reports.",
+            );
+        }
+    }
+
+    /// The `--dry-run` plan promises "would NEVER touch these" — that
+    /// promise is only worth anything if the list actually covers every
+    /// advisory daemon the daemon can report. Same hand-mirroring problem
+    /// (and same dev-only `hpd-dbus` dependency) as the two tests around
+    /// it: without this, a newly-added advisory daemon would be reported
+    /// by `hpdctl doctor` but silently missing from the plan.
+    #[test]
+    fn every_advisory_daemon_is_listed_as_never_masked() {
+        use hpd_dbus::conflicts::{ADVISORY_POWER_DAEMONS, ADVISORY_UNITS};
+
+        for (friendly_name, _) in ADVISORY_POWER_DAEMONS.iter().chain(ADVISORY_UNITS.iter()) {
+            assert!(
+                NEVER_MASKED.iter().any(|(name, _)| name == friendly_name),
+                "hpd_dbus::conflicts reports '{friendly_name}' as advisory, but hpd-cli's \
+                 doctor::NEVER_MASKED does not list it, so `doctor --fix --dry-run` would not \
+                 tell the user it is left alone. Add it (with a one-line reason) to NEVER_MASKED.",
+            );
+        }
+    }
+
+    /// Complement: nothing in the "never masked" plan may also be a mask
+    /// target, or the plan would contradict itself.
+    #[test]
+    fn never_masked_and_mask_targets_are_disjoint() {
+        for (name, _) in NEVER_MASKED {
+            let unit = format!("{name}.service");
+            assert!(
+                !RIVAL_UNITS.contains(&unit.as_str()),
+                "'{unit}' is both promised as never-masked and listed as a mask target",
             );
         }
     }

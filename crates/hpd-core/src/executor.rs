@@ -120,6 +120,36 @@ impl<B: HwBackend> Executor<B> {
                         }
                     }
                 }
+
+                // Same reasoning applied to the hardware's power limits.
+                // They are read once at startup and cached here for the
+                // process lifetime, which silently goes stale if the
+                // firmware's advertised range changes underneath us — a
+                // BIOS update, a kernel/driver update that corrects the
+                // exposed rails, or a platform that reports a different
+                // ceiling across a suspend. A stale ceiling is not
+                // cosmetic: it feeds the reducer's invariant checks and
+                // `derive_boosted_envelope`, so it decides what `max`
+                // resolves to and which user writes get clamped.
+                //
+                // Boot sends `SystemResumed` too, so this also keeps a
+                // long-lived daemon honest without needing a restart.
+                // Best-effort: on a read failure keep the cached limits
+                // rather than falling back to something invented.
+                match self.backend.power().get_limits() {
+                    Ok(limits) if limits != self.device_limits => {
+                        info!(
+                            old_spl_max = self.device_limits.spl_max.0,
+                            new_spl_max = limits.spl_max.0,
+                            "Boot/resume: hardware power limits changed, adopting the new range"
+                        );
+                        self.device_limits = limits;
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        warn!(error = %e, "Boot/resume: could not re-read power limits; using cached")
+                    }
+                }
             }
 
             match reduce(
@@ -479,6 +509,62 @@ mod tests {
         assert!(
             result.is_ok(),
             "rollback must return promptly on a saturated channel, not hang"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `device_limits` is read once at startup and cached for the process
+    /// lifetime. `SystemResumed` (which boot also sends) must re-read it,
+    /// or a firmware/driver update that changes the advertised range
+    /// leaves the daemon clamping to a ceiling the hardware no longer
+    /// has until someone restarts the service.
+    ///
+    /// Observed through behaviour rather than the private field: after
+    /// the resume, `SetPreset(Max)` must resolve to the *new* `spl_max`.
+    #[tokio::test]
+    async fn resume_adopts_new_hardware_power_limits() {
+        use hpd_capabilities::profile::TdpPreset;
+
+        // Backend advertises a lower ceiling than the executor was built
+        // with — the "firmware changed underneath us" case.
+        let mut narrowed = limits();
+        narrowed.spl_max = PowerMilliwatts(25_000);
+        let backend = MockBackend::new(sample_state().power_target.clone(), narrowed);
+
+        let path = std::env::temp_dir().join(format!(
+            "hpd_executor_limits_test_{}.toml",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let persister = crate::persistence::StatePersister::new(&path);
+
+        let (tx, rx) = mpsc::channel(8);
+        let (executor, state_rx) = Executor::new(
+            backend,
+            sample_state(),
+            limits(), // stale 35 W ceiling
+            RuntimeConfig::DEFAULT,
+            rx,
+            tx.clone(),
+            persister,
+        );
+
+        let handle = tokio::spawn(executor.run());
+        tx.send(Transition::SystemResumed).await.unwrap();
+        tx.send(Transition::SetPreset(TdpPreset::Max))
+            .await
+            .unwrap();
+        tx.send(Transition::Shutdown).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("executor must drain and exit")
+            .expect("executor task must not panic");
+
+        assert_eq!(
+            state_rx.borrow().power_target.spl,
+            PowerMilliwatts(25_000),
+            "after resume, `max` must resolve to the hardware's re-read ceiling, not the stale one"
         );
 
         let _ = std::fs::remove_file(&path);
