@@ -179,10 +179,19 @@ jobs:
           echo ""
 
           # Run ssh with verbose output but capture stderr so the log
-          # only appears if auth fails. -v shows key offerings, server
-          # banner, and auth attempts — no private material.
-          # `ssh aur@aur.archlinux.org help` exits 0 on success and 255
-          # on publickey rejection.
+          # only appears if the check fails. -v shows key offerings,
+          # server banner, and auth attempts — no private material.
+          #
+          # Exit codes are load-bearing here: ssh reports **255** for its
+          # own failures (publickey rejection, transport, host key), and
+          # passes through the *remote* command's status for anything
+          # else. So a non-255 non-zero means authentication already
+          # succeeded and AUR itself refused to serve — which is exactly
+          # what maintenance mode looks like (aurweb-git-auth.sh accepts
+          # the key, prints "The AUR is down due to maintenance", exits
+          # 1). Telling those apart matters: this step used to report
+          # every failure as "SSH authentication failed" and send the
+          # operator off to re-register a key that was working fine.
           #
           # Why every path uses "$HOME/..." instead of relative ~/...:
           # GitHub Actions container runners set $HOME=/github/home for
@@ -199,18 +208,42 @@ jobs:
           # because `sudo -u builder -H` aligns $HOME with the builder
           # user's passwd entry.
           log="$(mktemp)"
-          if ssh -v \
-                 -F "$HOME/.ssh/config" \
-                 -i "$HOME/.ssh/aur" \
-                 -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
-                 -o BatchMode=yes \
-                 -o ConnectTimeout=15 \
-                 aur@aur.archlinux.org help > /dev/null 2>"$log"; then
+          ssh -v \
+              -F "$HOME/.ssh/config" \
+              -i "$HOME/.ssh/aur" \
+              -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+              -o BatchMode=yes \
+              -o ConnectTimeout=15 \
+              aur@aur.archlinux.org help > /dev/null 2>"$log"
+          rc=$?
+
+          if [ "$rc" -eq 0 ]; then
               echo "SSH connection to AUR: OK"
               exit 0
           fi
 
-          echo "::error::SSH authentication to aur@aur.archlinux.org failed."
+          # Authenticated, but the remote side said no. Never a
+          # credential problem — say so explicitly so nobody rotates a
+          # perfectly good key.
+          if grep -q 'Authenticated to aur\.archlinux\.org' "$log"; then
+              if grep -qi 'down due to maintenance' "$log"; then
+                  echo "::error::AUR is in maintenance mode. The SSH key authenticated correctly — AUR is simply refusing to serve git right now."
+                  echo "::error::Nothing to fix on our side. Re-run this workflow once https://aur.archlinux.org is back:"
+                  echo "::error::  gh workflow run aur-sync.yml -f version=<version> -f packages=both"
+              else
+                  echo "::error::The SSH key authenticated to AUR, but the remote command exited ${rc}."
+                  echo "::error::That is a server-side refusal, not a credential problem — do NOT re-register the key."
+                  echo "::error::Read the remote output below before changing anything."
+              fi
+              echo ""
+              echo "--- remote output (ssh debug lines stripped) ---"
+              grep -v '^debug[0-9]*:' "$log" || true
+              exit 1
+          fi
+
+          # Genuine ssh-side failure (rc 255): key rejected, transport or
+          # host-key problem. Here the credential advice is warranted.
+          echo "::error::SSH authentication to aur@aur.archlinux.org failed (ssh exit ${rc})."
           echo "::error::Compare the fingerprint above to https://aur.archlinux.org/account/ → SSH Keys."
           echo "::error::If they don't match, re-register the .pub matching the AUR_SSH_KEY secret."
           echo "::error::If they DO match, the secret may be corrupted — re-upload with: gh secret set AUR_SSH_KEY < ~/.ssh/aur_hpd"
