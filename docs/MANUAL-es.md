@@ -312,6 +312,74 @@ los absolutos pero la forma se mantiene):
   fijaste un nivel de fan.
 - **Temps / Fans** son lecturas en vivo, directo del hardware.
 
+## ¿Quién manda sobre la energía?
+
+hpd espera ser lo **único** que escribe tu TDP, la curva del ventilador, el
+tope de carga y el power mode. Hay varios daemons que escriben esos mismos
+archivos, y cuando dos lo hacen, gana el último que escribió — por eso tus
+ajustes parecen "no aplicarse" o se revierten solos a los pocos segundos.
+
+`hpdctl status` termina con un bloque **System health** que responde esto, y
+`hpdctl doctor` imprime lo mismo por su cuenta. Si algo está mal:
+
+```bash
+hpdctl doctor --fix        # un solo paso elevado, lo arregla todo
+```
+
+¿Querés ver qué va a cambiar *antes* de ejecutarlo?
+
+```bash
+hpdctl doctor --dry-run    # imprime el plan, no cambia nada
+```
+
+### Qué neutraliza `--fix`
+
+Estos manejan las mismas perillas que hpd, así que no pueden convivir con
+él. `--fix` los desactiva y enmascara:
+
+| Daemon | Por qué peleaba con hpd |
+|---|---|
+| `power-profiles-daemon` | power mode / EPP |
+| `steamos-manager` | TDP, tope de carga y ventiladores, detrás de Steam Game Mode |
+| `tuned` / `tuned-ppd` | power mode / EPP |
+| `tlp` | tope de carga, power mode y governor, en cada enchufe/desenchufe |
+| `powerstation` | TDP — es el backend detrás de los plugins SimpleDeckyTDP y PowerControl |
+| `hhd` | un daemon handheld completo (TDP + perfil) — se enmascara **solo** si InputPlumber está manejando tu mando, porque hhd también controla el gamepad |
+
+Enmascarar es reversible: `sudo systemctl unmask <unidad>`.
+
+Perder el selector de perfil de KDE **no** es un efecto secundario de esto:
+hpd responde la misma interfaz que daba power-profiles-daemon, así que el
+applet de batería de Plasma, `powerprofilesctl` y `game-performance` siguen
+funcionando igual.
+
+### Qué deja en paz a propósito
+
+Estos se reportan pero nunca se enmascaran, porque enmascararlos te costaría
+más de lo que cuesta el solape:
+
+- **`asusd`** — también es el dueño del RGB / Aura del teclado. Sí escribe el
+  power mode y la curva de ventilador en hardware ASUS, así que el solape es
+  real; te toca elegir cuál querés. (En la familia ROG Ally el RGB de los
+  joysticks lo da el driver del kernel, así que ahí `asusd` no aporta nada —
+  simplemente no lo instales.)
+- **`upower`** — el servicio de batería del escritorio, incluido el apagado
+  por batería crítica que te salva el trabajo cuando se agota. ⚠️ También
+  sabe fijar el tope de carga: **es lo que hay detrás del interruptor de
+  límite de batería en los ajustes de energía de KDE/GNOME.** Poné tu tope
+  con `hpdctl charge set`, no desde el panel del escritorio — si no, los dos
+  discrepan hasta que hpd re-afirme su valor en el siguiente reinicio.
+- **`gamemoded`** (Feral GameMode) — solo mueve el governor de CPU mientras
+  corre un juego. Inofensivo.
+- **`auto-cpufreq`** — governor / EPP y nada más.
+
+### Lo que nadie puede detectar
+
+Una herramienta que escriba el TDP desde *dentro* de otro proceso — un
+plugin de Decky, o un `ryzenadj` a mano — no tiene servicio ni nombre de
+bus, así que ni hpd ni `doctor` la ven. Si tus ajustes se comportan raro y
+`doctor` dice que todo está limpio, ahí es donde hay que mirar.
+
 ## Dibujar la curva del ventilador
 
 `hpdctl cool curve` te muestra la curva temperatura→velocidad real que

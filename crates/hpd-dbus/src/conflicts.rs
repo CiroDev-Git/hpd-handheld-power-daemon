@@ -36,10 +36,17 @@
 //!
 //! The wild handheld images motivate every entry: SteamOS Game Mode ships
 //! `steamos-manager` (+ `gamescope`, + optional `gamemoded`); GNOME/KDE
-//! desktops ship `power-profiles-daemon` or, increasingly, `tuned`; ASUS
-//! installs `asusd` (which also owns RGB/Aura, hence advisory); Bazzite's
-//! Ally image ships `hhd` (Handheld Daemon); Arch/CachyOS users commonly
-//! reach for TLP as a standalone power manager.
+//! desktops ship `power-profiles-daemon` or, increasingly, `tuned`, plus
+//! `upower` universally; ASUS installs `asusd` (which also owns RGB/Aura,
+//! hence advisory); Bazzite's Ally image ships `hhd` (Handheld Daemon);
+//! Arch/CachyOS users commonly reach for TLP as a standalone power
+//! manager; and the Decky TDP plugins drive `powerstation` underneath.
+//!
+//! Observed on a clean CachyOS Handheld image (ROG Xbox Ally X, 2026-08):
+//! `power-profiles-daemon` and `steamos-manager` both run out of the box
+//! (the latter already having written the PPT rails and left
+//! `platform_profile` at `custom`), and `upower` is always live — so a
+//! fresh install is *never* conflict-free before `hpdctl doctor --fix`.
 //!
 //! Surfaced at daemon startup (a loud warning for hard rivals) and live
 //! over D-Bus via `get_power_conflicts` (rivals) and `get_advisory_daemons`
@@ -60,10 +67,17 @@ use tracing::warn;
 ///   `platform_profile` + EPP. (Its `tuned-ppd` shim *also* claims
 ///   `net.hadess.PowerProfiles`, so a tuned-ppd host may match both the
 ///   PPD and the tuned entries — harmless double-report.)
+/// * `powerstation` — ShadowBlip's TDP/GPU service. It is the backend the
+///   Decky plugins SimpleDeckyTDP and PowerControl drive, so it writes the
+///   same PPT rails hpd owns. Those plugins live inside the plugin loader
+///   and are themselves undetectable (no unit, no bus name), but
+///   `powerstation` does own both — making it the one handle hpd has on
+///   that whole family of TDP tooling.
 pub const RIVAL_POWER_DAEMONS: &[(&str, &str)] = &[
     ("power-profiles-daemon", "net.hadess.PowerProfiles"),
     ("steamos-manager", "com.steampowered.SteamOSManager1"),
     ("tuned", "com.redhat.tuned"),
+    ("powerstation", "org.shadowblip.PowerStation"),
 ];
 
 /// Hard rivals detected by an **active systemd unit** — same "must not
@@ -96,9 +110,27 @@ pub const RIVAL_UNITS: &[(&str, &str)] = &[("hhd", "hhd@*.service"), ("tlp", "tl
 ///   genuinely overlaps hpd — but it also owns keyboard RGB / Aura / panel
 ///   overdrive, so masking it would break those. Reported loudly, never
 ///   masked: the user picks which daemon owns power.
+///   (On the ROG Ally family the joystick RGB is driven by the kernel's
+///   own `asus_rog_ally` HID driver as a plain `led_class_multicolor`
+///   device, so `asusd` buys that hardware nothing — but the advisory
+///   classification is global, and on ROG *laptops* Aura really does
+///   depend on it.)
+/// * `upower` — the desktop's battery-information service. Almost all of
+///   it is read-only, but since 1.90 it also *writes*
+///   `charge_control_end_threshold` via `EnableChargeThreshold()` — the
+///   same file hpd's `ChargeControl` owns, and what the battery-limit
+///   toggle in KDE/GNOME power settings actually drives. Unlike a real
+///   rival it never acts on its own (no AC-edge or boot reassertion), so
+///   the two only diverge when a user sets the limit from the desktop UI
+///   instead of `hpdctl charge`; hpd re-asserts its own value on the next
+///   boot/resume regardless. Never maskable: the whole desktop battery
+///   stack — including the critical-battery shutdown action — depends on
+///   it, so masking it would be far more destructive than the divergence
+///   it prevents.
 pub const ADVISORY_POWER_DAEMONS: &[(&str, &str)] = &[
     ("gamemoded", "com.feralinteractive.GameMode"),
     ("asusd", "org.asuslinux.Daemon"),
+    ("upower", "org.freedesktop.UPower"),
 ];
 
 /// Advisory daemons detected by an **active systemd unit** (no bus name).
@@ -299,6 +331,33 @@ mod tests {
             assert!(
                 pattern.ends_with(".service"),
                 "unit pattern {pattern} is not a .service unit"
+            );
+        }
+    }
+
+    /// Daemons whose advisory classification is load-bearing: masking one
+    /// breaks something far more important than the overlap it would fix.
+    /// The disjointness test below only catches a daemon *added* to both
+    /// lists — it would not catch one **moved** from advisory to rival,
+    /// which is exactly the mistake that hurts here, hence this explicit
+    /// pin.
+    ///
+    /// * `upower` — the desktop battery stack, including the
+    ///   critical-battery shutdown action. Masking it can cost the user
+    ///   unsaved work when the pack runs flat.
+    /// * `asusd` — keyboard RGB / Aura on ROG laptops.
+    #[test]
+    fn safety_critical_daemons_stay_advisory() {
+        for id in ["org.freedesktop.UPower", "org.asuslinux.Daemon"] {
+            assert!(
+                ADVISORY_POWER_DAEMONS.iter().any(|(_, bus)| *bus == id),
+                "{id} must stay in ADVISORY_POWER_DAEMONS — see this test's doc comment for why \
+                 masking it is not an acceptable trade",
+            );
+            assert!(
+                !RIVAL_POWER_DAEMONS.iter().any(|(_, bus)| *bus == id),
+                "{id} was promoted to a hard rival, which makes `doctor --fix` mask it — see this \
+                 test's doc comment for why that is not an acceptable trade",
             );
         }
     }

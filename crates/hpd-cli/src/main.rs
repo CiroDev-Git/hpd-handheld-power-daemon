@@ -203,9 +203,9 @@ enum Commands {
     /// same as `cool auto`) — the same one-tap action available in the
     /// Decky plugin.
     /// Resets the GPU clock range too, but only if you'd already opted in
-    /// with `hpdctl gpu` (`gpu auto`/`gpu set`); if you've never touched
-    /// `gpu`, this leaves it alone — GPU clock control is opt-in and this
-    /// command never turns it on for you.
+    /// with `hpdctl gpu auto`; if you've never touched `gpu`, this leaves
+    /// it alone — GPU clock control is opt-in and this command never turns
+    /// it on for you.
     RestoreDefaults,
     /// Diagnose and repair hpd's power ownership (polkit + competing daemons)
     ///
@@ -216,10 +216,17 @@ enum Commands {
     /// installs the polkit policy in one elevated step (pkexec/sudo), so
     /// hpd becomes the sole power manager — a superset of `fix-polkit`.
     /// Read-only without `--fix`.
+    ///
+    /// `--dry-run` prints exactly which units `--fix` would mask (and
+    /// which daemons it deliberately leaves alone) without changing
+    /// anything and without needing the daemon running.
     Doctor {
         /// Neutralize competing power daemons and install the polkit policy.
         #[arg(long)]
         fix: bool,
+        /// Show what --fix would do, then exit without changing anything.
+        #[arg(long)]
+        dry_run: bool,
         /// Internal: perform the privileged work (already elevated). Not for manual use.
         #[arg(long, hide = true)]
         apply: bool,
@@ -359,8 +366,22 @@ async fn main() {
     // D-Bus — intercept it before the bus setup so it runs even with hpd
     // stopped or the policy missing. The read-only `doctor` report needs
     // the proxy, so it falls through to the dispatch below.
-    if let Commands::Doctor { fix: true, apply } = &cli.command {
-        process::exit(doctor::run_fix(*apply));
+    // Both of these are daemon-free, so they run before the D-Bus setup:
+    // `--dry-run` only prints the static plan, and `--fix` talks to
+    // systemd/polkit directly. `--dry-run` is checked first so passing
+    // both flags can never mutate anything.
+    if let Commands::Doctor {
+        fix,
+        dry_run,
+        apply,
+    } = &cli.command
+    {
+        if *dry_run {
+            process::exit(doctor::print_fix_plan());
+        }
+        if *fix {
+            process::exit(doctor::run_fix(*apply));
+        }
     }
 
     // System bus in production; session bus only when HPD_SIMULATOR
@@ -653,10 +674,17 @@ async fn execute_command(cli: Cli, proxy: PowerDaemonProxy<'_>) -> zbus::Result<
             // reached.
             process::exit(fix::run(apply));
         }
-        Commands::Doctor { fix, apply } => {
+        Commands::Doctor {
+            fix,
+            dry_run,
+            apply,
+        } => {
+            // Both normally intercepted in main() before the D-Bus setup;
+            // kept for exhaustiveness and identical behaviour.
+            if dry_run {
+                process::exit(doctor::print_fix_plan());
+            }
             if fix {
-                // Normally intercepted in main() before the D-Bus setup;
-                // kept for exhaustiveness and identical behaviour.
                 process::exit(doctor::run_fix(apply));
             }
             // Read-only health report against the running daemon.
