@@ -207,15 +207,23 @@ jobs:
           # mismatch. The Push steps below don't need this trick
           # because `sudo -u builder -H` aligns $HOME with the builder
           # user's passwd entry.
+          # `|| rc=$?` is load-bearing, not style: GitHub invokes this
+          # step as `bash --noprofile --norc -e -o pipefail`, and the
+          # `set -uo pipefail` above does not clear that inherited `-e`.
+          # A bare `ssh ...` followed by `rc=$?` therefore aborts the
+          # step the moment ssh returns non-zero — before any of the
+          # diagnosis below can run. Putting ssh on the left of `||`
+          # exempts it from errexit, which is also why the original
+          # `if ssh ...; then` form worked.
           log="$(mktemp)"
+          rc=0
           ssh -v \
               -F "$HOME/.ssh/config" \
               -i "$HOME/.ssh/aur" \
               -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
               -o BatchMode=yes \
               -o ConnectTimeout=15 \
-              aur@aur.archlinux.org help > /dev/null 2>"$log"
-          rc=$?
+              aur@aur.archlinux.org help > /dev/null 2>"$log" || rc=$?
 
           if [ "$rc" -eq 0 ]; then
               echo "SSH connection to AUR: OK"
