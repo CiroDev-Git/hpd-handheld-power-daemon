@@ -225,7 +225,31 @@ If this is a stable release that has gone through one or more RCs,
 also merge any RC-only sections into the stable section (consumers
 don't want to read three separate sections for the same release).
 
-### 3d. Commit on a release branch and open the PR
+### 3d. Version references in prose
+
+Two files state the current release in prose. They are **not** derived
+from `Cargo.toml`, so nothing fails when they drift — they just quietly
+lie until someone notices:
+
+| File | Line to update |
+|------|----------------|
+| `README.md`  | the **Status** blockquote near the top |
+| `CLAUDE.md`  | the **Current release** line in *Project overview* |
+
+```bash
+grep -n 'Status:\*\* `v\|^Current release' README.md CLAUDE.md
+```
+
+This step exists because the pair drifted twice in a row: `3.3.0`
+shipped a fix for `CLAUDE.md` still advertising `2.14.0`, and then
+`3.3.0` itself left both files claiming `3.2.0`. Update them **in the
+bump PR**, not afterwards.
+
+Leave alone any *feature-availability* mention (`daemon >= 2.14.0`
+next to a specific command) — those name the version a feature
+appeared in and stay correct forever.
+
+### 3e. Commit on a release branch and open the PR
 
 `main` is protected, so the bump lands through a pull request like any
 other change. Commit on a branch, push the branch, open the PR — don't
@@ -234,7 +258,7 @@ tag yet.
 ```bash
 release_branch="release/v${new_version}"
 git checkout -b "${release_branch}"
-git add Cargo.toml Cargo.lock CHANGELOG.md
+git add Cargo.toml Cargo.lock CHANGELOG.md README.md CLAUDE.md
 git commit -m "Bump to ${new_version}
 
 Promotes [Unreleased] → [${new_version}] in CHANGELOG.md. See that
@@ -276,7 +300,7 @@ git rev-parse --short HEAD      # note it — this is what v${new_version} will 
 
 ## 4. Tag and trigger the release workflow
 
-> **Precondition:** the §3d bump PR is merged and your local `main` is
+> **Precondition:** the §3e bump PR is merged and your local `main` is
 > fast-forwarded onto it — `git rev-parse HEAD` must equal
 > `git rev-parse origin/main`. You are tagging that merged commit.
 > (Tags bypass branch protection, so the `git push origin "v…"` below
@@ -407,15 +431,16 @@ is a no-op (the script detects "no changes to push").
 
 ## 6. Post-release housekeeping
 
-### 6a. Re-open an `[Unreleased]` section (optional)
+### 6a. Re-open the `[Unreleased]` section
 
-In practice this repo lands each release's CHANGELOG entry **inside the
-§3d release PR** (a dated `## [X.Y.Z]` section, no floating
-`[Unreleased]`), so there is usually nothing to do here. Skip unless you
-deliberately keep an `[Unreleased]` heading for contributors to target.
+The repo keeps a standing `## [Unreleased]` heading at the top of
+`CHANGELOG.md` for contributors to target (adopted at the end of the
+`3.3.0` cycle). §3c renames it to the release being cut, so **every
+release leaves the file without one** — re-open it here, or the next
+contributor has nowhere to land an entry and §3c has nothing to rename.
 
-If you do, it goes through a PR like any other `main` change — never a
-direct push:
+It goes through a PR like any other `main` change — never a direct
+push:
 
 ```bash
 git checkout main

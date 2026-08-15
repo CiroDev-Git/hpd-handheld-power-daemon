@@ -70,7 +70,10 @@ comment for the code-side summary.
   seerge/g-helper#4996). hpd now works around it, but the kernel
   `asus-armoury` driver (and Windows tooling) presumably have the same
   exposure — an upstream report with the deterministic repro above is
-  worth filing.
+  worth filing. **It is written and ready to send:**
+  [`UPSTREAM-ASUS-PPT-PROFILE-REPORT.md`](UPSTREAM-ASUS-PPT-PROFILE-REPORT.md)
+  (target: `gitlab.com/asus-linux/asusctl`). Not filed yet — update both
+  files with the issue link once it is.
 - **Watchdog**: `GetTelemetry`'s `boost_ceiling_mw` key plus
   `hpdctl status`'s warning line (both added while investigating this)
   remain the passive tripwire — they are how the campaign caught the
