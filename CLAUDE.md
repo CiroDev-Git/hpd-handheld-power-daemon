@@ -248,7 +248,7 @@ hardware at boot.
 
 Every privileged D-Bus setter (`set_spl`, `set_preset`,
 `set_charge_threshold`, `set_profile`, `set_cooling_level`, `set_fan_auto`,
-`reset_fan_curve`, `set_ac_max_performance`) calls
+`set_fan_curve`, `reset_fan_curve`, `set_ac_max_performance`) calls
 `hpd_dbus::polkit::check(...)` *before* enqueuing its `Transition`.
 The check talks to `org.freedesktop.PolicyKit1.Authority` directly
 (no extra crate dep) and asks for one of:
@@ -256,10 +256,18 @@ The check talks to `org.freedesktop.PolicyKit1.Authority` directly
 - `dev.cirodev.hpd.set-tdp` — TDP / preset changes (`auth_admin`).
 - `dev.cirodev.hpd.set-charge` — charge threshold (`auth_admin`).
 - `dev.cirodev.hpd.set-profile` — cooling level / platform profile +
-  fan-auto + fan-curve **reset** (`auth_admin_keep` — 5-minute cache).
-  (The separate `set-fan-curve` action and the unused raw `set_fan_curve`
-  D-Bus method were retired in 2.5.0; `set_cooling_level` covers the fan
-  curve and `reset_fan_curve` moved onto this action.)
+  fan-auto + custom fan curve + fan-curve **reset**
+  (`auth_admin_keep` — 5-minute cache).
+
+  There are **only these three actions** — the separate `set-fan-curve`
+  action was retired in 2.5.0 and never came back, which is why every
+  cooling lever shares `set-profile`. The **method** `set_fan_curve` is a
+  different story: it was dropped alongside that action in 2.5.0, then
+  **reintroduced in 2.9.0** (`set_fan_curve(cpu, gpu)`, backing
+  `hpdctl cool set-custom`) — it is live today at
+  `hpd-dbus/src/service.rs`, gated on `set-profile`, validated against
+  `get_fan_curve_constraints` in the interface *and* again in the L1
+  backend, and it enqueues `Transition::SetCustomFanCurve`.
 
 These `<defaults>` in `package/polkit/dev.cirodev.hpd.policy` are the
 baseline for **non-administrator** callers. **`wheel`-group members
@@ -593,7 +601,8 @@ and exits cleanly rather than letting systemd `SIGKILL` it mid-write.
   renamed, since a rename would break the D-Bus/polkit surface + the
   persisted `state.toml`. Note the `set-profile` polkit action also gates
   the cooling levers (`set_cooling_level` / `set_fan_auto` /
-  `reset_fan_curve`) and the AC-lock toggle (`set_ac_max_performance`) —
+  `set_fan_curve` / `reset_fan_curve`) and the AC-lock toggle
+  (`set_ac_max_performance`) —
   it's the shared "low-impact, `auth_admin_keep`"
   bucket, not only the power profile.
 - **GPU clock constraints are Class A, fan-curve constraints are Class
